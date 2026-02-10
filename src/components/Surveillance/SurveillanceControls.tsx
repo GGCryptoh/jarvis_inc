@@ -1,9 +1,11 @@
-import { Monitor, Users, Megaphone, Coffee, UserPlus } from 'lucide-react';
+import { Monitor, Users, Megaphone, Coffee, UserPlus, PlusCircle } from 'lucide-react';
 import type { SceneMode } from '../../types';
 
 interface SurveillanceControlsProps {
   sceneMode: SceneMode;
   onChangeScene: (mode: SceneMode) => void;
+  agentCount: number;
+  onHireAgent: () => void;
 }
 
 const SCENE_BUTTONS: { mode: SceneMode; label: string; icon: React.ElementType }[] = [
@@ -22,7 +24,7 @@ const STATUS_LABELS: Record<SceneMode, string> = {
   welcome: 'ONBOARDING',
 };
 
-export default function SurveillanceControls({ sceneMode, onChangeScene }: SurveillanceControlsProps) {
+export default function SurveillanceControls({ sceneMode, onChangeScene, agentCount, onHireAgent }: SurveillanceControlsProps) {
   return (
     <div className="w-[200px] flex-shrink-0 bg-pixel-bg border-r-2 border-pixel-crt-border flex flex-col">
       {/* Header */}
@@ -30,8 +32,29 @@ export default function SurveillanceControls({ sceneMode, onChangeScene }: Surve
         <span>CONTROLS</span>
       </div>
 
+      {/* Hire Agent Button */}
+      <div className="p-2 pb-1">
+        <button
+          onClick={onHireAgent}
+          className="w-full flex items-center gap-2 px-3 py-2.5 font-pixel text-[8px] tracking-wider
+            border-2 border-t-pixel-cyan border-l-pixel-cyan border-b-pixel-bg border-r-pixel-bg
+            bg-pixel-cyan/10 text-pixel-cyan hover:bg-pixel-cyan/20 transition-colors"
+        >
+          <PlusCircle size={12} className="flex-shrink-0" />
+          <span>HIRE AGENT</span>
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div className="mx-3 border-t border-pixel-crt-border" />
+
+      {/* Scene label */}
+      <div className="px-3 pt-2 pb-1">
+        <div className="font-pixel text-[6px] text-gray-500 tracking-widest">SCENE MODE</div>
+      </div>
+
       {/* Scene Buttons */}
-      <div className="p-2 flex flex-col gap-1">
+      <div className="px-2 pb-2 flex flex-col gap-1">
         {SCENE_BUTTONS.map(({ mode, label, icon: Icon }) => {
           const isActive = sceneMode === mode;
           return (
@@ -69,7 +92,7 @@ export default function SurveillanceControls({ sceneMode, onChangeScene }: Surve
 
           <div className="flex items-center justify-between">
             <span className="font-pixel text-[7px] text-gray-500 tracking-wider">AGENTS</span>
-            <span className="font-pixel text-[8px] text-pixel-cyan">6</span>
+            <span className="font-pixel text-[8px] text-pixel-cyan">{agentCount}</span>
           </div>
 
           <div className="flex items-center justify-between mt-1">

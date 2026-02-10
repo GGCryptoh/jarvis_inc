@@ -8,9 +8,43 @@ import {
   ALL_HANDS_POSITIONS,
   ENTRANCE_POSITION,
 } from '../../data/dummyData';
+import { loadAgents, saveAgent, seedAgentsIfEmpty, deleteAgent as dbDeleteAgent } from '../../lib/database';
+import type { AgentRow } from '../../lib/database';
 import SurveillanceControls from './SurveillanceControls';
 import CRTFrame from './CRTFrame';
 import PixelOffice from './PixelOffice';
+import HireAgentModal from './HireAgentModal';
+import type { AgentConfig } from './HireAgentModal';
+import { Pencil, Trash2 } from 'lucide-react';
+
+// Default tasks assigned to fresh agents
+const DEFAULT_TASKS = [
+  'Awaiting assignment...',
+  'Running diagnostics...',
+  'Scanning environment...',
+  'Calibrating sensors...',
+  'Indexing knowledge base...',
+  'Optimizing parameters...',
+];
+
+/** Convert a DB row + index into a full runtime Agent. */
+function rowToAgent(row: AgentRow, index: number): Agent {
+  const pos = DESK_POSITIONS[index % DESK_POSITIONS.length];
+  return {
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    color: row.color,
+    skinTone: row.skin_tone,
+    status: 'working',
+    position: { ...pos },
+    targetPosition: { ...pos },
+    currentTask: DEFAULT_TASKS[index % DEFAULT_TASKS.length],
+    confidence: 70 + Math.floor(Math.random() * 25),
+    costSoFar: parseFloat((Math.random() * 0.5).toFixed(2)),
+    model: row.model,
+  };
+}
 
 /** Map a SceneMode to the AgentStatus agents should assume once they arrive. */
 function modeToStatus(mode: SceneMode): AgentStatus {
@@ -29,9 +63,41 @@ function modeToStatus(mode: SceneMode): AgentStatus {
 }
 
 export default function SurveillanceModule() {
-  const [agents, setAgents] = useState<Agent[]>(initialAgents);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [sceneMode, setSceneMode] = useState<SceneMode>('working');
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [hireModalOpen, setHireModalOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+
+  // ---- Load agents from DB on mount ----
+  useEffect(() => {
+    // Seed defaults if DB is empty
+    const seeds: AgentRow[] = initialAgents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      role: a.role,
+      color: a.color,
+      skin_tone: a.skinTone,
+      model: a.model,
+    }));
+    seedAgentsIfEmpty(seeds);
+
+    // Load from DB
+    const rows = loadAgents();
+    const loaded = rows.map((row, i) => rowToAgent(row, i));
+
+    // Restore dummy task/confidence/cost for the original 6
+    loaded.forEach((agent) => {
+      const original = initialAgents.find((a) => a.id === agent.id);
+      if (original) {
+        agent.currentTask = original.currentTask;
+        agent.confidence = original.confidence;
+        agent.costSoFar = original.costSoFar;
+      }
+    });
+
+    setAgents(loaded);
+  }, []);
 
   // ---- Scene transitions ----
   const changeScene = useCallback((mode: SceneMode) => {
@@ -41,13 +107,11 @@ export default function SurveillanceModule() {
       let updated: Agent[];
 
       if (mode === 'welcome') {
-        // Existing agents gather in center
         updated = prev.map((agent, i) => ({
           ...agent,
           targetPosition: ALL_HANDS_POSITIONS[i % ALL_HANDS_POSITIONS.length],
         }));
-
-        // Add a new agent at the entrance that will walk in
+        // placeholder welcome — the real one is triggered by hiring
         const newId = `agent-${Date.now()}`;
         const newAgent: Agent = {
           id: newId,
@@ -76,7 +140,6 @@ export default function SurveillanceModule() {
                 : WATER_COOLER_POSITIONS;
 
         updated = prev
-          // Remove any temporarily-added "welcome" agents when switching away
           .filter(a => !a.isNew)
           .map((agent, i) => ({
             ...agent,
@@ -86,6 +149,112 @@ export default function SurveillanceModule() {
 
       return updated;
     });
+  }, []);
+
+  // ---- Hire a new agent ----
+  const handleHire = useCallback((config: AgentConfig) => {
+    const id = `agent-${Date.now()}`;
+
+    // Save to DB
+    saveAgent({
+      id,
+      name: config.name,
+      role: config.role,
+      color: config.color,
+      skin_tone: config.skinTone,
+      model: config.model,
+    });
+
+    // Create runtime agent at entrance
+    const newAgent: Agent = {
+      id,
+      name: config.name,
+      role: config.role,
+      color: config.color,
+      skinTone: config.skinTone,
+      status: 'arriving',
+      position: { ...ENTRANCE_POSITION },
+      targetPosition: { x: 38, y: 44 },
+      currentTask: 'Onboarding...',
+      confidence: 50,
+      costSoFar: 0,
+      model: config.model,
+    };
+
+    // Move existing agents to welcome positions, add new one
+    setSceneMode('welcome');
+    setAgents(prev => {
+      const updated = prev
+        .filter(a => !a.isNew)
+        .map((agent, i) => ({
+          ...agent,
+          targetPosition: ALL_HANDS_POSITIONS[i % ALL_HANDS_POSITIONS.length],
+        }));
+      updated.push(newAgent);
+      return updated;
+    });
+
+    setHireModalOpen(false);
+
+    // After welcome animation, transition new agent to their desk
+    setTimeout(() => {
+      setAgents(prev => {
+        const allReal = prev.map(a => ({ ...a, isNew: undefined }));
+        return allReal.map((agent, i) => ({
+          ...agent,
+          targetPosition: DESK_POSITIONS[i % DESK_POSITIONS.length],
+        }));
+      });
+      setSceneMode('working');
+    }, 4000);
+  }, []);
+
+  // ---- Edit an existing agent ----
+  const handleEdit = useCallback((config: AgentConfig) => {
+    if (!editingAgent) return;
+
+    // Save to DB
+    saveAgent({
+      id: editingAgent.id,
+      name: config.name,
+      role: config.role,
+      color: config.color,
+      skin_tone: config.skinTone,
+      model: config.model,
+    });
+
+    // Update in state
+    setAgents(prev =>
+      prev.map(a =>
+        a.id === editingAgent.id
+          ? { ...a, name: config.name, role: config.role, color: config.color, skinTone: config.skinTone, model: config.model }
+          : a,
+      ),
+    );
+
+    // Update selected agent too
+    setSelectedAgent(prev =>
+      prev && prev.id === editingAgent.id
+        ? { ...prev, name: config.name, role: config.role, color: config.color, skinTone: config.skinTone, model: config.model }
+        : prev,
+    );
+
+    setEditingAgent(null);
+  }, [editingAgent]);
+
+  // ---- Fire (delete) an agent ----
+  const handleFire = useCallback((agentId: string) => {
+    dbDeleteAgent(agentId);
+    setAgents(prev => {
+      const remaining = prev.filter(a => a.id !== agentId);
+      // Re-assign desk positions
+      return remaining.map((agent, i) => ({
+        ...agent,
+        targetPosition: DESK_POSITIONS[i % DESK_POSITIONS.length],
+      }));
+    });
+    setSelectedAgent(null);
+    setSceneMode('working');
   }, []);
 
   // ---- Position interpolation (lerp) loop ----
@@ -135,7 +304,12 @@ export default function SurveillanceModule() {
   return (
     <div className="flex h-full">
       {/* Left panel -- controls */}
-      <SurveillanceControls sceneMode={sceneMode} onChangeScene={changeScene} />
+      <SurveillanceControls
+        sceneMode={sceneMode}
+        onChangeScene={changeScene}
+        agentCount={agents.filter(a => !a.isNew).length}
+        onHireAgent={() => setHireModalOpen(true)}
+      />
 
       {/* Center -- CRT feed */}
       <div className="flex-1 flex flex-col p-4 min-w-0">
@@ -158,8 +332,18 @@ export default function SurveillanceModule() {
         <AgentDetailSidebar
           agent={selectedAgent}
           onClose={() => setSelectedAgent(null)}
+          onEdit={(agent) => setEditingAgent(agent)}
+          onFire={(agent) => handleFire(agent.id)}
         />
       )}
+
+      {/* Hire / Edit modal */}
+      <HireAgentModal
+        open={hireModalOpen || !!editingAgent}
+        onClose={() => { setHireModalOpen(false); setEditingAgent(null); }}
+        onSubmit={editingAgent ? handleEdit : handleHire}
+        editAgent={editingAgent}
+      />
     </div>
   );
 }
@@ -171,9 +355,13 @@ export default function SurveillanceModule() {
 interface AgentDetailSidebarProps {
   agent: Agent;
   onClose: () => void;
+  onEdit: (agent: Agent) => void;
+  onFire: (agent: Agent) => void;
 }
 
-function AgentDetailSidebar({ agent, onClose }: AgentDetailSidebarProps) {
+function AgentDetailSidebar({ agent, onClose, onEdit, onFire }: AgentDetailSidebarProps) {
+  const [confirmFire, setConfirmFire] = useState(false);
+
   const confidenceColor =
     agent.confidence >= 85
       ? 'bg-pixel-green'
@@ -281,13 +469,48 @@ function AgentDetailSidebar({ agent, onClose }: AgentDetailSidebarProps) {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Close button */}
-        <button
-          className="retro-button w-full !text-[9px] !py-2 text-center tracking-widest hover:!text-pixel-pink"
-          onClick={onClose}
-        >
-          CLOSE
-        </button>
+        {/* Action buttons */}
+        <div className="flex flex-col gap-1">
+          <button
+            className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-cyan flex items-center justify-center gap-2"
+            onClick={() => onEdit(agent)}
+          >
+            <Pencil size={10} />
+            EDIT SPRITE
+          </button>
+
+          {!confirmFire ? (
+            <button
+              className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-pink flex items-center justify-center gap-2"
+              onClick={() => setConfirmFire(true)}
+            >
+              <Trash2 size={10} />
+              FIRE AGENT
+            </button>
+          ) : (
+            <div className="flex gap-1">
+              <button
+                className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest !border-t-red-500/50 !border-l-red-500/50 hover:!text-red-400"
+                onClick={() => onFire(agent)}
+              >
+                CONFIRM
+              </button>
+              <button
+                className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest"
+                onClick={() => setConfirmFire(false)}
+              >
+                CANCEL
+              </button>
+            </div>
+          )}
+
+          <button
+            className="retro-button w-full !text-[9px] !py-2 text-center tracking-widest hover:!text-pixel-orange"
+            onClick={onClose}
+          >
+            CLOSE
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -105,6 +105,65 @@ export function getFounderInfo(): { founderName: string; orgName: string } | nul
 }
 
 // ---------------------------------------------------------------------------
+// Agent CRUD
+// ---------------------------------------------------------------------------
+
+export interface AgentRow {
+  id: string;
+  name: string;
+  role: string;
+  color: string;
+  skin_tone: string;
+  model: string;
+}
+
+/** Load all agents from DB. Returns empty array if none. */
+export function loadAgents(): AgentRow[] {
+  const results: AgentRow[] = [];
+  const stmt = getDB().prepare('SELECT id, name, role, color, skin_tone, model FROM agents ORDER BY created_at');
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as AgentRow);
+  }
+  stmt.free();
+  return results;
+}
+
+/** Insert or update an agent. */
+export function saveAgent(agent: AgentRow): void {
+  getDB().run(
+    `INSERT INTO agents (id, name, role, color, skin_tone, model)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       role = excluded.role,
+       color = excluded.color,
+       skin_tone = excluded.skin_tone,
+       model = excluded.model`,
+    [agent.id, agent.name, agent.role, agent.color, agent.skin_tone, agent.model],
+  );
+  persist();
+}
+
+/** Save the initial fleet of agents (only if DB has none). */
+export function seedAgentsIfEmpty(agents: AgentRow[]): void {
+  const existing = loadAgents();
+  if (existing.length > 0) return;
+  for (const a of agents) {
+    getDB().run(
+      'INSERT OR IGNORE INTO agents (id, name, role, color, skin_tone, model) VALUES (?, ?, ?, ?, ?, ?)',
+      [a.id, a.name, a.role, a.color, a.skin_tone, a.model],
+    );
+  }
+  persist();
+}
+
+/** Delete an agent by ID. */
+export function deleteAgent(id: string): void {
+  getDB().run('DELETE FROM agents WHERE id = ?', [id]);
+  persist();
+}
+
+// ---------------------------------------------------------------------------
 // Reset
 // ---------------------------------------------------------------------------
 
