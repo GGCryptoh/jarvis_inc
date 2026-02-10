@@ -1,0 +1,56 @@
+import { useState, useEffect, useCallback } from 'react';
+import { initDatabase, isFounderInitialized, resetDatabase } from '../lib/database';
+
+interface DatabaseState {
+  ready: boolean;
+  initialized: boolean; // founder has completed ceremony
+  error: string | null;
+}
+
+/**
+ * Top-level hook that boots the SQLite database.
+ * Returns { ready, initialized, reset, reinit }.
+ *
+ * - ready:       DB is loaded and schema applied
+ * - initialized: founder ceremony has been completed
+ * - reset():     wipes the DB and flips initialized→false
+ * - reinit():    re-runs initDatabase (call after ceremony completes)
+ */
+export function useDatabase() {
+  const [state, setState] = useState<DatabaseState>({
+    ready: false,
+    initialized: false,
+    error: null,
+  });
+
+  // Boot
+  useEffect(() => {
+    initDatabase()
+      .then(() => {
+        setState({
+          ready: true,
+          initialized: isFounderInitialized(),
+          error: null,
+        });
+      })
+      .catch((err) => {
+        setState({ ready: false, initialized: false, error: String(err) });
+      });
+  }, []);
+
+  // Reset DB → back to ceremony
+  const reset = useCallback(async () => {
+    await resetDatabase();
+    setState({ ready: false, initialized: false, error: null });
+    // Re-init fresh DB
+    await initDatabase();
+    setState({ ready: true, initialized: false, error: null });
+  }, []);
+
+  // Re-check initialization (call after ceremony writes to DB)
+  const reinit = useCallback(() => {
+    setState((prev) => ({ ...prev, initialized: isFounderInitialized() }));
+  }, []);
+
+  return { ...state, reset, reinit };
+}
