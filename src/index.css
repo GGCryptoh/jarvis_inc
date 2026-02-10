@@ -1,0 +1,585 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   JARVIS INC - GOD VIEW DASHBOARD
+   Global Styles & CRT/Pixel Art System
+   ============================================================ */
+
+/* ---------- Base Resets & Defaults ---------- */
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #0a0e17;
+    color: #e2e8f0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    overflow-x: hidden;
+  }
+
+  /* Remove default focus outline and add custom */
+  :focus-visible {
+    outline: 2px solid #10b981;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+/* ---------- Custom Scrollbar (Dark Themed) ---------- */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0e17;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+  border: 1px solid #0a0e17;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+::-webkit-scrollbar-corner {
+  background: #0a0e17;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e293b #0a0e17;
+}
+
+/* ---------- CRT Screen Effects ---------- */
+
+@layer components {
+  /* CRT Screen Container - apply to surveillance/pixel art areas */
+  .crt-screen {
+    position: relative;
+    overflow: hidden;
+    background-color: #1a1a2e;
+    border-radius: 8px;
+    box-shadow:
+      inset 0 0 60px rgba(0, 255, 136, 0.03),
+      inset 0 0 20px rgba(0, 0, 0, 0.5),
+      0 0 20px rgba(0, 255, 136, 0.05);
+  }
+
+  /* Scanline overlay via pseudo-element */
+  .crt-screen::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 10;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.15) 2px,
+      rgba(0, 0, 0, 0.15) 4px
+    );
+    animation: scanline-drift 8s linear infinite;
+  }
+
+  /* Additional CRT curvature overlay */
+  .crt-screen::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 11;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 60%,
+      rgba(0, 0, 0, 0.35) 100%
+    );
+    border-radius: inherit;
+  }
+
+  /* Phosphor glow effect for text inside CRT */
+  .crt-screen .phosphor-glow {
+    text-shadow:
+      0 0 4px rgba(0, 255, 136, 0.6),
+      0 0 8px rgba(0, 255, 136, 0.3),
+      0 0 16px rgba(0, 255, 136, 0.1);
+  }
+
+  /* Screen flicker - subtle and non-intrusive */
+  .crt-flicker {
+    animation: screen-flicker 0.15s infinite;
+  }
+
+  /* ---------- Retro Window (Amiga-style Beveled) ---------- */
+
+  .retro-window {
+    position: relative;
+    background-color: #2a2a4a;
+    border: 3px solid;
+    border-color: #5a5a8a #1a1a2e #1a1a2e #5a5a8a;
+    box-shadow:
+      inset 1px 1px 0 #6a6a9a,
+      inset -1px -1px 0 #0e0e1e,
+      2px 2px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Retro window title bar */
+  .retro-window-title {
+    background: linear-gradient(180deg, #4a4a7a 0%, #3a3a6a 100%);
+    border-bottom: 2px solid;
+    border-bottom-color: #1a1a2e;
+    padding: 4px 8px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 10px;
+    color: #e2e8f0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
+  }
+
+  /* Title bar decorative buttons (Amiga style) */
+  .retro-window-title::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    background: #1a1a2e;
+    border: 2px solid;
+    border-color: #5a5a8a #1a1a2e #1a1a2e #5a5a8a;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  .retro-window-title::after {
+    content: '';
+    width: 12px;
+    height: 12px;
+    background: #1a1a2e;
+    border: 2px solid;
+    border-color: #5a5a8a #1a1a2e #1a1a2e #5a5a8a;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  /* Retro window body */
+  .retro-window-body {
+    padding: 8px;
+    background-color: #1a1a2e;
+    border: 2px solid;
+    border-color: #0e0e1e #3a3a5a #3a3a5a #0e0e1e;
+    margin: 3px;
+  }
+
+  /* Beveled inset panel (for status bars, info panels) */
+  .retro-inset {
+    background-color: #1a1a2e;
+    border: 2px solid;
+    border-color: #0e0e1e #4a4a7a #4a4a7a #0e0e1e;
+    box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Beveled outset button */
+  .retro-button {
+    background: linear-gradient(180deg, #4a4a7a 0%, #3a3a6a 100%);
+    border: 2px solid;
+    border-color: #6a6a9a #1a1a2e #1a1a2e #6a6a9a;
+    padding: 4px 12px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    color: #e2e8f0;
+    cursor: pointer;
+    transition: all 0.05s;
+    user-select: none;
+  }
+
+  .retro-button:hover {
+    background: linear-gradient(180deg, #5a5a8a 0%, #4a4a7a 100%);
+  }
+
+  .retro-button:active {
+    border-color: #1a1a2e #6a6a9a #6a6a9a #1a1a2e;
+    transform: translate(1px, 1px);
+  }
+
+  /* ---------- Pixel Art Helper Classes ---------- */
+
+  /* Pixel-perfect rendering (disable anti-aliasing for sprites) */
+  .pixel-art {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    -ms-interpolation-mode: nearest-neighbor;
+  }
+
+  /* Pixel grid alignment helper */
+  .pixel-grid {
+    background-image:
+      linear-gradient(rgba(58, 58, 90, 0.15) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(58, 58, 90, 0.15) 1px, transparent 1px);
+    background-size: 16px 16px;
+  }
+
+  /* Pixel-art text rendering */
+  .pixel-text {
+    font-family: 'Press Start 2P', monospace;
+    -webkit-font-smoothing: none;
+    -moz-osx-font-smoothing: unset;
+    letter-spacing: 0.5px;
+  }
+
+  /* Pixel shadow (blocky, no blur) */
+  .pixel-shadow {
+    box-shadow:
+      4px 4px 0 rgba(0, 0, 0, 0.4),
+      -1px -1px 0 rgba(90, 90, 138, 0.2);
+  }
+
+  /* ---------- Agent Sprite Classes ---------- */
+
+  /* Base agent sprite container */
+  .agent-sprite {
+    position: absolute;
+    transition: left 1.5s ease-in-out, top 1.5s ease-in-out;
+    will-change: left, top;
+    z-index: 5;
+  }
+
+  /* Walking animation - sprite bounces up and down */
+  .agent-walking {
+    animation: agent-walk 0.4s steps(2) infinite;
+  }
+
+  /* Working/typing animation - subtle bob */
+  .agent-typing {
+    animation: agent-type 0.6s ease-in-out infinite;
+  }
+
+  /* Idle animation - slow breathing/bob */
+  .agent-idle {
+    animation: agent-idle-bob 2.5s ease-in-out infinite;
+  }
+
+  /* Meeting animation - slight sway */
+  .agent-meeting {
+    animation: agent-sway 3s ease-in-out infinite;
+  }
+
+  /* Break animation - relaxed bob */
+  .agent-break {
+    animation: agent-break-bob 4s ease-in-out infinite;
+  }
+
+  /* Arriving animation - bouncy entrance */
+  .agent-arriving {
+    animation: agent-arrive 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  /* Agent name tag */
+  .agent-nametag {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 6px;
+    text-align: center;
+    white-space: nowrap;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
+    letter-spacing: 0.5px;
+  }
+
+  /* Agent status indicator dot */
+  .agent-status-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    border: 1px solid rgba(0, 0, 0, 0.5);
+  }
+
+  /* Agent thought bubble */
+  .agent-thought {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(26, 26, 46, 0.9);
+    border: 1px solid #3a3a5a;
+    padding: 2px 6px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 5px;
+    color: #00ff88;
+    white-space: nowrap;
+    margin-bottom: 4px;
+    border-radius: 2px;
+  }
+
+  .agent-thought::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 3px solid transparent;
+    border-top-color: #3a3a5a;
+  }
+}
+
+/* ---------- Animation Keyframes ---------- */
+
+@keyframes scanline-drift {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 100vh;
+  }
+}
+
+@keyframes screen-flicker {
+  0% { opacity: 0.97; }
+  25% { opacity: 1; }
+  50% { opacity: 0.98; }
+  75% { opacity: 1; }
+  100% { opacity: 0.97; }
+}
+
+@keyframes agent-walk {
+  0%, 100% {
+    transform: translateY(0) scaleX(1);
+  }
+  25% {
+    transform: translateY(-2px) scaleX(0.95);
+  }
+  50% {
+    transform: translateY(0) scaleX(1);
+  }
+  75% {
+    transform: translateY(-2px) scaleX(1.05);
+  }
+}
+
+@keyframes agent-type {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-1px);
+  }
+  60% {
+    transform: translateY(0);
+  }
+  80% {
+    transform: translateY(-0.5px);
+  }
+}
+
+@keyframes agent-idle-bob {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes agent-sway {
+  0%, 100% {
+    transform: translateX(0) translateY(0);
+  }
+  25% {
+    transform: translateX(1px) translateY(-0.5px);
+  }
+  75% {
+    transform: translateX(-1px) translateY(-0.5px);
+  }
+}
+
+@keyframes agent-break-bob {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-1px) rotate(0.5deg);
+  }
+  75% {
+    transform: translateY(-1px) rotate(-0.5deg);
+  }
+}
+
+@keyframes agent-arrive {
+  0% {
+    transform: translateY(20px) scale(0.5);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(-4px) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* Typing cursor blink */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Pulse ring for alerts */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+/* Glow pulse for active elements */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(16, 185, 129, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.7), 0 0 24px rgba(16, 185, 129, 0.3);
+  }
+}
+
+/* ---------- Utility Classes ---------- */
+
+@layer utilities {
+  /* Smooth transitions for all interactive elements */
+  .transition-smooth {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Glass morphism panel */
+  .glass-panel {
+    background: rgba(17, 24, 39, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(30, 41, 59, 0.6);
+  }
+
+  /* Glowing border accent */
+  .glow-border {
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    box-shadow:
+      0 0 4px rgba(16, 185, 129, 0.1),
+      inset 0 0 4px rgba(16, 185, 129, 0.05);
+  }
+
+  .glow-border:hover {
+    border-color: rgba(16, 185, 129, 0.5);
+    box-shadow:
+      0 0 8px rgba(16, 185, 129, 0.2),
+      inset 0 0 8px rgba(16, 185, 129, 0.08);
+  }
+
+  /* Animated glow pulse */
+  .glow-pulse {
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+
+  /* Pulse ring for notifications */
+  .pulse-ring::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 2px solid currentColor;
+    animation: pulse-ring 1.5s ease-out infinite;
+  }
+
+  /* Monitor green text */
+  .text-monitor {
+    color: #00ff88;
+    text-shadow: 0 0 4px rgba(0, 255, 136, 0.5);
+  }
+
+  /* Danger red glow text */
+  .text-danger-glow {
+    color: #ef4444;
+    text-shadow: 0 0 4px rgba(239, 68, 68, 0.5);
+  }
+
+  /* Warning amber glow text */
+  .text-warning-glow {
+    color: #f59e0b;
+    text-shadow: 0 0 4px rgba(245, 158, 11, 0.5);
+  }
+
+  /* Truncate with ellipsis */
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* No scrollbar utility */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Pixel font size scale */
+  .text-pixel-xs { font-size: 6px; line-height: 1.2; }
+  .text-pixel-sm { font-size: 8px; line-height: 1.3; }
+  .text-pixel-md { font-size: 10px; line-height: 1.4; }
+  .text-pixel-lg { font-size: 12px; line-height: 1.5; }
+  .text-pixel-xl { font-size: 14px; line-height: 1.5; }
+}
+
+/* ---------- Third-party Overrides ---------- */
+
+/* Recharts tooltip dark theme override */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: #111827 !important;
+  border: 1px solid #1e293b !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+
+.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
+  color: #e2e8f0 !important;
+}
+
+.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-item {
+  color: #94a3b8 !important;
+}
+
+/* Pixel font loaded via index.html <link> tag */
