@@ -1,47 +1,236 @@
-import { DollarSign, TrendingDown, TrendingUp, Minus } from 'lucide-react'
+import { useState } from 'react'
+import { DollarSign, TrendingDown, TrendingUp, Minus, Pencil, X } from 'lucide-react'
+import { getSetting, setSetting } from '../../lib/database'
 import { financials } from '../../data/dummyData'
 
 function formatCurrency(value: number): string {
   return `$${value.toLocaleString('en-US', { minimumFractionDigits: 0 })}`
 }
 
+// ---------------------------------------------------------------------------
+// Budget Edit Dialog — Founder-ceremony themed (dark, green glow, pixel font)
+// ---------------------------------------------------------------------------
+
+function BudgetEditDialog({
+  currentBudget,
+  onSave,
+  onClose,
+}: {
+  currentBudget: number;
+  onSave: (value: number) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(String(currentBudget));
+
+  const parsed = parseFloat(draft);
+  const isValid = !isNaN(parsed) && parsed > 0 && parsed <= 100000;
+
+  function handleSave() {
+    if (!isValid) return;
+    onSave(parsed);
+  }
+
+  const presets = [50, 100, 250, 500, 1000];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Scanline overlay */}
+      <div
+        className="absolute inset-0 pointer-events-none z-10 opacity-[0.03]"
+        style={{
+          background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,136,0.1) 2px, rgba(0,255,136,0.1) 4px)',
+        }}
+      />
+
+      <div className="relative z-20 w-full max-w-md mx-4">
+        {/* Dialog */}
+        <div
+          className="bg-black border-2 rounded-lg overflow-hidden"
+          style={{ borderColor: 'rgba(0,255,136,0.3)', boxShadow: '0 0 40px rgba(0,255,136,0.08)' }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(0,255,136,0.15)' }}>
+            <div className="flex items-center gap-2">
+              <DollarSign size={16} className="text-pixel-green" />
+              <h3
+                className="font-pixel text-sm tracking-wider text-pixel-green"
+                style={{ textShadow: '0 0 10px rgba(0,255,136,0.3)' }}
+              >
+                SET MONTHLY BUDGET
+              </h3>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-7 h-7 rounded-md flex items-center justify-center text-pixel-green/40 hover:text-pixel-green/70 transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="px-5 py-5 space-y-5">
+            {/* Input */}
+            <div>
+              <label
+                className="block font-pixel text-[9px] tracking-widest mb-2"
+                style={{ color: 'rgba(0,255,136,0.6)' }}
+              >
+                BUDGET (USD / MONTH)
+              </label>
+              <div className="relative">
+                <span
+                  className="absolute left-4 top-1/2 -translate-y-1/2 font-pixel text-lg"
+                  style={{ color: 'rgba(0,255,136,0.4)' }}
+                >
+                  $
+                </span>
+                <input
+                  type="number"
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSave()}
+                  autoFocus
+                  min={1}
+                  max={100000}
+                  step={10}
+                  className="w-full bg-black border-2 font-pixel text-xl tracking-wider pl-10 pr-4 py-3 rounded-sm focus:outline-none transition-colors"
+                  style={{
+                    borderColor: isValid ? 'rgba(0,255,136,0.4)' : 'rgba(255,80,80,0.4)',
+                    color: isValid ? '#00ff88' : '#ff5050',
+                    textShadow: isValid ? '0 0 6px rgba(0,255,136,0.3)' : '0 0 6px rgba(255,80,80,0.3)',
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Presets */}
+            <div>
+              <label
+                className="block font-pixel text-[8px] tracking-widest mb-2"
+                style={{ color: 'rgba(0,255,136,0.4)' }}
+              >
+                QUICK SET
+              </label>
+              <div className="flex gap-2">
+                {presets.map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setDraft(String(p))}
+                    className="flex-1 font-pixel text-[9px] tracking-wider py-2 rounded-sm border transition-all"
+                    style={{
+                      borderColor: parsed === p ? 'rgba(0,255,136,0.6)' : 'rgba(0,255,136,0.15)',
+                      backgroundColor: parsed === p ? 'rgba(0,255,136,0.1)' : 'transparent',
+                      color: parsed === p ? '#00ff88' : 'rgba(0,255,136,0.5)',
+                    }}
+                  >
+                    ${p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Info */}
+            <p
+              className="font-pixel text-[7px] tracking-wider leading-relaxed"
+              style={{ color: 'rgba(0,255,136,0.3)' }}
+            >
+              This budget controls total monthly AI spend across all agents.
+              CEO operations respect this limit unless overridden.
+            </p>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-3 px-5 py-4 border-t" style={{ borderColor: 'rgba(0,255,136,0.15)' }}>
+            <button
+              onClick={onClose}
+              className="font-pixel text-[9px] tracking-wider px-4 py-2 text-pixel-green/40 hover:text-pixel-green/70 transition-colors"
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!isValid}
+              className="font-pixel text-[9px] tracking-[0.2em] px-6 py-2.5 rounded-sm border-2 transition-all duration-300"
+              style={{
+                borderColor: isValid ? 'rgba(0,255,136,0.6)' : 'rgba(0,255,136,0.15)',
+                backgroundColor: isValid ? 'rgba(0,255,136,0.1)' : 'transparent',
+                color: isValid ? '#00ff88' : 'rgba(0,255,136,0.3)',
+                cursor: isValid ? 'pointer' : 'not-allowed',
+                boxShadow: isValid ? '0 0 20px rgba(0,255,136,0.15)' : 'none',
+              }}
+            >
+              SET BUDGET
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main view
+// ---------------------------------------------------------------------------
+
 export default function FinancialsView() {
-  const totalBudget = financials.reduce((sum, f) => sum + f.budget, 0)
+  const [monthlyBudget, setMonthlyBudget] = useState(() => {
+    const saved = getSetting('monthly_budget');
+    return saved ? parseFloat(saved) : 100; // default $100/mo
+  });
+  const [showBudgetEdit, setShowBudgetEdit] = useState(false);
+
+  function handleBudgetSave(value: number) {
+    setSetting('monthly_budget', String(value));
+    setMonthlyBudget(value);
+    setShowBudgetEdit(false);
+  }
+
+  const totalBudget = monthlyBudget * 12; // annual from monthly
   const totalSpent = financials.reduce((sum, f) => sum + f.actual, 0)
   const remaining = totalBudget - totalSpent
   const burnRate = totalSpent > 0 && financials.length > 0
     ? Math.round(totalSpent / financials.length)
     : 0
-  const maxValue = Math.max(...financials.map((f) => Math.max(f.budget, f.actual)))
+  const maxValue = Math.max(...financials.map((f) => Math.max(monthlyBudget, f.actual)))
 
   const stats = [
     {
-      label: 'Total Budget',
-      value: formatCurrency(totalBudget),
+      label: 'Monthly Budget',
+      value: formatCurrency(monthlyBudget),
+      sublabel: `${formatCurrency(totalBudget)} / year`,
       icon: DollarSign,
       color: 'text-jarvis-text',
       borderColor: 'border-white/[0.08]',
+      editable: true,
     },
     {
       label: 'Total Spent',
       value: formatCurrency(totalSpent),
+      sublabel: `${financials.length} months tracked`,
       icon: TrendingUp,
       color: 'text-emerald-400',
       borderColor: 'border-emerald-500/20',
+      editable: false,
     },
     {
       label: 'Remaining',
       value: formatCurrency(remaining),
+      sublabel: remaining >= 0 ? 'Under budget' : 'Over budget',
       icon: remaining >= 0 ? TrendingDown : TrendingUp,
       color: remaining >= 0 ? 'text-blue-400' : 'text-red-400',
       borderColor: remaining >= 0 ? 'border-blue-500/20' : 'border-red-500/20',
+      editable: false,
     },
     {
       label: 'Burn Rate',
       value: `${formatCurrency(burnRate)}/mo`,
+      sublabel: burnRate > monthlyBudget ? 'Exceeds budget' : 'Within budget',
       icon: Minus,
       color: 'text-amber-400',
       borderColor: 'border-amber-500/20',
+      editable: false,
     },
   ]
 
@@ -70,15 +259,27 @@ export default function FinancialsView() {
           return (
             <div
               key={stat.label}
-              className={`bg-jarvis-surface border ${stat.borderColor} rounded-lg px-5 py-4`}
+              className={`bg-jarvis-surface border ${stat.borderColor} rounded-lg px-5 py-4 relative group`}
             >
               <div className="flex items-center gap-2 mb-2">
                 <Icon size={14} className="text-jarvis-muted" />
                 <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">
                   {stat.label}
                 </span>
+                {stat.editable && (
+                  <button
+                    onClick={() => setShowBudgetEdit(true)}
+                    className="ml-auto w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06] transition-colors opacity-0 group-hover:opacity-100"
+                    title="Edit budget"
+                  >
+                    <Pencil size={12} />
+                  </button>
+                )}
               </div>
               <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>
+              {stat.sublabel && (
+                <div className="text-[10px] text-zinc-600 mt-1">{stat.sublabel}</div>
+              )}
             </div>
           )
         })}
@@ -105,9 +306,9 @@ export default function FinancialsView() {
         {/* Chart Area */}
         <div className="flex items-end gap-6 h-56 px-2">
           {financials.map((entry) => {
-            const budgetHeight = maxValue > 0 ? (entry.budget / maxValue) * 100 : 0
+            const budgetHeight = maxValue > 0 ? (monthlyBudget / maxValue) * 100 : 0
             const actualHeight = maxValue > 0 ? (entry.actual / maxValue) * 100 : 0
-            const isOverBudget = entry.actual > entry.budget
+            const isOverBudget = entry.actual > monthlyBudget
 
             return (
               <div key={entry.month} className="flex-1 flex flex-col items-center gap-2">
@@ -118,7 +319,7 @@ export default function FinancialsView() {
                     <div
                       className="w-full border-2 border-zinc-500 rounded-t-sm bg-transparent transition-all duration-500"
                       style={{ height: `${budgetHeight}%` }}
-                      title={`Budget: ${formatCurrency(entry.budget)}`}
+                      title={`Budget: ${formatCurrency(monthlyBudget)}`}
                     />
                   </div>
                   {/* Actual Bar (filled) */}
@@ -161,10 +362,10 @@ export default function FinancialsView() {
 
         {/* Table Rows */}
         {financials.map((entry, idx) => {
-          const variance = entry.budget - entry.actual
+          const variance = monthlyBudget - entry.actual
           const isOverBudget = variance < 0
-          const variancePercent = entry.budget > 0
-            ? ((entry.actual - entry.budget) / entry.budget * 100).toFixed(1)
+          const variancePercent = monthlyBudget > 0
+            ? ((entry.actual - monthlyBudget) / monthlyBudget * 100).toFixed(1)
             : '0.0'
 
           return (
@@ -180,7 +381,7 @@ export default function FinancialsView() {
 
               {/* Budget */}
               <span className="text-sm font-mono text-jarvis-muted text-right">
-                {formatCurrency(entry.budget)}
+                {formatCurrency(monthlyBudget)}
               </span>
 
               {/* Actual */}
@@ -235,9 +436,18 @@ export default function FinancialsView() {
       <div className="mt-4 flex items-center gap-2 px-2">
         <DollarSign size={12} className="text-jarvis-muted" />
         <span className="text-xs text-jarvis-muted">
-          All figures in USD. Burn rate calculated as trailing average across reported months.
+          All figures in USD. Monthly budget of {formatCurrency(monthlyBudget)} applies uniformly. Burn rate calculated as trailing average.
         </span>
       </div>
+
+      {/* Budget Edit Dialog */}
+      {showBudgetEdit && (
+        <BudgetEditDialog
+          currentBudget={monthlyBudget}
+          onSave={handleBudgetSave}
+          onClose={() => setShowBudgetEdit(false)}
+        />
+      )}
     </div>
   )
 }

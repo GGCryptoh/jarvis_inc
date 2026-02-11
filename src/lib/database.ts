@@ -108,7 +108,7 @@ export async function initDatabase(): Promise<Database> {
   try { db.run('ALTER TABLE ceo ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE missions ADD COLUMN recurring TEXT DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE missions ADD COLUMN created_by TEXT DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE missions ADD COLUMN created_at TEXT DEFAULT (datetime(\'now\'))'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE missions ADD COLUMN created_at TEXT DEFAULT NULL'); } catch { /* already exists */ }
 
   await persist();
   return db;
