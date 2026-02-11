@@ -106,6 +106,9 @@ export async function initDatabase(): Promise<Database> {
   try { db.run('ALTER TABLE agents ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE ceo ADD COLUMN desk_x REAL DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE ceo ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE missions ADD COLUMN recurring TEXT DEFAULT NULL'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE missions ADD COLUMN created_by TEXT DEFAULT NULL'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE missions ADD COLUMN created_at TEXT DEFAULT (datetime(\'now\'))'); } catch { /* already exists */ }
 
   await persist();
   return db;
@@ -447,11 +450,19 @@ export interface MissionRow {
   assignee: string | null;
   priority: string;
   due_date: string | null;
+  recurring: string | null;   // cron expression or null
+  created_by: string | null;  // founder name, CEO name, or agent name
+  created_at: string | null;  // ISO timestamp
 }
 
 export function loadMissions(): MissionRow[] {
   const results: MissionRow[] = [];
-  const stmt = getDB().prepare('SELECT id, title, status, assignee, priority, due_date FROM missions ORDER BY CASE priority WHEN \'critical\' THEN 0 WHEN \'high\' THEN 1 WHEN \'medium\' THEN 2 WHEN \'low\' THEN 3 END, due_date');
+  const stmt = getDB().prepare(
+    `SELECT id, title, status, assignee, priority, due_date, recurring, created_by, created_at
+     FROM missions
+     ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'review' THEN 1 WHEN 'backlog' THEN 2 WHEN 'done' THEN 3 END,
+              CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END`
+  );
   while (stmt.step()) {
     results.push(stmt.getAsObject() as unknown as MissionRow);
   }
@@ -459,22 +470,39 @@ export function loadMissions(): MissionRow[] {
   return results;
 }
 
-export function saveMission(mission: MissionRow): void {
+export function saveMission(mission: Partial<MissionRow> & { id: string; title: string }): void {
   getDB().run(
-    `INSERT INTO missions (id, title, status, assignee, priority, due_date)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO missions (id, title, status, assignee, priority, due_date, recurring, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title,
        status = excluded.status,
        assignee = excluded.assignee,
        priority = excluded.priority,
-       due_date = excluded.due_date`,
-    [mission.id, mission.title, mission.status, mission.assignee, mission.priority, mission.due_date],
+       due_date = excluded.due_date,
+       recurring = excluded.recurring,
+       created_by = excluded.created_by`,
+    [
+      mission.id,
+      mission.title,
+      mission.status ?? 'backlog',
+      mission.assignee ?? null,
+      mission.priority ?? 'medium',
+      mission.due_date ?? null,
+      mission.recurring ?? null,
+      mission.created_by ?? null,
+      mission.created_at ?? new Date().toISOString(),
+    ],
   );
   persist();
 }
 
-export function seedMissionsIfEmpty(missions: MissionRow[]): void {
+export function updateMissionStatus(id: string, status: string): void {
+  getDB().run('UPDATE missions SET status = ? WHERE id = ?', [status, id]);
+  persist();
+}
+
+export function seedMissionsIfEmpty(missions: Array<Omit<MissionRow, 'recurring' | 'created_by' | 'created_at'> & Partial<Pick<MissionRow, 'recurring' | 'created_by' | 'created_at'>>>): void {
   const stmt = getDB().prepare('SELECT COUNT(*) as cnt FROM missions');
   stmt.step();
   const row = stmt.getAsObject() as { cnt: number };
@@ -482,8 +510,8 @@ export function seedMissionsIfEmpty(missions: MissionRow[]): void {
   if (row.cnt > 0) return;
   for (const m of missions) {
     getDB().run(
-      'INSERT OR IGNORE INTO missions (id, title, status, assignee, priority, due_date) VALUES (?, ?, ?, ?, ?, ?)',
-      [m.id, m.title, m.status, m.assignee, m.priority, m.due_date],
+      'INSERT OR IGNORE INTO missions (id, title, status, assignee, priority, due_date, recurring, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [m.id, m.title, m.status, m.assignee, m.priority, m.due_date, m.recurring ?? null, m.created_by ?? null, m.created_at ?? null],
     );
   }
   persist();

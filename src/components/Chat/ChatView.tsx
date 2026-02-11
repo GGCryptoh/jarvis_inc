@@ -69,14 +69,41 @@ function generateTestResponse(query: string): string {
 // Main component
 // ---------------------------------------------------------------------------
 
+// 20 random CEO greetings for post-meeting returns
+const CEO_GREETINGS = [
+  'Hey {founder}, what can I help with today?',
+  'Welcome back, {founder}. What\'s on your mind?',
+  'Good to see you, {founder}. Need anything?',
+  '{founder}, reporting in. How can I assist?',
+  'Standing by, {founder}. What are we working on?',
+  'Ready when you are, {founder}.',
+  'What\'s the play today, {founder}?',
+  '{founder} — let me know if you need anything.',
+  'Back at it. What do you need from me, {founder}?',
+  'At your service, {founder}. Fire away.',
+  'Hey {founder}. I\'ve been keeping an eye on things.',
+  'Good timing, {founder}. I was just reviewing our operations.',
+  '{founder}, what\'s our next move?',
+  'All systems nominal. How can I help, {founder}?',
+  'Checking in, {founder}. What do you need?',
+  'Ready for orders, {founder}.',
+  '{founder}! Let\'s make things happen.',
+  'Hey boss. What\'s the priority right now?',
+  '{founder}, I\'m all ears. What do you need?',
+  'Glad you\'re here, {founder}. What should we focus on?',
+];
+
+function randomGreeting(founderName: string): string {
+  const idx = Math.floor(Math.random() * CEO_GREETINGS.length);
+  return CEO_GREETINGS[idx].replace(/\{founder\}/g, founderName);
+}
+
 export default function ChatView() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [step, setStep] = useState<ConvoStep>('welcome');
   const [typing, setTyping] = useState(false);
-  const [meetingDone, setMeetingDone] = useState(false);
-  const [llmEnabled, setLlmEnabled] = useState(false);
   const [needsApprovalNav, setNeedsApprovalNav] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,14 +121,20 @@ export default function ChatView() {
   const founderName = founderInfo.current?.founderName ?? 'Founder';
   const orgName = founderInfo.current?.orgName ?? 'the organization';
 
-  // Check if meeting already done
-  useEffect(() => {
-    if (getSetting('ceo_meeting_done')) {
-      setMeetingDone(true);
-      const skills = loadSkills();
-      setLlmEnabled(skills.some(s => s.id === FIRST_SKILL_ID && s.enabled));
-    }
-  }, []);
+  // Synchronous init — prevents race condition where onboarding starts before meetingDone is set
+  const [meetingDone] = useState(() => !!getSetting('ceo_meeting_done'));
+
+  // LLM enabled = skill enabled AND API key present for the skill's service
+  const [llmEnabled] = useState(() => {
+    const skills = loadSkills();
+    const skillEnabled = skills.some(s => s.id === FIRST_SKILL_ID && s.enabled);
+    if (!skillEnabled) return false;
+    const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID);
+    if (!firstSkill) return false;
+    const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
+    const service = getRequiredService(firstSkill, model);
+    return service ? hasApiKey(service) : false;
+  });
 
   // Auto-scroll
   useEffect(() => {
@@ -225,7 +258,6 @@ export default function ChatView() {
           `Want to take it for a spin? Ask me to research anything and I'll show you what it can do.`,
           2000,
         );
-        setLlmEnabled(true);
         setStep('waiting_test_input');
         setTimeout(() => inputRef.current?.focus(), 100);
         return;
@@ -293,10 +325,8 @@ export default function ChatView() {
         2500,
       );
 
-      setLlmEnabled(true);
       finalizeMeeting(missionTextRef.current);
       setStep('done');
-      setMeetingDone(true);
     }
   }, [input, step, typeWithDelay, orgName, ceoName]);
 
@@ -373,7 +403,6 @@ export default function ChatView() {
 
     finalizeMeeting(missionTextRef.current);
     setStep('done');
-    setMeetingDone(true);
   }, [step, typeWithDelay]);
 
   // Save meeting artifacts
@@ -390,9 +419,9 @@ export default function ChatView() {
     });
   }
 
-  // Post-meeting screen
+  // Post-meeting screen — show greeting instead of restarting onboarding
   if (meetingDone && messages.length === 0) {
-    return <PostMeetingChat ceoName={ceoName} llmEnabled={llmEnabled} />;
+    return <PostMeetingChat ceoName={ceoName} founderName={founderName} llmEnabled={llmEnabled} />;
   }
 
   const inputEnabled = step === 'waiting_input' || step === 'waiting_test_input';
@@ -416,7 +445,7 @@ export default function ChatView() {
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="font-pixel text-[7px] tracking-widest text-emerald-400">
-              LLM: ENABLED
+              LLM: CONNECTED
             </span>
           </div>
         )}
@@ -599,11 +628,12 @@ function SingleSkillApproval({
 }
 
 // ---------------------------------------------------------------------------
-// Post-meeting screen
+// Post-meeting screen — CEO greeting + mission summary
 // ---------------------------------------------------------------------------
 
-function PostMeetingChat({ ceoName, llmEnabled }: { ceoName: string; llmEnabled: boolean }) {
+function PostMeetingChat({ ceoName, founderName, llmEnabled }: { ceoName: string; founderName: string; llmEnabled: boolean }) {
   const mission = getSetting('primary_mission');
+  const [greeting] = useState(() => randomGreeting(founderName));
 
   return (
     <div className="flex-1 flex flex-col h-full">
@@ -624,17 +654,30 @@ function PostMeetingChat({ ceoName, llmEnabled }: { ceoName: string; llmEnabled:
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="font-pixel text-[7px] tracking-widest text-emerald-400">
-              LLM: ENABLED
+              LLM: CONNECTED
             </span>
           </div>
         )}
       </div>
 
-      {/* Mission summary + placeholder */}
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center max-w-lg px-6">
-          {mission && (
-            <div className="mb-8 p-4 rounded-lg bg-zinc-800/40 border border-zinc-700/40">
+      {/* Greeting + mission */}
+      <div ref={undefined} className="flex-1 overflow-y-auto no-scrollbar px-6 py-4 space-y-4">
+        {/* CEO greeting bubble */}
+        <div className="flex justify-start">
+          <div className="max-w-[70%] rounded-lg px-4 py-3 bg-zinc-800/60 border border-zinc-700/50">
+            <div className="font-pixel text-[7px] tracking-wider text-yellow-300/70 mb-1.5">
+              CEO {ceoName}
+            </div>
+            <div className="font-pixel text-[9px] tracking-wider leading-relaxed text-zinc-300">
+              {greeting}
+            </div>
+          </div>
+        </div>
+
+        {/* Mission card */}
+        {mission && (
+          <div className="flex justify-center pt-2">
+            <div className="max-w-md w-full p-4 rounded-lg bg-zinc-800/40 border border-zinc-700/40">
               <div className="font-pixel text-[7px] tracking-widest text-emerald-400/70 mb-2">
                 PRIMARY MISSION
               </div>
@@ -642,29 +685,31 @@ function PostMeetingChat({ ceoName, llmEnabled }: { ceoName: string; llmEnabled:
                 {mission}
               </div>
             </div>
-          )}
-          <div className="font-pixel text-[9px] tracking-wider text-zinc-500 leading-relaxed">
-            REAL-TIME CHAT WITH CEO {ceoName.toUpperCase()} COMING SOON.
-            <br />
-            <span className="text-zinc-600">
-              AI-POWERED CONVERSATIONS WILL BE AVAILABLE ONCE THE BACKEND IS CONNECTED.
-            </span>
+          </div>
+        )}
+
+        {/* Status note */}
+        <div className="flex justify-center pt-2">
+          <div className="font-pixel text-[7px] tracking-wider text-zinc-600 text-center leading-relaxed">
+            {llmEnabled
+              ? 'AI-powered conversations active. Type a message below.'
+              : 'Provide an API key in the Vault to enable AI-powered conversations.'}
           </div>
         </div>
       </div>
 
-      {/* Disabled input */}
+      {/* Input — enabled when llmEnabled, otherwise placeholder */}
       <div className="px-6 py-4 border-t border-zinc-800">
         <div className="flex items-center gap-3">
           <input
             type="text"
-            disabled
-            placeholder="AI chat coming soon..."
-            className="flex-1 bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-4 py-2.5 font-pixel text-[9px] tracking-wider text-zinc-200 placeholder-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={!llmEnabled}
+            placeholder={llmEnabled ? 'Message CEO...' : 'Add an API key in the Vault to chat...'}
+            className="flex-1 bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-4 py-2.5 font-pixel text-[9px] tracking-wider text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
           />
           <button
-            disabled
-            className="w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 disabled:opacity-30 disabled:cursor-not-allowed"
+            disabled={!llmEnabled}
+            className="w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <Send size={16} />
           </button>

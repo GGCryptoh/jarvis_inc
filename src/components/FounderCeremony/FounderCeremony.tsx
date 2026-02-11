@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { setSetting } from '../../lib/database';
+import { setSetting, saveMission } from '../../lib/database';
 
 interface FounderCeremonyProps {
   onComplete: () => void;
@@ -120,10 +120,22 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
 
   function handleActivate() {
     if (!founderName.trim() || !orgName.trim()) return;
+    const name = founderName.trim();
     // Write to SQLite
-    setSetting('founder_name', founderName.trim());
+    setSetting('founder_name', name);
     setSetting('org_name', orgName.trim());
     setSetting('created_at', new Date().toISOString());
+    // Seed milestone mission
+    saveMission({
+      id: 'mission-founder-ceremony',
+      title: 'Register Founder & Initialize Systems',
+      status: 'done',
+      assignee: name,
+      priority: 'critical',
+      created_by: name,
+      created_at: new Date().toISOString(),
+      due_date: null,
+    });
     setPhase('activating');
   }
 

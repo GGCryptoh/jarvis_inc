@@ -1,14 +1,15 @@
-import { missions } from '../../data/dummyData'
-import type { Mission } from '../../types'
+import { useState } from 'react'
+import { RefreshCw } from 'lucide-react'
+import { loadMissions, type MissionRow } from '../../lib/database'
 
-const priorityColor: Record<Mission['priority'], string> = {
+const priorityColor: Record<string, string> = {
   critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
   high: 'bg-orange-500/20 text-orange-400 border border-orange-500/30',
   medium: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
   low: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
 }
 
-type ColumnKey = Mission['status']
+type ColumnKey = 'backlog' | 'in_progress' | 'review' | 'done'
 
 const columns: { key: ColumnKey; label: string }[] = [
   { key: 'backlog', label: 'BACKLOG' },
@@ -31,16 +32,42 @@ const countBadge: Record<ColumnKey, string> = {
   done: 'bg-slate-500/20 text-slate-400',
 }
 
-function MissionCard({ mission }: { mission: Mission }) {
+function RecurringBadge({ cron }: { cron: string }) {
+  const [showTooltip, setShowTooltip] = useState(false)
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <RefreshCw size={11} className="text-cyan-400" />
+      {showTooltip && (
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-[10px] text-zinc-300 whitespace-nowrap z-10 shadow-lg">
+          <span className="text-cyan-400 font-medium">Recurring:</span> {cron}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function MissionCard({ mission }: { mission: MissionRow }) {
+  function formatDate(iso: string | null): string {
+    if (!iso) return '—'
+    try {
+      return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    } catch { return '—' }
+  }
+
   return (
     <div className="bg-jarvis-bg border border-jarvis-border rounded-lg p-3 hover:border-white/[0.12] hover:bg-white/[0.02] transition-all duration-150 cursor-default">
-      <h3 className="text-sm font-medium text-zinc-200 leading-snug mb-2">
+      <h3 className="text-sm font-medium text-zinc-200 leading-snug mb-2 flex items-center gap-1.5">
         {mission.title}
+        {mission.recurring && <RecurringBadge cron={mission.recurring} />}
       </h3>
       <div className="flex items-center justify-between gap-2 mb-2">
-        <span className="text-xs text-jarvis-muted">{mission.assignee}</span>
+        <span className="text-xs text-jarvis-muted">{mission.assignee ?? '—'}</span>
         <span
-          className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${priorityColor[mission.priority]}`}
+          className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${priorityColor[mission.priority] ?? 'bg-zinc-500/20 text-zinc-400'}`}
         >
           {mission.priority}
         </span>
@@ -52,22 +79,27 @@ function MissionCard({ mission }: { mission: Mission }) {
           <path d="M4 1V3.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
           <path d="M8 1V3.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
         </svg>
-        <span className="text-[11px] tabular-nums text-zinc-500">{mission.dueDate}</span>
+        <span className="text-[11px] tabular-nums text-zinc-500">{formatDate(mission.created_at ?? mission.due_date)}</span>
       </div>
     </div>
   )
 }
 
 export default function MissionsView() {
-  const grouped: Record<ColumnKey, Mission[]> = {
+  const [dbMissions] = useState(() => loadMissions())
+
+  const grouped: Record<ColumnKey, MissionRow[]> = {
     backlog: [],
     in_progress: [],
     review: [],
     done: [],
   }
 
-  for (const mission of missions) {
-    grouped[mission.status].push(mission)
+  for (const mission of dbMissions) {
+    const status = mission.status as ColumnKey
+    if (grouped[status]) {
+      grouped[status].push(mission)
+    }
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { getFounderInfo, saveCEO, saveVaultEntry } from '../../lib/database';
+import { getFounderInfo, saveCEO, saveVaultEntry, saveMission } from '../../lib/database';
 import { MODEL_OPTIONS, getServiceForModel, SERVICE_KEY_HINTS } from '../../lib/models';
 
 interface CEOCeremonyProps {
@@ -119,12 +119,25 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
 
   function handleDesignate() {
     if (!ceoName.trim() || !effectivePhilosophy.trim()) return;
+    const ceoCallsign = ceoName.trim().toUpperCase();
     saveCEO({
-      name: ceoName.trim().toUpperCase(),
+      name: ceoCallsign,
       model,
       philosophy: effectivePhilosophy.trim(),
       risk_tolerance: riskTolerance,
       status: 'nominal',
+    });
+    // Seed milestone mission
+    const founderName = getFounderInfo()?.founderName ?? 'Founder';
+    saveMission({
+      id: 'mission-ceo-designation',
+      title: `Designate CEO ${ceoCallsign}`,
+      status: 'done',
+      assignee: founderName,
+      priority: 'critical',
+      created_by: founderName,
+      created_at: new Date().toISOString(),
+      due_date: null,
     });
     setPhase('api_key');
   }
