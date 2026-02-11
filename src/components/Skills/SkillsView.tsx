@@ -6,8 +6,9 @@ import {
   Shield,
   ClipboardCheck,
   Search,
+  RefreshCw,
 } from 'lucide-react';
-import { loadSkills, saveSkill, updateSkillModel, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService } from '../../lib/database';
+import { loadSkills, saveSkill, updateSkillModel, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService, logAudit } from '../../lib/database';
 import { MODEL_OPTIONS, getServiceForModel } from '../../lib/models';
 import { skills, type SkillDefinition } from '../../data/skillDefinitions';
 
@@ -128,6 +129,9 @@ export default function SkillsView() {
   // Disable confirmation dialog state
   const [disableConfirm, setDisableConfirm] = useState<SkillDefinition | null>(null);
 
+  // Skill refresh state
+  const [refreshStatus, setRefreshStatus] = useState<'idle' | 'refreshing' | 'done' | 'no_repo'>('idle');
+
   // Filtered skills
   const filteredSkills = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -159,6 +163,7 @@ export default function SkillsView() {
       return next;
     });
     setDisableConfirm(null);
+    logAudit(null, 'SKILL_OFF', `Disabled skill "${skill.name}"`, 'info');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillConfigs]);
 
@@ -187,6 +192,7 @@ export default function SkillsView() {
         next.set(skill.id, { enabled: true, model });
         return next;
       });
+      logAudit(null, 'SKILL_ON', `Enabled skill "${skill.name}"${model ? ` with ${model}` : ''}`, 'info');
     } else {
       // Turning OFF — show confirmation
       setDisableConfirm(skill);
@@ -229,13 +235,36 @@ export default function SkillsView() {
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto no-scrollbar p-6">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="font-pixel text-[14px] tracking-wider text-emerald-400 mb-2">
-          AGENT SKILLS
-        </h1>
-        <p className="font-pixel text-[8px] tracking-wider text-zinc-500 leading-relaxed">
-          CONFIGURE CAPABILITIES FOR YOUR AGENTS. TOGGLE SKILLS AND ASSIGN AI MODELS TO POWER THEM.
-        </p>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="font-pixel text-[14px] tracking-wider text-emerald-400 mb-2">
+            AGENT SKILLS
+          </h1>
+          <p className="font-pixel text-[8px] tracking-wider text-zinc-500 leading-relaxed">
+            CONFIGURE CAPABILITIES FOR YOUR AGENTS. TOGGLE SKILLS AND ASSIGN AI MODELS TO POWER THEM.
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            setRefreshStatus('refreshing');
+            // Simulate checking for a repo — no repo configured yet
+            setTimeout(() => {
+              setRefreshStatus('no_repo');
+              setTimeout(() => setRefreshStatus('idle'), 3000);
+            }, 1200);
+          }}
+          disabled={refreshStatus === 'refreshing'}
+          className={`flex items-center gap-1.5 px-3 py-2 font-pixel text-[7px] tracking-wider border rounded-md transition-colors flex-shrink-0 ${
+            refreshStatus === 'refreshing'
+              ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+              : refreshStatus === 'no_repo'
+                ? 'border-amber-500/30 text-amber-400 bg-amber-500/10'
+                : 'border-zinc-700/50 text-zinc-400 hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10'
+          }`}
+        >
+          <RefreshCw size={10} className={refreshStatus === 'refreshing' ? 'animate-spin' : ''} />
+          {refreshStatus === 'refreshing' ? 'CHECKING...' : refreshStatus === 'no_repo' ? 'NO REPO CONFIGURED' : 'REFRESH FROM REPO'}
+        </button>
       </div>
 
       {/* Search + Filter Bar */}
@@ -438,9 +467,9 @@ export default function SkillsView() {
       {/* Footer note */}
       <div className="mt-auto pt-6 border-t border-zinc-800">
         <p className="font-pixel text-[7px] tracking-wider text-zinc-600 leading-relaxed">
-          SKILLS WILL LOAD FROM YOUR CONFIGURED GITHUB REPOSITORY IN A FUTURE UPDATE.
+          {skills.length} SKILLS LOADED ({skills.filter(s => s.status === 'available').length} AVAILABLE, {skills.filter(s => s.status === 'coming_soon').length} COMING SOON).
           <br />
-          TOGGLE SKILLS AND ASSIGN MODELS TO CONFIGURE WHAT YOUR AGENTS CAN DO.
+          CONFIGURE A GITHUB REPO TO SYNC CUSTOM SKILLS VIA THE REFRESH BUTTON.
         </p>
       </div>
 

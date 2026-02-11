@@ -106,6 +106,7 @@ export async function initDatabase(): Promise<Database> {
   try { db.run('ALTER TABLE agents ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE ceo ADD COLUMN desk_x REAL DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE ceo ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE ceo ADD COLUMN archetype TEXT DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE missions ADD COLUMN recurring TEXT DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE missions ADD COLUMN created_by TEXT DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE missions ADD COLUMN created_at TEXT DEFAULT NULL'); } catch { /* already exists */ }
@@ -239,6 +240,7 @@ export interface CEORow {
   status: string;
   desk_x: number | null;
   desk_y: number | null;
+  archetype: string | null;
 }
 
 /** Returns true when a CEO record exists. */
@@ -251,7 +253,7 @@ export function isCEOInitialized(): boolean {
 
 /** Load the CEO record (null if none). */
 export function loadCEO(): CEORow | null {
-  const stmt = getDB().prepare('SELECT id, name, model, philosophy, risk_tolerance, status, desk_x, desk_y FROM ceo LIMIT 1');
+  const stmt = getDB().prepare('SELECT id, name, model, philosophy, risk_tolerance, status, desk_x, desk_y, archetype FROM ceo LIMIT 1');
   if (stmt.step()) {
     const row = stmt.getAsObject() as unknown as CEORow;
     stmt.free();
@@ -264,15 +266,16 @@ export function loadCEO(): CEORow | null {
 /** Insert or update the CEO. */
 export function saveCEO(ceo: Omit<CEORow, 'id' | 'desk_x' | 'desk_y'>): void {
   getDB().run(
-    `INSERT INTO ceo (id, name, model, philosophy, risk_tolerance, status)
-     VALUES ('ceo', ?, ?, ?, ?, ?)
+    `INSERT INTO ceo (id, name, model, philosophy, risk_tolerance, status, archetype)
+     VALUES ('ceo', ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        model = excluded.model,
        philosophy = excluded.philosophy,
        risk_tolerance = excluded.risk_tolerance,
-       status = excluded.status`,
-    [ceo.name, ceo.model, ceo.philosophy, ceo.risk_tolerance, ceo.status],
+       status = excluded.status,
+       archetype = excluded.archetype`,
+    [ceo.name, ceo.model, ceo.philosophy, ceo.risk_tolerance, ceo.status, ceo.archetype ?? null],
   );
   persist();
 }
@@ -287,6 +290,40 @@ export function updateCEOStatus(status: string): void {
 export function saveCEODeskPosition(x: number, y: number): void {
   getDB().run("UPDATE ceo SET desk_x = ?, desk_y = ? WHERE id = 'ceo'", [x, y]);
   persist();
+}
+
+// ---------------------------------------------------------------------------
+// Audit logging
+// ---------------------------------------------------------------------------
+
+export interface AuditLogRow {
+  id: number;
+  timestamp: string;
+  agent: string | null;
+  action: string;
+  details: string | null;
+  severity: string;
+}
+
+/** Write to the immutable audit log. */
+export function logAudit(agent: string | null, action: string, details: string | null, severity: 'info' | 'warning' | 'error' = 'info'): void {
+  getDB().run(
+    'INSERT INTO audit_log (agent, action, details, severity) VALUES (?, ?, ?, ?)',
+    [agent, action, details, severity],
+  );
+  persist();
+}
+
+/** Load audit log entries (newest first). */
+export function loadAuditLog(limit = 200): AuditLogRow[] {
+  const results: AuditLogRow[] = [];
+  const stmt = getDB().prepare('SELECT id, timestamp, agent, action, details, severity FROM audit_log ORDER BY id DESC LIMIT ?');
+  stmt.bind([limit]);
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as AuditLogRow);
+  }
+  stmt.free();
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +536,27 @@ export function saveMission(mission: Partial<MissionRow> & { id: string; title: 
 
 export function updateMissionStatus(id: string, status: string): void {
   getDB().run('UPDATE missions SET status = ? WHERE id = ?', [status, id]);
+  persist();
+}
+
+/** Update multiple mission fields at once. */
+export function updateMission(id: string, fields: Partial<Pick<MissionRow, 'title' | 'status' | 'assignee' | 'priority' | 'due_date' | 'recurring'>>): void {
+  const sets: string[] = [];
+  const vals: (string | null)[] = [];
+  if (fields.title !== undefined) { sets.push('title = ?'); vals.push(fields.title); }
+  if (fields.status !== undefined) { sets.push('status = ?'); vals.push(fields.status); }
+  if (fields.assignee !== undefined) { sets.push('assignee = ?'); vals.push(fields.assignee); }
+  if (fields.priority !== undefined) { sets.push('priority = ?'); vals.push(fields.priority); }
+  if (fields.due_date !== undefined) { sets.push('due_date = ?'); vals.push(fields.due_date); }
+  if (fields.recurring !== undefined) { sets.push('recurring = ?'); vals.push(fields.recurring); }
+  if (sets.length === 0) return;
+  getDB().run(`UPDATE missions SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+  persist();
+}
+
+/** Delete a mission by ID. */
+export function deleteMission(id: string): void {
+  getDB().run('DELETE FROM missions WHERE id = ?', [id]);
   persist();
 }
 

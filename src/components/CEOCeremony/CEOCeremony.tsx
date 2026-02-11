@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { getFounderInfo, saveCEO, saveVaultEntry, saveMission } from '../../lib/database';
-import { MODEL_OPTIONS, getServiceForModel, SERVICE_KEY_HINTS } from '../../lib/models';
+import { getFounderInfo, saveCEO, saveVaultEntry, saveMission, logAudit } from '../../lib/database';
+import { MODEL_OPTIONS, getServiceForModel, SERVICE_KEY_HINTS, validateApiKeyFormat } from '../../lib/models';
+import { Check, X as XIcon, AlertTriangle } from 'lucide-react';
 
 interface CEOCeremonyProps {
   onComplete: () => void;
 }
 
-type Phase = 'intro' | 'reveal' | 'form' | 'api_key' | 'activating' | 'done';
+type Phase = 'intro' | 'reveal' | 'form' | 'archetype' | 'api_key' | 'activating' | 'done';
 
 const PHILOSOPHY_PRESETS = [
   'Move fast, break things',
@@ -22,6 +23,21 @@ const ACTIVATION_MESSAGES = [
   { threshold: 85, text: 'CEO ONLINE.' },
 ];
 
+// ---------------------------------------------------------------------------
+// CEO Personality Archetypes
+// ---------------------------------------------------------------------------
+
+const CEO_ARCHETYPES = [
+  { id: 'wharton_mba', name: 'WHARTON MBA', emoji: '\u{1F4CA}', vibe: 'Polished, strategic, KPI-obsessed' },
+  { id: 'wall_street', name: 'WALL ST SHARK', emoji: '\u{1F988}', vibe: 'Aggressive, numbers-first, blunt' },
+  { id: 'mit_engineer', name: 'MIT ENGINEER', emoji: '\u{2699}\u{FE0F}', vibe: 'Precise, first-principles, systematic' },
+  { id: 'sv_founder', name: 'SV FOUNDER', emoji: '\u{1F680}', vibe: 'Visionary, 10x thinking, ship fast' },
+  { id: 'beach_bum', name: 'BEACH BUM', emoji: '\u{1F3D6}\u{FE0F}', vibe: 'Laid-back, zen, surprisingly wise' },
+  { id: 'military_cmd', name: 'COMMANDER', emoji: '\u{1F396}\u{FE0F}', vibe: 'Disciplined, mission-first, crisp' },
+  { id: 'creative_dir', name: 'CREATIVE DIR', emoji: '\u{1F3A8}', vibe: 'Aesthetic, intuitive, brand-first' },
+  { id: 'professor', name: 'PROFESSOR', emoji: '\u{1F4DA}', vibe: 'Thorough, evidence-based, cautious' },
+] as const;
+
 export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   const [phase, setPhase] = useState<Phase>('intro');
   const [visibleLines, setVisibleLines] = useState<string[]>([]);
@@ -35,7 +51,12 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   const [showCustomPhilosophy, setShowCustomPhilosophy] = useState(false);
   const [riskTolerance, setRiskTolerance] = useState<'conservative' | 'moderate' | 'aggressive'>('moderate');
 
+  // Archetype state
+  const [archetype, setArchetype] = useState<string | null>(null);
+
+  // API key state
   const [apiKey, setApiKey] = useState('');
+  const [showSkipConfirm, setShowSkipConfirm] = useState(false);
 
   const [activationProgress, setActivationProgress] = useState(0);
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -78,7 +99,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
     return () => timers.forEach(clearTimeout);
   }, [phase, founderName]);
 
-  // Phase: reveal -> form (extra time to read the text)
+  // Phase: reveal -> form
   useEffect(() => {
     if (phase !== 'reveal') return;
     const t = setTimeout(() => setPhase('form'), 8000);
@@ -119,26 +140,10 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
 
   function handleDesignate() {
     if (!ceoName.trim() || !effectivePhilosophy.trim()) return;
-    const ceoCallsign = ceoName.trim().toUpperCase();
-    saveCEO({
-      name: ceoCallsign,
-      model,
-      philosophy: effectivePhilosophy.trim(),
-      risk_tolerance: riskTolerance,
-      status: 'nominal',
-    });
-    // Seed milestone mission
-    const founderName = getFounderInfo()?.founderName ?? 'Founder';
-    saveMission({
-      id: 'mission-ceo-designation',
-      title: `Designate CEO ${ceoCallsign}`,
-      status: 'done',
-      assignee: founderName,
-      priority: 'critical',
-      created_by: founderName,
-      created_at: new Date().toISOString(),
-      due_date: null,
-    });
+    setPhase('archetype');
+  }
+
+  function handleArchetypeConfirm() {
     setPhase('api_key');
   }
 
@@ -150,8 +155,39 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
     return key.slice(0, 10) + '\u2022'.repeat(Math.min(key.length - 10, 8));
   }
 
+  // API key format validation
+  const keyValidation = validateApiKeyFormat(service, apiKey);
+  const keyLongEnough = apiKey.trim().length >= 10;
+
+  function persistCEO() {
+    const ceoCallsign = ceoName.trim().toUpperCase();
+    saveCEO({
+      name: ceoCallsign,
+      model,
+      philosophy: effectivePhilosophy.trim(),
+      risk_tolerance: riskTolerance,
+      status: 'nominal',
+      archetype: archetype,
+    });
+    // Seed milestone mission
+    const fName = getFounderInfo()?.founderName ?? 'Founder';
+    saveMission({
+      id: 'mission-ceo-designation',
+      title: `Designate CEO ${ceoCallsign}`,
+      status: 'done',
+      assignee: fName,
+      priority: 'critical',
+      created_by: fName,
+      created_at: new Date().toISOString(),
+      due_date: null,
+    });
+    logAudit(ceoCallsign, 'CEO_HIRED', `CEO "${ceoCallsign}" designated with ${model}, archetype: ${archetype ?? 'none'}`, 'info');
+  }
+
   function handleHireCEO() {
-    if (apiKey.trim().length < 10) return;
+    if (!keyValidation.valid && keyLongEnough) return;
+    if (!keyLongEnough) return;
+    persistCEO();
     saveVaultEntry({
       id: `vault-${Date.now()}`,
       name: `${service} API Key`,
@@ -159,6 +195,13 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
       service,
       key_value: apiKey.trim(),
     });
+    logAudit(null, 'KEY_ADDED', `Added ${service} API key during CEO ceremony`, 'info');
+    setPhase('activating');
+  }
+
+  function handleSkipApiKey() {
+    persistCEO();
+    logAudit(null, 'KEY_SKIPPED', `Skipped API key for ${service} during CEO ceremony`, 'warning');
     setPhase('activating');
   }
 
@@ -330,7 +373,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
                       className="font-pixel text-[9px] tracking-wider"
                       style={{ color: '#ffb86c' }}
                     >
-                      ← PICK FROM PRESETS
+                      {'\u2190'} PICK FROM PRESETS
                     </button>
                   </div>
                 )}
@@ -372,8 +415,76 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
                   boxShadow: isValid ? `0 0 30px ${gold}33` : 'none',
                 }}
               >
-                ▶ DESIGNATE CEO
+                {'\u25B6'} NEXT: CHOOSE PERSONALITY
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Archetype selection phase */}
+        {phase === 'archetype' && (
+          <div className="animate-[fadeIn_0.6s_ease-out]">
+            <h1
+              className="font-pixel text-2xl tracking-wider mb-2 text-center"
+              style={{ color: gold, textShadow: `0 0 20px ${gold}4d` }}
+            >
+              CEO PERSONALITY
+            </h1>
+            <p className="font-pixel text-[10px] tracking-wider text-center mb-6" style={{ color: `${gold}80` }}>
+              Choose a personality archetype for {ceoName.toUpperCase()}. This shapes how your CEO communicates.
+            </p>
+
+            <div className="max-w-2xl mx-auto grid grid-cols-2 lg:grid-cols-4 gap-2 mb-6">
+              {CEO_ARCHETYPES.map(a => {
+                const selected = archetype === a.id;
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => setArchetype(selected ? null : a.id)}
+                    className="text-left p-3 border-2 rounded-sm transition-all duration-200"
+                    style={{
+                      borderColor: selected ? gold : '#3a3a5a',
+                      backgroundColor: selected ? `${gold}15` : 'transparent',
+                      boxShadow: selected ? `0 0 15px ${gold}20` : 'none',
+                    }}
+                  >
+                    <div className="text-xl mb-1">{a.emoji}</div>
+                    <div
+                      className="font-pixel text-[8px] tracking-wider mb-1"
+                      style={{ color: selected ? gold : '#d4d4d8' }}
+                    >
+                      {a.name}
+                    </div>
+                    <div
+                      className="font-pixel text-[6px] tracking-wider leading-relaxed"
+                      style={{ color: selected ? `${gold}b3` : '#71717a' }}
+                    >
+                      {a.vibe}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="max-w-lg mx-auto space-y-3">
+              <button
+                onClick={handleArchetypeConfirm}
+                className="w-full font-pixel text-sm tracking-[0.3em] py-4 rounded-sm border-2 transition-all duration-300"
+                style={{
+                  borderColor: gold,
+                  backgroundColor: `${gold}1a`,
+                  color: gold,
+                  cursor: 'pointer',
+                  boxShadow: `0 0 30px ${gold}33`,
+                }}
+              >
+                {'\u25B6'} {archetype ? 'CONTINUE' : 'SKIP ARCHETYPE'}
+              </button>
+              {!archetype && (
+                <p className="font-pixel text-[8px] tracking-wider text-center" style={{ color: '#71717a' }}>
+                  No archetype selected — your CEO will use a neutral personality
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -434,15 +545,31 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
                   placeholder="Paste your API key here"
                   className="w-full bg-black border-2 font-mono text-sm tracking-wider px-4 py-3 rounded-sm focus:outline-none transition-colors placeholder:opacity-30"
                   style={{
-                    borderColor: apiKey.length >= 10 ? '#50fa7b80' : `${gold}4d`,
-                    color: apiKey.length >= 10 ? '#50fa7b' : gold,
+                    borderColor: keyValidation.valid ? '#50fa7b80' : apiKey.length > 0 ? '#ff5555aa' : `${gold}4d`,
+                    color: keyValidation.valid ? '#50fa7b' : gold,
                   }}
-                  onFocus={e => (e.target.style.borderColor = apiKey.length >= 10 ? '#50fa7b' : `${gold}b3`)}
-                  onBlur={e => (e.target.style.borderColor = apiKey.length >= 10 ? '#50fa7b80' : `${gold}4d`)}
+                  onFocus={e => (e.target.style.borderColor = keyValidation.valid ? '#50fa7b' : `${gold}b3`)}
+                  onBlur={e => (e.target.style.borderColor = keyValidation.valid ? '#50fa7b80' : apiKey.length > 0 ? '#ff5555aa' : `${gold}4d`)}
                 />
+
+                {/* Validation feedback */}
                 {apiKey.length > 0 && (
-                  <div className="font-mono text-sm mt-2 tracking-wider" style={{ color: '#50fa7b' }}>
-                    {maskKey(apiKey)}
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="font-mono text-sm tracking-wider" style={{ color: '#50fa7b' }}>
+                      {maskKey(apiKey)}
+                    </div>
+                    <div className="flex-1" />
+                    {keyValidation.valid ? (
+                      <div className="flex items-center gap-1.5">
+                        <Check size={12} className="text-green-400" />
+                        <span className="font-pixel text-[8px] tracking-wider text-green-400">{keyValidation.message}</span>
+                      </div>
+                    ) : keyValidation.message ? (
+                      <div className="flex items-center gap-1.5">
+                        <AlertTriangle size={12} className="text-red-400" />
+                        <span className="font-pixel text-[8px] tracking-wider text-red-400">{keyValidation.message}</span>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -450,18 +577,61 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
               {/* Hire CEO button */}
               <button
                 onClick={handleHireCEO}
-                disabled={apiKey.trim().length < 10}
+                disabled={!keyValidation.valid}
                 className="w-full font-pixel text-sm tracking-[0.3em] py-4 rounded-sm border-2 transition-all duration-300"
                 style={{
-                  borderColor: apiKey.trim().length >= 10 ? gold : `${gold}33`,
-                  backgroundColor: apiKey.trim().length >= 10 ? `${gold}1a` : 'transparent',
-                  color: apiKey.trim().length >= 10 ? gold : `${gold}4d`,
-                  cursor: apiKey.trim().length >= 10 ? 'pointer' : 'not-allowed',
-                  boxShadow: apiKey.trim().length >= 10 ? `0 0 30px ${gold}33` : 'none',
+                  borderColor: keyValidation.valid ? gold : `${gold}33`,
+                  backgroundColor: keyValidation.valid ? `${gold}1a` : 'transparent',
+                  color: keyValidation.valid ? gold : `${gold}4d`,
+                  cursor: keyValidation.valid ? 'pointer' : 'not-allowed',
+                  boxShadow: keyValidation.valid ? `0 0 30px ${gold}33` : 'none',
                 }}
               >
-                ▶ HIRE CEO
+                {'\u25B6'} HIRE CEO
               </button>
+
+              {/* Skip for now */}
+              {!showSkipConfirm ? (
+                <button
+                  onClick={() => setShowSkipConfirm(true)}
+                  className="w-full font-pixel text-[9px] tracking-wider py-2 transition-colors"
+                  style={{ color: '#71717a' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#a1a1aa')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#71717a')}
+                >
+                  SKIP FOR NOW {'\u2192'}
+                </button>
+              ) : (
+                <div className="border-2 rounded-sm p-4" style={{ borderColor: '#ffb86c40', backgroundColor: '#ffb86c08' }}>
+                  <div className="flex items-start gap-3 mb-3">
+                    <AlertTriangle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-pixel text-[9px] tracking-wider text-amber-300 mb-1">
+                        SKIP API KEY?
+                      </div>
+                      <div className="font-pixel text-[7px] tracking-wider leading-relaxed" style={{ color: '#a1a1aa' }}>
+                        Your CEO will be created but won't be able to make API calls until you add a key in The Vault.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSkipApiKey}
+                      className="flex-1 font-pixel text-[9px] tracking-wider py-2 border rounded-sm transition-colors"
+                      style={{ borderColor: '#ffb86c60', color: '#ffb86c', backgroundColor: '#ffb86c10' }}
+                    >
+                      YES, SKIP
+                    </button>
+                    <button
+                      onClick={() => setShowSkipConfirm(false)}
+                      className="flex-1 font-pixel text-[9px] tracking-wider py-2 border rounded-sm transition-colors"
+                      style={{ borderColor: '#3a3a5a', color: '#9ca3af' }}
+                    >
+                      CANCEL
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

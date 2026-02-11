@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { DollarSign, TrendingDown, TrendingUp, Minus, Pencil, X } from 'lucide-react'
-import { getSetting, setSetting } from '../../lib/database'
+import { getSetting, setSetting, logAudit } from '../../lib/database'
 import { financials } from '../../data/dummyData'
 
 function formatCurrency(value: number): string {
@@ -182,9 +182,11 @@ export default function FinancialsView() {
   const [showBudgetEdit, setShowBudgetEdit] = useState(false);
 
   function handleBudgetSave(value: number) {
+    const oldBudget = monthlyBudget;
     setSetting('monthly_budget', String(value));
     setMonthlyBudget(value);
     setShowBudgetEdit(false);
+    logAudit(null, 'BUDGET', `Monthly budget changed from $${oldBudget} to $${value}`, 'info');
   }
 
   const totalBudget = monthlyBudget * 12; // annual from monthly

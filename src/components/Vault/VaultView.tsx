@@ -6,6 +6,7 @@ import {
   updateVaultEntry,
   deleteVaultEntry,
   getEntitiesUsingService,
+  logAudit,
 } from '../../lib/database';
 import type { VaultRow } from '../../lib/database';
 import { SERVICE_KEY_HINTS } from '../../lib/models';
@@ -68,6 +69,7 @@ export default function VaultView() {
     if (!formName.trim() || !formService.trim() || !formKey.trim()) return;
     if (editingEntry) {
       updateVaultEntry(editingEntry.id, { name: formName.trim(), key_value: formKey.trim() });
+      logAudit(null, 'KEY_UPDATED', `Updated "${formName.trim()}" (${editingEntry.service})`, 'info');
     } else {
       saveVaultEntry({
         id: `vault-${Date.now()}`,
@@ -76,6 +78,7 @@ export default function VaultView() {
         service: formService.trim(),
         key_value: formKey.trim(),
       });
+      logAudit(null, 'KEY_ADDED', `Added ${formType} "${formName.trim()}" for ${formService.trim()}`, 'info');
     }
     setModalOpen(false);
     refresh();
@@ -89,6 +92,7 @@ export default function VaultView() {
 
   function handleDeleteConfirm() {
     if (!deleteTarget) return;
+    logAudit(null, 'KEY_DELETED', `Deleted "${deleteTarget.name}" (${deleteTarget.service})`, 'warning');
     deleteVaultEntry(deleteTarget.id);
     setDeleteTarget(null);
     setDeleteEntities([]);

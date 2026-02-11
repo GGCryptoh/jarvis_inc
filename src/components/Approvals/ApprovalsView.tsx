@@ -6,6 +6,7 @@ import {
   updateApprovalStatus,
   saveVaultEntry,
   saveSkill,
+  logAudit,
 } from '../../lib/database';
 import type { ApprovalRow } from '../../lib/database';
 import { SERVICE_KEY_HINTS } from '../../lib/models';
@@ -47,6 +48,7 @@ export default function ApprovalsView() {
     });
 
     updateApprovalStatus(approval.id, 'approved');
+    logAudit(null, 'APPROVED', `Provided ${service} API key for "${approval.title}"`, 'info');
     setKeyInputs(prev => {
       const next = { ...prev };
       delete next[approval.id];
@@ -64,11 +66,13 @@ export default function ApprovalsView() {
     }
 
     updateApprovalStatus(approval.id, 'approved');
+    logAudit(null, 'APPROVED', `Approved skill enable: "${approval.title}"`, 'info');
     refresh();
   }
 
   function handleDismiss(approval: ApprovalRow) {
     updateApprovalStatus(approval.id, 'dismissed');
+    logAudit(null, 'DISMISSED', `Dismissed: "${approval.title}"`, 'info');
     refresh();
   }
 

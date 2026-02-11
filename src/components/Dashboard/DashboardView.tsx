@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Pencil, X, Target, Check, RefreshCw, Crown } from 'lucide-react'
-import { getSetting, setSetting, loadMissions, loadAgents, loadCEO, type MissionRow, type AgentRow } from '../../lib/database'
+import { getSetting, setSetting, loadMissions, loadAgents, loadCEO, logAudit, type MissionRow, type AgentRow } from '../../lib/database'
 
 const priorityColor: Record<string, string> = {
   critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -92,6 +92,7 @@ function MissionCard() {
     const trimmed = draft.trim();
     if (!trimmed) return;
     setSetting('primary_mission', trimmed);
+    logAudit(null, 'MISSION_SET', `Primary mission updated: "${trimmed.slice(0, 80)}"`, 'info');
     setMission(trimmed);
     setEditing(false);
   }

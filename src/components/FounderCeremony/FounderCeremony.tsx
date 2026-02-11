@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { setSetting, saveMission } from '../../lib/database';
+import { setSetting, saveMission, logAudit } from '../../lib/database';
 
 interface FounderCeremonyProps {
   onComplete: () => void;
@@ -136,6 +136,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
       created_at: new Date().toISOString(),
       due_date: null,
     });
+    logAudit(name, 'FOUNDED', `Founder "${name}" registered org "${orgName.trim()}"`, 'info');
     setPhase('activating');
   }
 

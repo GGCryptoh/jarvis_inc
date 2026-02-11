@@ -11,7 +11,7 @@ import {
   generateDeskPositions,
   getDeskCountWithSpare,
 } from '../../lib/positionGenerator';
-import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions } from '../../lib/database';
+import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions, logAudit } from '../../lib/database';
 import type { AgentRow } from '../../lib/database';
 import { getServiceForModel } from '../../lib/models';
 import CRTFrame from './CRTFrame';
@@ -267,6 +267,7 @@ export default function SurveillanceView() {
 
     setAgents(prev => [...prev, newAgent]);
     setHireModalOpen(false);
+    logAudit(config.name, 'AGENT_HIRED', `Hired agent "${config.name}" (${config.role}) using ${config.model}`, 'info');
   }, [agents.length]);
 
   // ---- Edit an existing agent (persists to DB) ----
@@ -297,14 +298,17 @@ export default function SurveillanceView() {
     );
 
     setEditingAgent(null);
+    logAudit(config.name, 'AGENT_EDITED', `Edited agent "${config.name}" (${config.role})`, 'info');
   }, [editingAgent]);
 
   // ---- Fire (delete) an agent (persists to DB) ----
   const handleFire = useCallback((agentId: string) => {
+    const agent = agents.find(a => a.id === agentId);
+    logAudit(agent?.name ?? agentId, 'AGENT_FIRED', `Fired agent "${agent?.name ?? agentId}"`, 'warning');
     dbDeleteAgent(agentId);
     setAgents(prev => prev.filter(a => a.id !== agentId));
     setSelectedAgent(null);
-  }, []);
+  }, [agents]);
 
   // ---- Floor planner: handle click on office floor ----
   const handleFloorClick = useCallback((x: number, y: number) => {
