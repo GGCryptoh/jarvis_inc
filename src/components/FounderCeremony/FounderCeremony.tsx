@@ -318,7 +318,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
               SYSTEMS ONLINE
             </div>
             <div className="font-pixel text-sm text-pixel-green/60 tracking-wider">
-              Welcome aboard, {founderName}. Entering command center...
+              Welcome aboard, {founderName.toUpperCase()}. Entering command center...
             </div>
           </div>
         )}

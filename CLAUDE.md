@@ -7,6 +7,21 @@ a retro pixel art surveillance module (CRT scanlines, Amiga-style beveled
 windows, frame-by-frame sprite animations). Think: nuclear power plant control
 room with one monitor showing the actual reactor core.
 
+## Design Documents (`/AI/`)
+
+Detailed architecture docs live in the `AI/` directory. **Read these before making changes to related systems.**
+
+| Document | Covers |
+|----------|--------|
+| [`AI/CEO-Agent-System.md`](AI/CEO-Agent-System.md) | CEO autonomy: scheduler (5 options), decision engine, personality system, agent factory, skill assignment, task execution, DB schema extensions, Supabase Edge Function |
+| [`AI/CEO-Communication-Loop.md`](AI/CEO-Communication-Loop.md) | Proactive CEO behavior: trigger types, "Hey founder we need to chat!", action cards, notification system, prompt strategy (system + user prompts per tick and per task) |
+| [`AI/Chat-Onboarding-Flow.md`](AI/Chat-Onboarding-Flow.md) | Scripted onboarding: ConvoStep state machine, single-skill approval flow, approval sync (chat ↔ Approvals page), simulated test interaction, LLM: ENABLED badge |
+| [`AI/Approval-System.md`](AI/Approval-System.md) | Approval lifecycle: types (skill_enable, api_key_request, hire_agent, agent_action), cross-component sync via events, rendering per type, future Supabase Realtime |
+| [`AI/Skills-Architecture.md`](AI/Skills-Architecture.md) | 18 skill definitions, categories, connection types, skill recommender, skill-agent assignment model (CEO assigns per agent), seed skills repo structure |
+| [`AI/Data-Layer.md`](AI/Data-Layer.md) | 8 DB tables (current), 4 future tables, sql.js singleton, dual-mode plan (demo vs Supabase), DataService interface, model→service mapping |
+| [`AI/Surveillance.md`](AI/Surveillance.md) | Pixel office: floor tiers, sprite system, animation states, movement, ceremonies (walk-in, hire), position system, CSS classes, color palettes |
+| [`AI/Ceremonies.md`](AI/Ceremonies.md) | All ceremony flows: Founder, CEO, Walk-in, Agent Hire — state machines, triggers, settings, sound, door animations |
+
 ## Tech Stack
 - **React 18** + **TypeScript** + **Vite 6**
 - **Tailwind CSS 3** — custom dual-palette in `tailwind.config.js`
@@ -14,7 +29,7 @@ room with one monitor showing the actual reactor core.
 - **Lucide React** — icon library
 - **sql.js** — SQLite compiled to WASM, runs in browser, persisted to IndexedDB
 - **Web Audio API** — retro sound effects (success jingle, no external audio files)
-- **No backend** — fully client-side, no server, no API calls
+- **No backend yet** — fully client-side; Supabase planned for full mode (see `AI/Data-Layer.md`)
 
 ## Quick Commands
 ```bash
@@ -44,14 +59,10 @@ main.tsx → BrowserRouter → App.tsx
 ```
 
 ### Data Layer
+- **Full details**: See `AI/Data-Layer.md`
 - **Singleton**: `src/lib/database.ts` — one global `db` instance
 - **Boot**: `initDatabase()` loads WASM, restores from IndexedDB or creates fresh
-- **Schema**: 5 tables:
-  - `settings` — key/value pairs (founder_name, org_name, ceo_walked_in, ceo_meeting_done, primary_mission)
-  - `agents` — id, name, role, color, skin_tone, model, created_at
-  - `missions` — id, title, status, assignee, priority, due_date
-  - `audit_log` — id, timestamp, agent, action, details, severity
-  - `ceo` — id, name, model, philosophy, risk_tolerance, status, created_at
+- **Schema**: 8 tables: `settings`, `agents`, `ceo`, `missions`, `audit_log`, `vault`, `approvals`, `skills`
 - **Persistence**: Every write calls `persist()` → exports DB binary → saves to IndexedDB
 - **Reset**: `resetDatabase()` closes DB, deletes IndexedDB entry, nulls singleton
 
@@ -59,11 +70,11 @@ main.tsx → BrowserRouter → App.tsx
 | Tab | Route | Icon | Description |
 |-----|-------|------|-------------|
 | Dashboard | `/dashboard` | BarChart3 | KPI stats, ops table, agent fleet |
-| Chat | `/chat` | MessageSquare | CEO onboarding conversation + future AI chat |
-| Approvals | `/approvals` | ClipboardCheck | Pending approval queue (placeholder) |
+| Chat | `/chat` | MessageSquare | CEO onboarding → future AI chat |
+| Approvals | `/approvals` | ClipboardCheck | Pending approval queue (skill_enable, api_key_request) |
 | Missions | `/missions` | Target | 4-column Kanban board |
 | Surveillance | `/surveillance` | Cctv | Pixel office with live agent sprites |
-| Skills | `/skills` | Blocks | Agent capability configuration |
+| Skills | `/skills` | Blocks | 18 skills in 4 categories, toggles + model selectors |
 | The Vault | `/vault` | Shield | API keys & credentials |
 | Audit | `/audit` | ScrollText | Filterable event log |
 | Financials | `/financials` | DollarSign | Budget vs actual charts |
@@ -80,48 +91,50 @@ main.tsx → BrowserRouter → App.tsx
 | **Animations** | Smooth CSS transitions | Frame-by-frame sprite animations |
 | **CSS classes** | Tailwind `jarvis-*` namespace | `.retro-window`, `.retro-button`, `.retro-inset` |
 
+## Key Flows
+
+### Ceremonies → See `AI/Ceremonies.md`
+1. **FounderCeremony** — Terminal boot → callsign + org name form → activation
+2. **CEOCeremony** — CEO designation form → progress bar → activation
+3. **CEO Walk-in** (SurveillanceView) — Door opens → walk → celebrate → jingle → desk
+4. **Agent Hire** — Door opens → walk → celebrate → jingle → desk
+
+### CEO Chat Onboarding → See `AI/Chat-Onboarding-Flow.md`
+State machine: `welcome → waiting_input → acknowledging → waiting_skill_approve → waiting_test_input → testing_skill → done`
+
+1. CEO welcomes founder, asks primary mission
+2. Founder types mission
+3. CEO acknowledges, recommends skills, suggests enabling Research Web
+4. Single APPROVE button — syncs with Approvals page
+5. After approval: CEO offers test — founder types query, gets simulated research
+6. LLM: ENABLED badge appears in chat header
+7. CTA: GO TO SURVEILLANCE
+
+### Approval System → See `AI/Approval-System.md`
+- Types: `skill_enable`, `api_key_request` (future: `hire_agent`, `agent_action`, `budget_override`)
+- Cross-component sync via `window.dispatchEvent(new Event('approvals-changed'))`
+- NavigationRail badge shows pending count
+
+### Skills → See `AI/Skills-Architecture.md`
+- 18 skills across 4 categories (communication, research, creation, analysis)
+- Skill-agent assignment: CEO assigns specific skills per agent, NOT global
+- Skills page: grid with toggles, model selectors
+- Skill recommender: keyword matching mission text → skill IDs
+- Seed repo: `seed_skills_repo/` mirrors https://github.com/GGCryptoh/jarvis_inc_skills
+
+### CEO Autonomy → See `AI/CEO-Agent-System.md` + `AI/CEO-Communication-Loop.md`
+- Scheduler: 5 options documented (Option B for demo, Option E for Supabase full mode)
+- Decision engine: evaluates state → produces actions each tick
+- Proactive chat: CEO initiates conversations, requests meetings
+- Agent task execution: persistent conversation in `task_executions`, mid-task approvals
+
 ## Key Components
 
-### Ceremonies
-1. **FounderCeremony** — Terminal boot sequence → callsign + org name form → activation
-2. **CEOCeremony** — CEO designation form (callsign, model, philosophy, risk tolerance) → progress bar → activation
-3. **CEO Walk-in** (in SurveillanceView) — Multi-stage: door opens → walk to center → celebrate → jingle → walk to desk
-4. **Agent Hire Ceremony** — Door opens → walk to center → brief celebrate → jingle → walk to desk
-
-### CEO Walk-in Ceremony (SurveillanceView)
-State machine with `ceoStage`:
-```
-entering       → Door opens, CEO walks from entrance to center {x:45, y:50}
-celebrating    → Door closes, dance animation, success jingle plays (~2.5s)
-walking_to_desk → CEO walks to CEO_OFFICE_POSITION
-seated         → setSetting('ceo_walked_in'), show approval notification
-```
-
-### Approval Notification
-After CEO walk-in: floating retro notification "CEO [name] would like a meeting" with APPROVE button → navigates to `/chat`.
-Shows on subsequent visits too if `ceo_meeting_done` setting not set.
-
-### Chat Onboarding (ChatView)
-Scripted CEO conversation flow:
-1. CEO welcomes founder by name
-2. CEO asks about org's primary mission
-3. User types their mission/goal
-4. CEO acknowledges, suggests exploring Skills
-5. Saves `primary_mission` and `ceo_meeting_done` to settings
-6. Shows "Explore Skills" CTA button
-
-### Skills Page (SkillsView)
-Grid of placeholder skill cards in 4 categories:
-- **Communication**: Read Email, Write Email, Send Slack, Schedule Meeting
-- **Research**: Research Web, Read X/Tweets, Research Reddit, Deep Search
-- **Creation**: Create Images, Write Document, Generate Code
-- **Analysis**: Analyze Data
-
-Toggle switches (visual only — will connect to GitHub skill repo in future).
-
-### Surveillance Modules
-- **SurveillanceView** (`/surveillance`) — Real DB-backed, hire/edit/fire agents, CEO walk-in ceremony, approval notifications
-- **SurveillanceModule** (`/sample-surveillance`) — Demo mode with dummy data, scene transitions, no DB writes
+### Surveillance → See `AI/Surveillance.md`
+- **SurveillanceView** (`/surveillance`) — Real DB-backed, hire/edit/fire agents, ceremonies
+- **SurveillanceModule** (`/sample-surveillance`) — Demo mode with dummy data
+- 4 floor tiers based on agent count, progressive room upgrades
+- CSS pixel art sprites with 7 animation states
 
 ### Sprite Animation System
 ```
@@ -158,8 +171,9 @@ No external audio files needed.
 - CRT CSS: `.crt-screen`, `.crt-flicker`, `.phosphor-glow`, `.pixel-grid`, `.pixel-art`
 - Agent CSS: `.agent-sprite`, `.agent-typing`, `.agent-walking`, `.agent-celebrating`, `.agent-nametag`
 - Door CSS: `.door-open-left`, `.door-open-right`, `.door-close-left`, `.door-close-right`
-- No backend — all state is browser-local via sql.js + IndexedDB
+- No backend yet — all state is browser-local via sql.js + IndexedDB
 - Settings track ceremony progress: `ceo_walked_in`, `ceo_meeting_done`, `primary_mission`
+- Cross-component communication: `window.dispatchEvent()` with custom events (`approvals-changed`, future: `ceo-wants-to-chat`, `agent-hired`, etc.)
 
 ## File Structure
 ```
@@ -169,25 +183,46 @@ jarvis_inc/
 ├── vite.config.ts            # React plugin
 ├── tailwind.config.js        # Dual palette (jarvis-* + pixel-*)
 ├── Dockerfile                # Multi-stage: node:20-alpine → nginx:alpine
+├── CLAUDE.md                 # This file — project guide for Claude
 ├── TASKS.md                  # Gap analysis: PRD vs current implementation
 ├── PRD.txt                   # Product requirements document
+├── PLAN-SKILLS_REPO.md       # Skills repo creation plan
+├── AI/                       # Architecture & design docs (READ BEFORE MODIFYING)
+│   ├── CEO-Agent-System.md   # CEO autonomy, scheduler, decision engine, agent factory
+│   ├── CEO-Communication-Loop.md  # Proactive CEO behavior, prompt strategy
+│   ├── Chat-Onboarding-Flow.md    # Scripted onboarding state machine
+│   ├── Approval-System.md         # Approval types, lifecycle, sync
+│   ├── Skills-Architecture.md     # 18 skills, assignment model, seed repo
+│   ├── Data-Layer.md              # DB schema, dual-mode, DataService
+│   ├── Surveillance.md            # Pixel office, sprites, floors, animations
+│   └── Ceremonies.md              # All ceremony state machines
+├── seed_skills_repo/          # Mirrors https://github.com/GGCryptoh/jarvis_inc_skills
+│   ├── Official/              # 18 skill JSON files in 4 category folders
+│   ├── Marketplace/           # Community-contributed (empty)
+│   ├── schema/skill.schema.json
+│   ├── manifest.json          # Test version
+│   └── real-manifest.json     # Complete manifest with checksums
 ├── public/
-│   ├── sql-wasm.wasm         # sql.js WebAssembly binary
-│   └── favicon.png           # App favicon
+│   ├── sql-wasm.wasm          # sql.js WebAssembly binary
+│   ├── favicon.png            # App favicon
+│   └── floors/                # Pixel art floor backgrounds (tier 1-4)
 └── src/
-    ├── main.tsx              # React entry (BrowserRouter)
-    ├── App.tsx               # DB gate → Ceremonies | AppLayout with routes
-    ├── index.css             # Tailwind + CRT/retro/sprite/door/celebrate CSS
+    ├── main.tsx               # React entry (BrowserRouter)
+    ├── App.tsx                # DB gate → Ceremonies | AppLayout with routes
+    ├── index.css              # Tailwind + CRT/retro/sprite/door/celebrate CSS
     ├── lib/
-    │   ├── database.ts       # SQLite singleton, schema, CRUD, IndexedDB persistence
-    │   ├── sounds.ts         # Web Audio API success jingle
+    │   ├── database.ts        # SQLite singleton, schema, CRUD, IndexedDB persistence
+    │   ├── models.ts          # 12 LLM models, model→service map, key hints
+    │   ├── sounds.ts          # Web Audio API success jingle
+    │   ├── skillRecommender.ts # Mission text → recommended skill IDs
     │   └── positionGenerator.ts # Desk/meeting/break/allhands position math
     ├── hooks/
-    │   └── useDatabase.ts    # Boot hook: ready/initialized/ceoInitialized/reset/reinit
+    │   └── useDatabase.ts     # Boot hook: ready/initialized/ceoInitialized/reset/reinit
     ├── types/
-    │   └── index.ts          # Agent, CEO, Mission, SceneMode, Position, AgentStatus
+    │   └── index.ts           # Agent, CEO, Mission, SceneMode, Position, AgentStatus
     ├── data/
-    │   └── dummyData.ts      # Default agents, positions, mock stats/missions
+    │   ├── dummyData.ts       # Default agents, positions, mock stats/missions
+    │   └── skillDefinitions.ts # 18 skill definitions (id, name, icon, category, status)
     └── components/
         ├── FounderCeremony/
         │   └── FounderCeremony.tsx   # Terminal boot → form → activation
@@ -195,7 +230,7 @@ jarvis_inc/
         │   └── CEOCeremony.tsx       # CEO designation → progress → activation
         ├── Layout/
         │   ├── AppLayout.tsx         # Nav rail + content outlet
-        │   ├── NavigationRail.tsx    # 10 routes + CEO pip + reset DB
+        │   ├── NavigationRail.tsx    # 10 routes + CEO pip + approval badge + reset DB
         │   └── ResetDBDialog.tsx     # Two-step destructive confirmation
         ├── Surveillance/
         │   ├── SurveillanceView.tsx  # DB-backed: agents, CEO ceremony, approvals
@@ -207,11 +242,11 @@ jarvis_inc/
         │   ├── SurveillanceControls.tsx # Scene buttons + hire + status panel
         │   └── HireAgentModal.tsx    # Hire/edit form + live sprite preview
         ├── Chat/
-        │   └── ChatView.tsx          # CEO onboarding conversation + future AI chat
+        │   └── ChatView.tsx          # CEO onboarding (scripted) + PostMeetingChat
         ├── Approvals/
-        │   └── ApprovalsView.tsx     # Placeholder — pending approval queue
+        │   └── ApprovalsView.tsx     # Handles skill_enable + api_key_request types
         ├── Skills/
-        │   └── SkillsView.tsx        # Agent capability config (placeholder skills)
+        │   └── SkillsView.tsx        # 18 skills grid with toggles + model selectors
         ├── Dashboard/
         │   └── DashboardView.tsx     # Stats cards, ops table, agent fleet
         ├── Missions/
@@ -235,3 +270,6 @@ jarvis_inc/
 - **persist() is async**: Most callers don't await — writes are fire-and-forget to IndexedDB
 - **Tailwind purge**: Both `jarvis-*` and `pixel-*` colors only work if referenced in templates
 - **Docker SPA**: nginx config uses `try_files $uri /index.html` for client-side routing
+- **Approval sync**: Always dispatch `approvals-changed` event after any approval mutation
+- **Skill enable flow**: `skill_enable` approval in chat syncs with Approvals page via events — see `AI/Approval-System.md`
+- **real-manifest.json**: This is the complete manifest — `manifest.json` is a test/small version. Keep both.

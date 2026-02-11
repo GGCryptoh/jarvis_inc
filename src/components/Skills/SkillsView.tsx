@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronDown,
   AlertTriangle,
   Shield,
   ClipboardCheck,
+  Search,
 } from 'lucide-react';
 import { loadSkills, saveSkill, updateSkillModel, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService } from '../../lib/database';
 import { MODEL_OPTIONS, getServiceForModel } from '../../lib/models';
@@ -120,8 +121,32 @@ export default function SkillsView() {
     return map;
   });
 
+  // Filter and search state
+  const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Disable confirmation dialog state
   const [disableConfirm, setDisableConfirm] = useState<SkillDefinition | null>(null);
+
+  // Filtered skills
+  const filteredSkills = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return skills.filter(s => {
+      // Filter by status
+      if (filter === 'enabled') {
+        const cfg = skillConfigs.get(s.id);
+        if (!cfg?.enabled) return false;
+      } else if (filter === 'disabled') {
+        const cfg = skillConfigs.get(s.id);
+        if (cfg?.enabled) return false;
+      }
+      // Filter by search query (matches name or description)
+      if (q) {
+        return s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [filter, searchQuery, skillConfigs]);
 
   const getConfig = (id: string): SkillConfig => skillConfigs.get(id) ?? { enabled: false, model: null };
 
@@ -204,7 +229,7 @@ export default function SkillsView() {
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto no-scrollbar p-6">
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="font-pixel text-[14px] tracking-wider text-emerald-400 mb-2">
           AGENT SKILLS
         </h1>
@@ -213,9 +238,42 @@ export default function SkillsView() {
         </p>
       </div>
 
+      {/* Search + Filter Bar */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-6">
+        {/* Search */}
+        <div className="relative flex-1 min-w-0 w-full sm:max-w-xs">
+          <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search skills..."
+            className="w-full bg-zinc-800/60 border border-zinc-700/50 rounded-lg pl-8 pr-3 py-2 font-pixel text-[8px] tracking-wider text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
+          />
+        </div>
+
+        {/* Filter Toggle */}
+        <div className="flex items-center rounded-lg border border-zinc-700/50 overflow-hidden flex-shrink-0">
+          {(['all', 'enabled', 'disabled'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`font-pixel text-[7px] tracking-widest px-4 py-2 transition-colors ${
+                filter === f
+                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                  : 'bg-zinc-800/40 text-zinc-500 hover:text-zinc-300'
+              } ${f !== 'all' ? 'border-l border-zinc-700/50' : ''}`}
+            >
+              {f.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Skill categories */}
       {categories.map(cat => {
-        const catSkills = skills.filter(s => s.category === cat);
+        const catSkills = filteredSkills.filter(s => s.category === cat);
+        if (catSkills.length === 0) return null;
         const color = categoryColors[cat];
         return (
           <div key={cat} className="mb-8">
@@ -361,6 +419,21 @@ export default function SkillsView() {
           </div>
         );
       })}
+
+      {/* Empty state */}
+      {filteredSkills.length === 0 && (
+        <div className="flex-1 flex items-center justify-center py-16">
+          <div className="text-center">
+            <Search size={24} className="text-zinc-700 mx-auto mb-3" />
+            <p className="font-pixel text-[9px] tracking-wider text-zinc-500 mb-1">
+              NO SKILLS FOUND
+            </p>
+            <p className="font-pixel text-[7px] tracking-wider text-zinc-600">
+              {searchQuery ? 'Try a different search term' : `No ${filter} skills`}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Footer note */}
       <div className="mt-auto pt-6 border-t border-zinc-800">
