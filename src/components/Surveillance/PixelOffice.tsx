@@ -1,205 +1,191 @@
-import type { Agent, Position, SceneMode } from '../../types';
+import { useState, useMemo } from 'react';
+import type { Agent, SceneMode } from '../../types';
 import AgentSprite from './AgentSprite';
 import CEOSprite from './CEOSprite';
-import { CEO_OFFICE_POSITION } from '../../lib/positionGenerator';
+import type { RoomTier } from '../../lib/positionGenerator';
+import { FLOOR_IMAGES, TIER_CEO_POSITION } from '../../lib/positionGenerator';
 
 interface PixelOfficeProps {
   agents: Agent[];
   onAgentClick: (agent: Agent) => void;
   sceneMode: SceneMode;
-  deskPositions: Position[];
-  newDeskIndex: number | null;
   ceo: Agent | null;
-  doorOpen?: boolean | null; // null = static, true = opening, false = closing
+  doorOpen?: boolean | null;
+  roomTier: RoomTier;
+  /** Floor planner mode — click on office floor to set desk position */
+  floorPlannerActive?: boolean;
+  onFloorClick?: (x: number, y: number) => void;
+  /** Live mission priorities to display on the holographic board */
+  priorities?: string[];
 }
 
-export default function PixelOffice({ agents, onAgentClick, sceneMode, deskPositions, newDeskIndex, ceo, doorOpen = null }: PixelOfficeProps) {
-  const gold = '#f1fa8c';
+export default function PixelOffice({
+  agents,
+  onAgentClick,
+  sceneMode,
+  ceo,
+  doorOpen = null,
+  roomTier,
+  floorPlannerActive = false,
+  onFloorClick,
+  priorities = [],
+}: PixelOfficeProps) {
+  const [hoverExtinguisher, setHoverExtinguisher] = useState(false);
+  const floorImage = FLOOR_IMAGES[roomTier];
+  const ceoPos = TIER_CEO_POSITION[roomTier];
+
+  // Compute meeting zone clusters — group agents in 'meeting' status and
+  // render a glow circle at the centroid of each cluster.
+  const meetingZones = useMemo(() => {
+    const meetingAgents = agents.filter(a => a.status === 'meeting');
+    // Include CEO if in meeting
+    if (ceo?.status === 'meeting') meetingAgents.push(ceo);
+    if (meetingAgents.length < 2) return [];
+
+    // Simple single-cluster: centroid of all meeting agents
+    const cx = meetingAgents.reduce((s, a) => s + a.position.x, 0) / meetingAgents.length;
+    const cy = meetingAgents.reduce((s, a) => s + a.position.y, 0) / meetingAgents.length;
+    // Radius proportional to spread (min 8%, max 18%)
+    const maxDist = Math.max(
+      ...meetingAgents.map(a => Math.sqrt((a.position.x - cx) ** 2 + (a.position.y - cy) ** 2)),
+    );
+    const radius = Math.max(8, Math.min(18, maxDist + 4));
+
+    return [{ x: cx, y: cy, radius }];
+  }, [agents, ceo]);
+
+  const handleFloorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!floorPlannerActive || !onFloorClick) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    onFloorClick(x, y);
+  };
 
   return (
     <div
-      className="relative w-full h-full pixel-grid overflow-hidden"
+      className={`relative w-full h-full overflow-hidden ${floorPlannerActive ? 'cursor-crosshair' : ''}`}
       style={{ minHeight: '400px' }}
+      onClick={handleFloorClick}
     >
-      {/* ---- Dynamic Desks (50% bigger) ---- */}
-      {deskPositions.map((pos, i) => (
-        <div
-          key={`desk-${i}`}
-          className={`absolute z-[1] ${newDeskIndex === i ? 'animate-desk-materialize desk-sparkle' : ''}`}
-          style={{ left: `${pos.x}%`, top: `${pos.y}%`, transform: 'translate(-50%, -50%)' }}
-        >
-          {/* Desk surface */}
-          <div className="w-[60px] h-[30px] bg-pixel-desk rounded-sm border border-yellow-900/50 shadow-[3px_3px_0_rgba(0,0,0,0.3)]">
-            {/* Monitor on desk */}
-            <div className="absolute -top-[9px] left-1/2 -translate-x-1/2 w-[21px] h-[15px] bg-gray-800 border border-gray-600 rounded-sm">
-              <div className="w-[15px] h-[9px] mx-auto mt-[2px] rounded-[1px] bg-pixel-monitor opacity-30 animate-screen-flicker" />
-            </div>
-          </div>
-          {/* Chair */}
-          <div className="absolute top-[30px] left-1/2 -translate-x-1/2 w-[18px] h-[15px] bg-gray-700 rounded-b-full border-b border-gray-600" />
-        </div>
-      ))}
+      {/* ---- Background Image ---- */}
+      <img
+        src={floorImage}
+        alt="Office floor"
+        className="absolute inset-0 w-full h-full object-cover pixel-art"
+        draggable={false}
+      />
 
-      {/* ---- CEO Command Station (50% bigger) ---- */}
-      {ceo && (
+      {/* ---- Floor Planner Grid Overlay ---- */}
+      {floorPlannerActive && (
+        <div
+          className="absolute inset-0 z-[1] pointer-events-none"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(0,255,136,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.08) 1px, transparent 1px)',
+            backgroundSize: '5% 5%',
+          }}
+        />
+      )}
+
+      {/* ---- Door Animation Overlay ---- */}
+      {/* The door is baked into the image, but we overlay animated panels for open/close */}
+      {doorOpen !== null && (
         <div
           className="absolute z-[2]"
           style={{
-            left: `${CEO_OFFICE_POSITION.x}%`,
-            top: `${CEO_OFFICE_POSITION.y}%`,
-            transform: 'translate(-50%, -50%)',
-            filter: `drop-shadow(0 0 12px ${gold}33)`,
+            // Door position varies by tier — right side for tiers 1-3, bottom for tier 4
+            ...(roomTier <= 3
+              ? { right: '8%', top: '58%', width: '60px', height: '80px' }
+              : { left: '50%', bottom: '2%', width: '80px', height: '60px', transform: 'translateX(-50%)' }),
           }}
         >
-          {/* Wide executive desk */}
-          <div
-            className="w-[105px] h-[36px] rounded-sm shadow-[4px_4px_0_rgba(0,0,0,0.4)]"
-            style={{
-              backgroundColor: '#5c3d2e',
-              border: `2px solid ${gold}55`,
-            }}
-          >
-            <div className="absolute top-0 left-[6px] right-[6px] h-[2px]" style={{ backgroundColor: `${gold}44` }} />
-          </div>
-
-          {/* 3-Monitor Array */}
-          <div className="absolute -top-[27px] left-1/2 -translate-x-1/2 flex items-end gap-[3px]">
-            <div className="w-[21px] h-[15px] bg-gray-800 border border-gray-600 rounded-sm -rotate-6">
-              <div className="w-[15px] h-[9px] mx-auto mt-[2px] rounded-[1px] bg-pixel-monitor opacity-40 animate-screen-flicker" />
-            </div>
-            <div className="w-[27px] h-[20px] bg-gray-800 border border-gray-600 rounded-sm">
-              <div className="w-[21px] h-[14px] mx-auto mt-[2px] rounded-[1px] bg-pixel-monitor opacity-40 animate-screen-flicker" />
-            </div>
-            <div className="w-[21px] h-[15px] bg-gray-800 border border-gray-600 rounded-sm rotate-6">
-              <div className="w-[15px] h-[9px] mx-auto mt-[2px] rounded-[1px] bg-pixel-monitor opacity-40 animate-screen-flicker" />
-            </div>
-          </div>
-
-          {/* Status display panel */}
-          <div className="absolute -top-[4px] left-1/2 -translate-x-1/2 flex gap-[3px]">
-            <div className="w-[4px] h-[4px] rounded-full bg-emerald-500 animate-pulse" />
-            <div className="w-[4px] h-[4px] rounded-full bg-yellow-400" />
-            <div className="w-[4px] h-[4px] rounded-full bg-emerald-500" />
-            <div className="w-[12px] h-[3px] mt-[0.5px] rounded-full bg-pixel-cyan/40" />
-          </div>
-
-          {/* Executive high-back chair */}
-          <div className="absolute top-[36px] left-1/2 -translate-x-1/2">
-            <div className="w-[24px] h-[21px] bg-gray-600 rounded-b-full border-b border-gray-500" />
-            <div className="absolute -top-[6px] left-1/2 -translate-x-1/2 w-[21px] h-[9px] bg-gray-600 rounded-t-sm border-t border-x border-gray-500" />
-          </div>
-
-          {/* Gold Nameplate */}
-          <div className="absolute top-[9px] left-1/2 -translate-x-1/2">
-            <div
-              className="px-[6px] py-[2px] rounded-[1px] font-pixel text-[6px] tracking-wider whitespace-nowrap text-center"
-              style={{
-                backgroundColor: `${gold}33`,
-                border: `0.5px solid ${gold}66`,
-                color: gold,
-                textShadow: `0 0 3px ${gold}66`,
-              }}
-            >
-              CEO {ceo.name}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ---- Conference Table (50% bigger) ---- */}
-      <div
-        className="absolute z-[1]"
-        style={{ left: '35%', top: '67%', transform: 'translate(-50%, -50%)' }}
-      >
-        <div className="w-[120px] h-[75px] bg-pixel-desk rounded-lg border-2 border-yellow-900/40 shadow-[4px_4px_0_rgba(0,0,0,0.3)]">
-          <div className="absolute inset-[6px] rounded-md border border-yellow-800/20" />
-        </div>
-      </div>
-
-      {/* ---- Water Cooler (1.5x original) ---- */}
-      <div
-        className="absolute z-[1]"
-        style={{ left: '75%', top: '12%', transform: 'translate(-50%, -50%)' }}
-      >
-        <div className="w-[18px] h-[27px] bg-sky-400/60 rounded-t-md border border-sky-500/40 shadow-[2px_2px_0_rgba(0,0,0,0.3)]">
-          <div className="w-[12px] h-[6px] mx-auto mt-[3px] bg-sky-300/40 rounded-sm" />
-        </div>
-        <div className="w-[24px] h-[12px] -ml-[3px] bg-gray-600 rounded-b-sm border border-gray-500" />
-        <div className="font-pixel text-[7px] text-sky-300/60 text-center mt-1 tracking-wider">H2O</div>
-      </div>
-
-      {/* ---- Entrance / Door (3x original) with animated panels ---- */}
-      <div
-        className="absolute z-[1]"
-        style={{ left: '50%', top: '96%', transform: 'translate(-50%, -50%)' }}
-      >
-        <div className="relative">
-          <div className="w-[108px] h-[72px] bg-gray-700 border-t-3 border-l-3 border-r-3 border-gray-500 rounded-t-sm overflow-hidden">
+          <div className="w-full h-full overflow-hidden">
             <div className="flex h-full">
               <div
-                className={`flex-1 border-r border-gray-600 m-[6px] bg-gray-600/50 ${
+                className={`flex-1 bg-gray-500/80 m-[2px] ${
                   doorOpen === true ? 'door-open-left' : doorOpen === false ? 'door-close-left' : ''
                 }`}
               />
               <div
-                className={`flex-1 m-[6px] bg-gray-600/50 ${
+                className={`flex-1 bg-gray-500/80 m-[2px] ${
                   doorOpen === true ? 'door-open-right' : doorOpen === false ? 'door-close-right' : ''
                 }`}
               />
             </div>
           </div>
-          <div className="w-[132px] h-[18px] -ml-[12px] bg-yellow-900/40 rounded-sm border border-yellow-800/30" />
-          <div className="font-pixel text-[8px] text-gray-500 text-center mt-1 tracking-wider">ENTRANCE</div>
         </div>
-      </div>
+      )}
 
-      {/* ---- Plant (50% bigger) ---- */}
-      <div
-        className="absolute z-[1]"
-        style={{ left: '88%', top: '50%', transform: 'translate(-50%, -50%)' }}
-      >
-        <div className="w-[15px] h-[12px] bg-orange-800 rounded-b-sm border border-orange-700 mx-auto" />
-        <div className="absolute -top-[12px] left-1/2 -translate-x-1/2">
-          <div className="w-[9px] h-[9px] bg-green-600 rounded-full -ml-[5px] absolute" />
-          <div className="w-[9px] h-[9px] bg-green-500 rounded-full ml-[5px] absolute" />
-          <div className="w-[8px] h-[11px] bg-green-500 rounded-full absolute -top-[6px] left-[1px]" />
-        </div>
-      </div>
-
-      {/* ---- Whiteboard (2x original) ---- */}
-      <div
-        className="absolute z-[1]"
-        style={{ left: '85%', top: '10%', transform: 'translate(-50%, -50%)' }}
-      >
-        <div className="w-[88px] h-[56px] bg-gray-200 rounded-sm border-2 border-gray-400 shadow-[4px_4px_0_rgba(0,0,0,0.3)]">
-          <div className="m-[6px] space-y-[6px]">
-            <div className="w-[48px] h-[4px] bg-red-400/60 rounded-full" />
-            <div className="w-[36px] h-[4px] bg-blue-400/60 rounded-full" />
-            <div className="w-[56px] h-[4px] bg-green-500/60 rounded-full" />
-            <div className="w-[28px] h-[4px] bg-purple-400/60 rounded-full" />
+      {/* ---- Holographic Mission Board (top-right) ---- */}
+      {ceo && (
+        <div
+          className="absolute z-[3] pointer-events-none"
+          style={{
+            right: '3%',
+            top: '4%',
+          }}
+        >
+          <div
+            className="px-5 py-4 rounded-sm"
+            style={{
+              background: 'linear-gradient(180deg, rgba(0,255,136,0.10) 0%, rgba(0,255,136,0.04) 100%)',
+              border: '1px solid rgba(200,220,255,0.35)',
+              boxShadow: '0 0 12px rgba(0,255,136,0.08), inset 0 0 8px rgba(0,255,136,0.03)',
+            }}
+          >
+            <div className="font-pixel text-[8px] text-gray-200 tracking-widest mb-1.5">TODAY&apos;S PRIORITIES</div>
+            <div className="font-pixel text-[7px] text-pixel-green/80 tracking-wider leading-[12px]">
+              {priorities.length > 0 ? (
+                priorities.slice(0, 3).map((p, i) => (
+                  <div key={i}>{i + 1}. {p}</div>
+                ))
+              ) : (
+                <div className="text-gray-500/60">No active missions</div>
+              )}
+            </div>
           </div>
         </div>
-        <div className="w-[60px] h-[6px] bg-gray-400 rounded-b-sm mx-auto border-b border-gray-500" />
-        <div className="font-pixel text-[8px] text-gray-500 text-center mt-1 tracking-wider">BOARD</div>
-      </div>
+      )}
 
-      {/* ---- Scene context labels ---- */}
-      {sceneMode === 'meeting' && (
+      {/* ---- Fire Extinguisher Tooltip Zone ---- */}
+      {roomTier <= 3 && (
         <div
-          className="absolute font-pixel text-[8px] text-pixel-purple/40 tracking-widest z-[0]"
-          style={{ left: '35%', top: '58%', transform: 'translate(-50%, -50%)' }}
+          className="absolute z-[4] cursor-pointer"
+          style={{ right: '5%', top: '52%', width: '30px', height: '40px' }}
+          onMouseEnter={() => setHoverExtinguisher(true)}
+          onMouseLeave={() => setHoverExtinguisher(false)}
+          onClick={(e) => e.stopPropagation()}
         >
-          CONF ROOM
+          {hoverExtinguisher && (
+            <div className="absolute -top-[28px] left-1/2 -translate-x-1/2 z-30">
+              <div className="bg-pixel-bg border border-pixel-crt-border rounded px-2 py-1 font-pixel text-[6px] text-pixel-orange tracking-wider whitespace-nowrap shadow-lg">
+                Break Glass (Coming Soon)
+              </div>
+              <div className="w-0 h-0 mx-auto border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[3px] border-t-pixel-crt-border" />
+            </div>
+          )}
         </div>
       )}
-      {sceneMode === 'break' && (
+
+      {/* ---- Meeting Zone Glow ---- */}
+      {meetingZones.map((zone, i) => (
         <div
-          className="absolute font-pixel text-[8px] text-pixel-cyan/40 tracking-widest z-[0]"
-          style={{ left: '77%', top: '12%', transform: 'translate(-50%, -50%)' }}
-        >
-          BREAK AREA
-        </div>
-      )}
+          key={`meeting-zone-${i}`}
+          className="absolute z-[4] pointer-events-none animate-pulse"
+          style={{
+            left: `${zone.x}%`,
+            top: `${zone.y}%`,
+            width: `${zone.radius * 2}%`,
+            height: `${zone.radius * 2}%`,
+            transform: 'translate(-50%, -50%)',
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(189,147,249,0.12) 0%, rgba(189,147,249,0.04) 50%, transparent 70%)',
+            border: '1px solid rgba(189,147,249,0.15)',
+            boxShadow: '0 0 20px rgba(189,147,249,0.08)',
+          }}
+        />
+      ))}
 
       {/* ---- Agent Sprites ---- */}
       {agents.map(agent => (
@@ -207,6 +193,7 @@ export default function PixelOffice({ agents, onAgentClick, sceneMode, deskPosit
           key={agent.id}
           agent={agent}
           onClick={() => onAgentClick(agent)}
+          floorPlannerActive={floorPlannerActive}
         />
       ))}
 

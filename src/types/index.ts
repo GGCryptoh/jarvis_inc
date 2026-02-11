@@ -62,8 +62,19 @@ export interface VaultEntry {
   name: string;
   type: 'api_key' | 'credential' | 'token' | 'secret';
   service: string;
-  lastRotated: string;
-  status: 'active' | 'expiring' | 'expired';
+  keyValue: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApprovalEntry {
+  id: string;
+  type: string;
+  title: string;
+  description: string | null;
+  status: 'pending' | 'approved' | 'dismissed';
+  metadata: string | null;
+  createdAt: string;
 }
 
 export interface FinancialEntry {

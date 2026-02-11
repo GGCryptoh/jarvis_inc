@@ -52,6 +52,7 @@ export default function CEOSprite({ agent, onClick }: CEOSpriteProps) {
   const animationClass = getAnimationClass(agent.status);
   const statusColor = getStatusColor(agent.status);
   const gold = '#f1fa8c';
+  const isSeated = agent.status === 'working';
 
   return (
     <div
@@ -59,10 +60,10 @@ export default function CEOSprite({ agent, onClick }: CEOSpriteProps) {
       style={{
         left: `${agent.position.x}%`,
         top: `${agent.position.y}%`,
-        transform: 'translate(-50%, -50%)',
+        transform: `translate(-50%, -50%) translateY(${isSeated ? '20px' : '0px'})`,
         zIndex: 6,
       }}
-      onClick={onClick}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
       {/* Hover tooltip — CEO-specific info */}
       <div className="absolute -top-[70px] left-1/2 -translate-x-1/2 hidden group-hover:block z-30">

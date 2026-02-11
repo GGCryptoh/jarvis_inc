@@ -1,4 +1,5 @@
 import initSqlJs, { type Database } from 'sql.js';
+import { MODEL_SERVICE_MAP } from './models';
 
 const DB_STORAGE_KEY = 'jarvis_inc_db';
 
@@ -68,6 +69,44 @@ export async function initDatabase(): Promise<Database> {
     );
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS vault (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      type       TEXT NOT NULL DEFAULT 'api_key',
+      service    TEXT NOT NULL,
+      key_value  TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS approvals (
+      id          TEXT PRIMARY KEY,
+      type        TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      description TEXT,
+      status      TEXT NOT NULL DEFAULT 'pending',
+      metadata    TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS skills (
+      id         TEXT PRIMARY KEY,
+      enabled    INTEGER NOT NULL DEFAULT 0,
+      model      TEXT DEFAULT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // Migrations — add columns to existing tables (idempotent)
+  try { db.run('ALTER TABLE agents ADD COLUMN desk_x REAL DEFAULT NULL'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE agents ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE ceo ADD COLUMN desk_x REAL DEFAULT NULL'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE ceo ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
+
   await persist();
   return db;
 }
@@ -126,12 +165,14 @@ export interface AgentRow {
   color: string;
   skin_tone: string;
   model: string;
+  desk_x: number | null;
+  desk_y: number | null;
 }
 
 /** Load all agents from DB. Returns empty array if none. */
 export function loadAgents(): AgentRow[] {
   const results: AgentRow[] = [];
-  const stmt = getDB().prepare('SELECT id, name, role, color, skin_tone, model FROM agents ORDER BY created_at');
+  const stmt = getDB().prepare('SELECT id, name, role, color, skin_tone, model, desk_x, desk_y FROM agents ORDER BY created_at');
   while (stmt.step()) {
     results.push(stmt.getAsObject() as unknown as AgentRow);
   }
@@ -140,18 +181,26 @@ export function loadAgents(): AgentRow[] {
 }
 
 /** Insert or update an agent. */
-export function saveAgent(agent: AgentRow): void {
+export function saveAgent(agent: Omit<AgentRow, 'desk_x' | 'desk_y'> & { desk_x?: number | null; desk_y?: number | null }): void {
   getDB().run(
-    `INSERT INTO agents (id, name, role, color, skin_tone, model)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO agents (id, name, role, color, skin_tone, model, desk_x, desk_y)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        role = excluded.role,
        color = excluded.color,
        skin_tone = excluded.skin_tone,
-       model = excluded.model`,
-    [agent.id, agent.name, agent.role, agent.color, agent.skin_tone, agent.model],
+       model = excluded.model,
+       desk_x = COALESCE(excluded.desk_x, agents.desk_x),
+       desk_y = COALESCE(excluded.desk_y, agents.desk_y)`,
+    [agent.id, agent.name, agent.role, agent.color, agent.skin_tone, agent.model, agent.desk_x ?? null, agent.desk_y ?? null],
   );
+  persist();
+}
+
+/** Update only the desk position for an agent. */
+export function saveAgentDeskPosition(id: string, x: number, y: number): void {
+  getDB().run('UPDATE agents SET desk_x = ?, desk_y = ? WHERE id = ?', [x, y, id]);
   persist();
 }
 
@@ -185,6 +234,8 @@ export interface CEORow {
   philosophy: string;
   risk_tolerance: string;
   status: string;
+  desk_x: number | null;
+  desk_y: number | null;
 }
 
 /** Returns true when a CEO record exists. */
@@ -197,7 +248,7 @@ export function isCEOInitialized(): boolean {
 
 /** Load the CEO record (null if none). */
 export function loadCEO(): CEORow | null {
-  const stmt = getDB().prepare('SELECT id, name, model, philosophy, risk_tolerance, status FROM ceo LIMIT 1');
+  const stmt = getDB().prepare('SELECT id, name, model, philosophy, risk_tolerance, status, desk_x, desk_y FROM ceo LIMIT 1');
   if (stmt.step()) {
     const row = stmt.getAsObject() as unknown as CEORow;
     stmt.free();
@@ -208,7 +259,7 @@ export function loadCEO(): CEORow | null {
 }
 
 /** Insert or update the CEO. */
-export function saveCEO(ceo: Omit<CEORow, 'id'>): void {
+export function saveCEO(ceo: Omit<CEORow, 'id' | 'desk_x' | 'desk_y'>): void {
   getDB().run(
     `INSERT INTO ceo (id, name, model, philosophy, risk_tolerance, status)
      VALUES ('ceo', ?, ?, ?, ?, ?)
@@ -227,6 +278,288 @@ export function saveCEO(ceo: Omit<CEORow, 'id'>): void {
 export function updateCEOStatus(status: string): void {
   getDB().run("UPDATE ceo SET status = ? WHERE id = 'ceo'", [status]);
   persist();
+}
+
+/** Update only the CEO desk position. */
+export function saveCEODeskPosition(x: number, y: number): void {
+  getDB().run("UPDATE ceo SET desk_x = ?, desk_y = ? WHERE id = 'ceo'", [x, y]);
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// Vault CRUD
+// ---------------------------------------------------------------------------
+
+export interface VaultRow {
+  id: string;
+  name: string;
+  type: string;
+  service: string;
+  key_value: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function loadVaultEntries(): VaultRow[] {
+  const results: VaultRow[] = [];
+  const stmt = getDB().prepare('SELECT id, name, type, service, key_value, created_at, updated_at FROM vault ORDER BY created_at');
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as VaultRow);
+  }
+  stmt.free();
+  return results;
+}
+
+export function saveVaultEntry(entry: Omit<VaultRow, 'created_at' | 'updated_at'>): void {
+  getDB().run(
+    `INSERT INTO vault (id, name, type, service, key_value)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       type = excluded.type,
+       service = excluded.service,
+       key_value = excluded.key_value,
+       updated_at = datetime('now')`,
+    [entry.id, entry.name, entry.type, entry.service, entry.key_value],
+  );
+  persist();
+}
+
+export function updateVaultEntry(id: string, fields: Partial<Pick<VaultRow, 'name' | 'key_value'>>): void {
+  const sets: string[] = [];
+  const vals: string[] = [];
+  if (fields.name !== undefined) { sets.push('name = ?'); vals.push(fields.name); }
+  if (fields.key_value !== undefined) { sets.push('key_value = ?'); vals.push(fields.key_value); }
+  if (sets.length === 0) return;
+  sets.push("updated_at = datetime('now')");
+  getDB().run(`UPDATE vault SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+  persist();
+}
+
+export function deleteVaultEntry(id: string): void {
+  getDB().run('DELETE FROM vault WHERE id = ?', [id]);
+  persist();
+}
+
+export function getVaultEntryByService(service: string): VaultRow | null {
+  const stmt = getDB().prepare('SELECT id, name, type, service, key_value, created_at, updated_at FROM vault WHERE service = ? LIMIT 1');
+  stmt.bind([service]);
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as unknown as VaultRow;
+    stmt.free();
+    return row;
+  }
+  stmt.free();
+  return null;
+}
+
+export function getEntitiesUsingService(service: string): { type: 'ceo' | 'agent'; name: string; model: string }[] {
+  const modelsForService = Object.entries(MODEL_SERVICE_MAP)
+    .filter(([, svc]) => svc === service)
+    .map(([model]) => model);
+  if (modelsForService.length === 0) return [];
+
+  const results: { type: 'ceo' | 'agent'; name: string; model: string }[] = [];
+  const placeholders = modelsForService.map(() => '?').join(', ');
+
+  const ceoStmt = getDB().prepare(`SELECT name, model FROM ceo WHERE model IN (${placeholders})`);
+  ceoStmt.bind(modelsForService);
+  while (ceoStmt.step()) {
+    const row = ceoStmt.getAsObject() as { name: string; model: string };
+    results.push({ type: 'ceo', name: row.name, model: row.model });
+  }
+  ceoStmt.free();
+
+  const agentStmt = getDB().prepare(`SELECT name, model FROM agents WHERE model IN (${placeholders})`);
+  agentStmt.bind(modelsForService);
+  while (agentStmt.step()) {
+    const row = agentStmt.getAsObject() as { name: string; model: string };
+    results.push({ type: 'agent', name: row.name, model: row.model });
+  }
+  agentStmt.free();
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Approvals CRUD
+// ---------------------------------------------------------------------------
+
+export interface ApprovalRow {
+  id: string;
+  type: string;
+  title: string;
+  description: string | null;
+  status: string;
+  metadata: string | null;
+  created_at: string;
+}
+
+export function loadApprovals(): ApprovalRow[] {
+  const results: ApprovalRow[] = [];
+  const stmt = getDB().prepare("SELECT id, type, title, description, status, metadata, created_at FROM approvals WHERE status = 'pending' ORDER BY created_at");
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as ApprovalRow);
+  }
+  stmt.free();
+  return results;
+}
+
+export function loadAllApprovals(): ApprovalRow[] {
+  const results: ApprovalRow[] = [];
+  const stmt = getDB().prepare('SELECT id, type, title, description, status, metadata, created_at FROM approvals ORDER BY created_at DESC');
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as ApprovalRow);
+  }
+  stmt.free();
+  return results;
+}
+
+export function saveApproval(approval: Omit<ApprovalRow, 'created_at'>): void {
+  getDB().run(
+    'INSERT INTO approvals (id, type, title, description, status, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+    [approval.id, approval.type, approval.title, approval.description, approval.status, approval.metadata],
+  );
+  persist();
+}
+
+export function updateApprovalStatus(id: string, status: string): void {
+  getDB().run('UPDATE approvals SET status = ? WHERE id = ?', [status, id]);
+  persist();
+}
+
+export function getPendingApprovalCount(): number {
+  const stmt = getDB().prepare("SELECT COUNT(*) as cnt FROM approvals WHERE status = 'pending'");
+  stmt.step();
+  const row = stmt.getAsObject() as { cnt: number };
+  stmt.free();
+  return row.cnt;
+}
+
+// ---------------------------------------------------------------------------
+// Missions
+// ---------------------------------------------------------------------------
+
+export interface MissionRow {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  priority: string;
+  due_date: string | null;
+}
+
+export function loadMissions(): MissionRow[] {
+  const results: MissionRow[] = [];
+  const stmt = getDB().prepare('SELECT id, title, status, assignee, priority, due_date FROM missions ORDER BY CASE priority WHEN \'critical\' THEN 0 WHEN \'high\' THEN 1 WHEN \'medium\' THEN 2 WHEN \'low\' THEN 3 END, due_date');
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as MissionRow);
+  }
+  stmt.free();
+  return results;
+}
+
+export function saveMission(mission: MissionRow): void {
+  getDB().run(
+    `INSERT INTO missions (id, title, status, assignee, priority, due_date)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       status = excluded.status,
+       assignee = excluded.assignee,
+       priority = excluded.priority,
+       due_date = excluded.due_date`,
+    [mission.id, mission.title, mission.status, mission.assignee, mission.priority, mission.due_date],
+  );
+  persist();
+}
+
+export function seedMissionsIfEmpty(missions: MissionRow[]): void {
+  const stmt = getDB().prepare('SELECT COUNT(*) as cnt FROM missions');
+  stmt.step();
+  const row = stmt.getAsObject() as { cnt: number };
+  stmt.free();
+  if (row.cnt > 0) return;
+  for (const m of missions) {
+    getDB().run(
+      'INSERT OR IGNORE INTO missions (id, title, status, assignee, priority, due_date) VALUES (?, ?, ?, ?, ?, ?)',
+      [m.id, m.title, m.status, m.assignee, m.priority, m.due_date],
+    );
+  }
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// Skills CRUD
+// ---------------------------------------------------------------------------
+
+export interface SkillRow {
+  id: string;
+  enabled: number;     // 0 or 1
+  model: string | null;
+  updated_at: string;
+}
+
+export function loadSkills(): SkillRow[] {
+  const results: SkillRow[] = [];
+  const stmt = getDB().prepare('SELECT id, enabled, model, updated_at FROM skills ORDER BY id');
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as SkillRow);
+  }
+  stmt.free();
+  return results;
+}
+
+export function saveSkill(id: string, enabled: boolean, model: string | null): void {
+  getDB().run(
+    `INSERT INTO skills (id, enabled, model, updated_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       enabled = excluded.enabled,
+       model = excluded.model,
+       updated_at = datetime('now')`,
+    [id, enabled ? 1 : 0, model],
+  );
+  persist();
+}
+
+export function updateSkillModel(id: string, model: string | null): void {
+  getDB().run(
+    `INSERT INTO skills (id, enabled, model, updated_at)
+     VALUES (?, 0, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       model = excluded.model,
+       updated_at = datetime('now')`,
+    [id, model],
+  );
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// Fire CEO (preserves agents, vault, missions, etc.)
+// ---------------------------------------------------------------------------
+
+export function fireCEO(): void {
+  getDB().run('DELETE FROM ceo');
+  getDB().run("DELETE FROM settings WHERE key IN ('ceo_walked_in', 'ceo_meeting_done')");
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// Export full database as JSON
+// ---------------------------------------------------------------------------
+
+export function exportDatabaseAsJSON(): Record<string, unknown[]> {
+  const tables = ['settings', 'agents', 'ceo', 'missions', 'audit_log', 'vault', 'approvals', 'skills'];
+  const data: Record<string, unknown[]> = {};
+  for (const table of tables) {
+    const results: unknown[] = [];
+    const stmt = getDB().prepare(`SELECT * FROM ${table}`);
+    while (stmt.step()) results.push(stmt.getAsObject());
+    stmt.free();
+    data[table] = results;
+  }
+  return data;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Agent, AgentStatus, SceneMode, Position } from '../../types';
 import {
   initialAgents,
@@ -9,8 +9,11 @@ import {
   generateMeetingPositions,
   generateBreakPositions,
   generateAllHandsPositions,
+  generateClusterPositions,
   getDeskCountWithSpare,
-  CEO_OFFICE_POSITION,
+  getRoomTier,
+  TIER_DESK_PRESETS,
+  TIER_CEO_POSITION,
 } from '../../lib/positionGenerator';
 import { loadCEO } from '../../lib/database';
 import SurveillanceControls from './SurveillanceControls';
@@ -43,30 +46,36 @@ export default function SurveillanceModule() {
   const [hireModalOpen, setHireModalOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
-  // Dynamic desk state
-  const [deskPositions, setDeskPositions] = useState<Position[]>([]);
-  const [newDeskIndex, setNewDeskIndex] = useState<number | null>(null);
+  // Dynamic desk fallback (kept for scene transitions beyond tier presets)
 
   // CEO state
   const [ceoAgent, setCeoAgent] = useState<Agent | null>(null);
 
+  // Room tier — computed from agent count
+  const roomTier = getRoomTier(agents.length);
+
   // ---- Load sample agents from static data (no DB writes) ----
   useEffect(() => {
     const count = initialAgents.length;
-    const desks = generateDeskPositions(getDeskCountWithSpare(count));
-    setDeskPositions(desks);
+    const tier = getRoomTier(count);
+    const tierPresets = TIER_DESK_PRESETS[tier];
+    const fallbackDesks = generateDeskPositions(getDeskCountWithSpare(count));
 
-    const loaded: Agent[] = initialAgents.map((a, i) => ({
-      ...a,
-      position: { ...desks[i] },
-      targetPosition: { ...desks[i] },
-    }));
+    const loaded: Agent[] = initialAgents.map((a, i) => {
+      const pos = tierPresets[i] ?? fallbackDesks[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 };
+      return {
+        ...a,
+        position: { ...pos },
+        targetPosition: { ...pos },
+      };
+    });
 
     setAgents(loaded);
 
     // Load CEO from DB (read-only)
     const ceoRow = loadCEO();
     if (ceoRow) {
+      const ceoPos = TIER_CEO_POSITION[tier];
       setCeoAgent({
         id: 'ceo',
         name: ceoRow.name,
@@ -74,8 +83,8 @@ export default function SurveillanceModule() {
         color: '#f1fa8c',
         skinTone: '#ffcc99',
         status: 'working',
-        position: { ...CEO_OFFICE_POSITION },
-        targetPosition: { ...CEO_OFFICE_POSITION },
+        position: { ...ceoPos },
+        targetPosition: { ...ceoPos },
         currentTask: `Philosophy: ${ceoRow.philosophy}`,
         confidence: 99,
         costSoFar: 0,
@@ -85,6 +94,9 @@ export default function SurveillanceModule() {
   }, []);
 
   // ---- Scene transitions ----
+  // Ref to share cluster center between agent and CEO state updates
+  const clusterCenterRef = useRef<Position>({ x: 40, y: 50 });
+
   const changeScene = useCallback((mode: SceneMode) => {
     setSceneMode(mode);
 
@@ -119,13 +131,29 @@ export default function SurveillanceModule() {
         return updated;
       }
 
-      let targetPositions: Position[];
       if (mode === 'working') {
-        targetPositions = generateDeskPositions(getDeskCountWithSpare(count));
-        setDeskPositions(targetPositions);
-      } else if (mode === 'meeting') {
-        targetPositions = generateMeetingPositions(count);
-      } else if (mode === 'all_hands') {
+        const tier = getRoomTier(count);
+        const presets = TIER_DESK_PRESETS[tier];
+        const fallback = generateDeskPositions(getDeskCountWithSpare(count));
+        return realAgents.map((agent, i) => ({
+          ...agent,
+          targetPosition: presets[i] ?? fallback[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 },
+        }));
+      }
+
+      if (mode === 'meeting') {
+        // Ad-hoc cluster meeting — agents converge toward the midpoint of their current positions
+        const currentPositions = realAgents.map(a => a.position);
+        const cluster = generateClusterPositions(currentPositions, 8);
+        clusterCenterRef.current = cluster.center;
+        return realAgents.map((agent, i) => ({
+          ...agent,
+          targetPosition: cluster.positions[i],
+        }));
+      }
+
+      let targetPositions: Position[];
+      if (mode === 'all_hands') {
         targetPositions = generateAllHandsPositions(count);
       } else {
         // break
@@ -142,14 +170,14 @@ export default function SurveillanceModule() {
     setCeoAgent(prev => {
       if (!prev) return prev;
       if (mode === 'meeting') {
-        const pos = generateMeetingPositions(1)[0];
-        // Put CEO at a distinct spot near the table
-        return { ...prev, targetPosition: { x: pos.x + 6, y: pos.y - 4 } };
+        // CEO joins the cluster — positioned near the cluster center
+        const c = clusterCenterRef.current;
+        return { ...prev, targetPosition: { x: c.x + 5, y: c.y - 5 } };
       }
       if (mode === 'all_hands') {
         return { ...prev, targetPosition: { x: 38, y: 38 } };
       }
-      return { ...prev, targetPosition: { ...CEO_OFFICE_POSITION } };
+      return { ...prev, targetPosition: { ...TIER_CEO_POSITION[getRoomTier(agents.length)] } };
     });
   }, []);
 
@@ -192,25 +220,18 @@ export default function SurveillanceModule() {
     setTimeout(() => {
       setAgents(prev => {
         const allReal = prev.map(a => ({ ...a, isNew: undefined }));
-        const desks = generateDeskPositions(getDeskCountWithSpare(allReal.length));
-        const oldDeskCount = deskPositions.length;
-
-        setDeskPositions(desks);
-
-        // If new desks were added, trigger sparkle on the first new one
-        if (desks.length > oldDeskCount) {
-          setNewDeskIndex(oldDeskCount); // index of the first new desk
-          setTimeout(() => setNewDeskIndex(null), 1000);
-        }
+        const tier = getRoomTier(allReal.length);
+        const presets = TIER_DESK_PRESETS[tier];
+        const fallback = generateDeskPositions(getDeskCountWithSpare(allReal.length));
 
         return allReal.map((agent, i) => ({
           ...agent,
-          targetPosition: desks[i],
+          targetPosition: presets[i] ?? fallback[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 },
         }));
       });
       setSceneMode('working');
     }, 4000);
-  }, [deskPositions.length]);
+  }, []);
 
   // ---- Edit an existing agent (state-only, no DB) ----
   const handleEdit = useCallback((config: AgentConfig) => {
@@ -237,19 +258,22 @@ export default function SurveillanceModule() {
   const handleFire = useCallback((agentId: string) => {
     setAgents(prev => {
       const remaining = prev.filter(a => a.id !== agentId);
-      const desks = generateDeskPositions(getDeskCountWithSpare(remaining.length));
-      setDeskPositions(desks);
+      const tier = getRoomTier(remaining.length);
+      const presets = TIER_DESK_PRESETS[tier];
+      const fallback = generateDeskPositions(getDeskCountWithSpare(remaining.length));
       return remaining.map((agent, i) => ({
         ...agent,
-        targetPosition: desks[i],
+        targetPosition: presets[i] ?? fallback[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 },
       }));
     });
     setSelectedAgent(null);
     setSceneMode('working');
   }, []);
 
-  // ---- Position interpolation (lerp) loop ----
+  // ---- Position interpolation (constant-speed) loop ----
   useEffect(() => {
+    const MOVE_SPEED = 0.6; // % per 50ms tick → uniform speed
+
     const interval = setInterval(() => {
       const lerpEntity = (entity: Agent): Agent => {
         const dx = entity.targetPosition.x - entity.position.x;
@@ -264,13 +288,17 @@ export default function SurveillanceModule() {
           };
         }
 
-        const speed = 0.08;
+        // Normalize direction, apply constant speed (no overshoot)
+        const step = Math.min(MOVE_SPEED, dist);
+        const nx = dx / dist;
+        const ny = dy / dist;
+
         return {
           ...entity,
           status: 'walking' as AgentStatus,
           position: {
-            x: entity.position.x + dx * speed,
-            y: entity.position.y + dy * speed,
+            x: entity.position.x + nx * step,
+            y: entity.position.y + ny * step,
           },
         };
       };
@@ -295,6 +323,8 @@ export default function SurveillanceModule() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, ceoAgent]);
 
+  const TOP_MENU = ['OVERVIEW', 'NETWORK', 'ANALYTICS', 'SETTINGS'] as const;
+
   return (
     <div className="flex h-full">
       {/* Left panel -- controls */}
@@ -312,15 +342,30 @@ export default function SurveillanceModule() {
           <span className="animate-blink">&#9679;</span> SAMPLE SURVEILLANCE &mdash; DEMO MODE
         </div>
 
+        {/* Top Menu Buttons */}
+        <div className="flex items-center gap-1 mb-2">
+          {TOP_MENU.map((label, i) => (
+            <button
+              key={label}
+              className={`font-pixel text-[7px] tracking-wider px-3 py-1.5 border transition-colors
+                ${i === 0
+                  ? 'border-pixel-cyan/50 text-pixel-cyan bg-pixel-cyan/15'
+                  : 'border-gray-600/40 text-gray-500 hover:text-gray-300 hover:border-gray-500 bg-transparent'
+                }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         <CRTFrame>
           <PixelOffice
             agents={agents}
             onAgentClick={setSelectedAgent}
             sceneMode={sceneMode}
-            deskPositions={deskPositions}
-            newDeskIndex={newDeskIndex}
             ceo={ceoAgent}
             doorOpen={null}
+            roomTier={roomTier}
           />
         </CRTFrame>
       </div>

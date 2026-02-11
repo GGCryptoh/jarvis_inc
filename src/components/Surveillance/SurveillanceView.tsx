@@ -3,20 +3,24 @@ import { useNavigate } from 'react-router-dom';
 import type { Agent, AgentStatus, Position } from '../../types';
 import {
   ENTRANCE_POSITION,
+  missions as dummyMissions,
 } from '../../data/dummyData';
 import {
+  getRoomTier,
+  TIER_DESK_PRESETS,
+  TIER_CEO_POSITION,
   generateDeskPositions,
   getDeskCountWithSpare,
-  CEO_OFFICE_POSITION,
 } from '../../lib/positionGenerator';
-import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting } from '../../lib/database';
+import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions, seedMissionsIfEmpty } from '../../lib/database';
 import type { AgentRow } from '../../lib/database';
+import { getServiceForModel } from '../../lib/models';
 import CRTFrame from './CRTFrame';
 import PixelOffice from './PixelOffice';
 import HireAgentModal from './HireAgentModal';
 import type { AgentConfig } from './HireAgentModal';
 import { playSuccessJingle } from '../../lib/sounds';
-import { Pencil, Trash2, Zap } from 'lucide-react';
+import { Pencil, Trash2, Zap, PlusCircle } from 'lucide-react';
 
 type CeremonyStage = 'entering' | 'celebrating' | 'walking_to_desk' | 'seated' | null;
 
@@ -55,10 +59,17 @@ export default function SurveillanceView() {
   const [hireModalOpen, setHireModalOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
-  const [deskPositions, setDeskPositions] = useState<Position[]>([]);
-  const [newDeskIndex, setNewDeskIndex] = useState<number | null>(null);
-
   const [ceoAgent, setCeoAgent] = useState<Agent | null>(null);
+
+  // Mission priorities for holographic board
+  const [priorities, setPriorities] = useState<string[]>([]);
+
+  // Floor planner state
+  const [floorPlannerActive, setFloorPlannerActive] = useState(false);
+  const [floorPlannerSelectedId, setFloorPlannerSelectedId] = useState<string | null>(null);
+
+  // Room tier — computed from agent count
+  const roomTier = getRoomTier(agents.length);
 
   // ---- Door + ceremony state ----
   const [doorOpen, setDoorOpen] = useState<boolean | null>(null);
@@ -76,21 +87,32 @@ export default function SurveillanceView() {
   useEffect(() => { ceoStageRef.current = ceoStage; }, [ceoStage]);
   useEffect(() => { hireCeremonyRef.current = hireCeremony; }, [hireCeremony]);
 
-  // ---- Load agents from DB (no seeding) + CEO walk-in logic ----
+  // ---- Load agents from DB + CEO walk-in logic ----
   useEffect(() => {
     const rows = loadAgents();
-    const desks = generateDeskPositions(getDeskCountWithSpare(rows.length));
-    setDeskPositions(desks);
+    const tier = getRoomTier(rows.length);
+    const tierPresets = TIER_DESK_PRESETS[tier];
+    // Fallback desks for agents beyond the tier presets
+    const fallbackDesks = generateDeskPositions(getDeskCountWithSpare(rows.length));
 
-    const loaded = rows.map((row, i) => rowToAgent(row, desks[i], i));
+    const loaded = rows.map((row, i) => {
+      // Use DB position if set, otherwise tier preset, otherwise generated fallback
+      const pos: Position = (row.desk_x != null && row.desk_y != null)
+        ? { x: row.desk_x, y: row.desk_y }
+        : tierPresets[i] ?? fallbackDesks[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 };
+      return rowToAgent(row, pos, i);
+    });
     setAgents(loaded);
 
     // CEO walk-in on first visit
     const ceoRow = loadCEO();
     if (ceoRow) {
+      const ceoPos = (ceoRow.desk_x != null && ceoRow.desk_y != null)
+        ? { x: ceoRow.desk_x, y: ceoRow.desk_y }
+        : TIER_CEO_POSITION[tier];
+
       const walkedIn = getSetting('ceo_walked_in');
       if (!walkedIn) {
-        // First visit — multi-stage ceremony
         setCeoStage('entering');
         setDoorOpen(true);
         setCeoAgent({
@@ -108,7 +130,6 @@ export default function SurveillanceView() {
           model: ceoRow.model,
         });
       } else {
-        // Subsequent visits — CEO already at desk
         setCeoAgent({
           id: 'ceo',
           name: ceoRow.name,
@@ -116,19 +137,36 @@ export default function SurveillanceView() {
           color: '#f1fa8c',
           skinTone: '#ffcc99',
           status: 'working',
-          position: { ...CEO_OFFICE_POSITION },
-          targetPosition: { ...CEO_OFFICE_POSITION },
+          position: { ...ceoPos },
+          targetPosition: { ...ceoPos },
           currentTask: `Philosophy: ${ceoRow.philosophy}`,
           confidence: 99,
           costSoFar: 0,
           model: ceoRow.model,
         });
-        // Show approval if meeting hasn't happened yet
         if (!getSetting('ceo_meeting_done')) {
           setShowApproval(true);
         }
       }
     }
+  }, []);
+
+  // ---- Load missions for priorities board ----
+  useEffect(() => {
+    // Seed dummy missions into DB if empty
+    seedMissionsIfEmpty(dummyMissions.map(m => ({
+      id: m.id, title: m.title, status: m.status,
+      assignee: m.assignee, priority: m.priority, due_date: m.dueDate,
+    })));
+
+    const refreshPriorities = () => {
+      const all = loadMissions();
+      const active = all.filter(m => m.status !== 'done').slice(0, 3);
+      setPriorities(active.map(m => m.title));
+    };
+    refreshPriorities();
+    const interval = setInterval(refreshPriorities, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   // ---- CEO ceremony stage effects ----
@@ -138,9 +176,10 @@ export default function SurveillanceView() {
       playSuccessJingle();
       const timer = setTimeout(() => {
         setCeoStage('walking_to_desk');
+        const ceoPos = TIER_CEO_POSITION[roomTier];
         setCeoAgent(prev => prev ? {
           ...prev,
-          targetPosition: { ...CEO_OFFICE_POSITION },
+          targetPosition: { ...ceoPos },
           status: 'walking' as AgentStatus,
         } : prev);
       }, 2500);
@@ -193,19 +232,26 @@ export default function SurveillanceView() {
       model: config.model,
     });
 
-    // Calculate desk positions for the new count
-    const currentCount = agents.length;
-    const newCount = currentCount + 1;
-    const desks = generateDeskPositions(getDeskCountWithSpare(newCount));
-    const oldDeskCount = deskPositions.length;
-    setDeskPositions(desks);
-
-    if (desks.length > oldDeskCount) {
-      setNewDeskIndex(oldDeskCount);
-      setTimeout(() => setNewDeskIndex(null), 1000);
+    // Check if vault has an API key for this model's service
+    const service = getServiceForModel(config.model);
+    const existingKey = getVaultEntryByService(service);
+    if (!existingKey) {
+      saveApproval({
+        id: `approval-${Date.now()}`,
+        type: 'api_key_request',
+        title: `API Key Required: ${service}`,
+        description: `Agent ${config.name} needs a ${service} API key to operate with ${config.model}.`,
+        status: 'pending',
+        metadata: JSON.stringify({ service, model: config.model, agentId: id }),
+      });
     }
 
-    const deskPos = desks[currentCount];
+    // Determine desk position from tier presets or fallback
+    const newCount = agents.length + 1;
+    const tier = getRoomTier(newCount);
+    const tierPresets = TIER_DESK_PRESETS[tier];
+    const fallbackDesks = generateDeskPositions(getDeskCountWithSpare(newCount));
+    const deskPos = tierPresets[agents.length] ?? fallbackDesks[agents.length] ?? { x: 40, y: 60 };
 
     // Start hire ceremony — agent walks from entrance to center stage
     setDoorOpen(true);
@@ -228,7 +274,7 @@ export default function SurveillanceView() {
 
     setAgents(prev => [...prev, newAgent]);
     setHireModalOpen(false);
-  }, [agents.length, deskPositions.length]);
+  }, [agents.length]);
 
   // ---- Edit an existing agent (persists to DB) ----
   const handleEdit = useCallback((config: AgentConfig) => {
@@ -263,22 +309,49 @@ export default function SurveillanceView() {
   // ---- Fire (delete) an agent (persists to DB) ----
   const handleFire = useCallback((agentId: string) => {
     dbDeleteAgent(agentId);
-    setAgents(prev => {
-      const remaining = prev.filter(a => a.id !== agentId);
-      const desks = generateDeskPositions(getDeskCountWithSpare(remaining.length));
-      setDeskPositions(desks);
-      return remaining.map((agent, i) => ({
-        ...agent,
-        targetPosition: desks[i],
-      }));
-    });
+    setAgents(prev => prev.filter(a => a.id !== agentId));
     setSelectedAgent(null);
   }, []);
 
-  // ---- Position interpolation (lerp) loop ----
+  // ---- Floor planner: handle click on office floor ----
+  const handleFloorClick = useCallback((x: number, y: number) => {
+    if (!floorPlannerSelectedId) return;
+
+    // Save position to DB
+    console.log(`[FloorPlanner] ${floorPlannerSelectedId} placed at { x: ${Math.round(x * 10) / 10}, y: ${Math.round(y * 10) / 10} }`);
+    if (floorPlannerSelectedId === 'ceo') {
+      saveCEODeskPosition(x, y);
+      setCeoAgent(prev => prev ? {
+        ...prev,
+        targetPosition: { x, y },
+      } : prev);
+    } else {
+      saveAgentDeskPosition(floorPlannerSelectedId, x, y);
+      setAgents(prev => prev.map(a =>
+        a.id === floorPlannerSelectedId
+          ? { ...a, targetPosition: { x, y } }
+          : a,
+      ));
+    }
+
+    setFloorPlannerSelectedId(null);
+  }, [floorPlannerSelectedId]);
+
+  // ---- Floor planner: handle agent selection ----
+  const handleAgentClickForPlanner = useCallback((agent: Agent) => {
+    if (floorPlannerActive) {
+      setFloorPlannerSelectedId(prev => prev === agent.id ? null : agent.id);
+    } else {
+      setSelectedAgent(agent);
+    }
+  }, [floorPlannerActive]);
+
+  // ---- Position interpolation (constant-speed) loop ----
   useEffect(() => {
+    const MOVE_SPEED = 0.6; // % per 50ms tick → uniform speed
+
     const interval = setInterval(() => {
-      // Lerp for regular agents
+      // Move regular agents
       setAgents(prev => prev.map(entity => {
         const dx = entity.targetPosition.x - entity.position.x;
         const dy = entity.targetPosition.y - entity.position.y;
@@ -297,25 +370,28 @@ export default function SurveillanceView() {
               return { ...entity, position: { ...entity.targetPosition }, status: 'working' as AgentStatus };
             }
           }
-          // Not in ceremony or ceremony stage doesn't need special handling
           if (entity.status === 'celebrating') {
             return { ...entity, position: { ...entity.targetPosition } };
           }
           return { ...entity, position: { ...entity.targetPosition }, status: 'working' as AgentStatus };
         }
 
-        const speed = 0.08;
+        // Normalize direction, apply constant speed (no overshoot)
+        const step = Math.min(MOVE_SPEED, dist);
+        const nx = dx / dist;
+        const ny = dy / dist;
+
         return {
           ...entity,
           status: (entity.status === 'celebrating' ? 'celebrating' : 'walking') as AgentStatus,
           position: {
-            x: entity.position.x + dx * speed,
-            y: entity.position.y + dy * speed,
+            x: entity.position.x + nx * step,
+            y: entity.position.y + ny * step,
           },
         };
       }));
 
-      // Lerp for CEO
+      // Move CEO
       setCeoAgent(prev => {
         if (!prev) return prev;
         const dx = prev.targetPosition.x - prev.position.x;
@@ -338,13 +414,16 @@ export default function SurveillanceView() {
           return { ...prev, position: { ...prev.targetPosition }, status: 'working' as AgentStatus };
         }
 
-        const speed = 0.08;
+        const step = Math.min(MOVE_SPEED, dist);
+        const nx = dx / dist;
+        const ny = dy / dist;
+
         return {
           ...prev,
           status: (prev.status === 'celebrating' ? 'celebrating' : 'walking') as AgentStatus,
           position: {
-            x: prev.position.x + dx * speed,
-            y: prev.position.y + dy * speed,
+            x: prev.position.x + nx * step,
+            y: prev.position.y + ny * step,
           },
         };
       });
@@ -366,22 +445,68 @@ export default function SurveillanceView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, ceoAgent]);
 
+  const TOP_MENU = ['OVERVIEW', 'FLOOR PLAN', 'NETWORK', 'ANALYTICS'] as const;
+
   return (
     <div className="flex h-full">
       <div className="flex-1 flex flex-col p-4 min-w-0">
-        <div className="font-pixel text-pixel-green text-[9px] mb-2 flex items-center gap-2 tracking-wider">
-          <span className="animate-blink">&#9679;</span> SURVEILLANCE FEED &mdash; LIVE
+        {/* ---- Header: Live indicator + top menu + hire button ---- */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-pixel text-pixel-green text-[9px] flex items-center gap-2 tracking-wider">
+            <span className="animate-blink">&#9679;</span> SURVEILLANCE FEED &mdash; LIVE
+          </div>
+          <button
+            onClick={() => setHireModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 font-pixel text-[7px] tracking-wider
+              border border-pixel-cyan/40 text-pixel-cyan bg-pixel-cyan/10 hover:bg-pixel-cyan/20 transition-colors"
+          >
+            <PlusCircle size={10} />
+            HIRE AGENT
+          </button>
+        </div>
+
+        {/* ---- Top Menu Buttons ---- */}
+        <div className="flex items-center gap-1 mb-2">
+          {TOP_MENU.map((label) => {
+            const isFloorPlan = label === 'FLOOR PLAN';
+            const isActive = isFloorPlan ? floorPlannerActive : label === 'OVERVIEW';
+            return (
+              <button
+                key={label}
+                className={`font-pixel text-[7px] tracking-wider px-3 py-1.5 border transition-colors
+                  ${isActive
+                    ? 'border-pixel-cyan/50 text-pixel-cyan bg-pixel-cyan/15'
+                    : 'border-gray-600/40 text-gray-500 hover:text-gray-300 hover:border-gray-500 bg-transparent'
+                  }`}
+                onClick={() => {
+                  if (isFloorPlan) {
+                    setFloorPlannerActive(prev => !prev);
+                    setFloorPlannerSelectedId(null);
+                  }
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+          {floorPlannerActive && (
+            <span className="font-pixel text-[6px] text-pixel-orange tracking-wider ml-2">
+              {floorPlannerSelectedId ? 'CLICK FLOOR TO PLACE' : 'SELECT AN AGENT'}
+            </span>
+          )}
         </div>
 
         <CRTFrame>
           <PixelOffice
             agents={agents}
-            onAgentClick={setSelectedAgent}
+            onAgentClick={handleAgentClickForPlanner}
             sceneMode="working"
-            deskPositions={deskPositions}
-            newDeskIndex={newDeskIndex}
             ceo={ceoAgent}
             doorOpen={doorOpen}
+            roomTier={roomTier}
+            priorities={priorities}
+            floorPlannerActive={floorPlannerActive}
+            onFloorClick={handleFloorClick}
           />
         </CRTFrame>
       </div>

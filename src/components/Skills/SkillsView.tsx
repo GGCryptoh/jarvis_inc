@@ -1,133 +1,14 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  Mail,
-  Send,
-  Image,
-  Twitter,
-  Globe,
-  MessageCircle,
-  FileText,
-  Code,
-  BarChart3,
-  Calendar,
-  Search,
-  Rss,
+  ChevronDown,
+  AlertTriangle,
+  Shield,
+  ClipboardCheck,
 } from 'lucide-react';
-
-interface Skill {
-  id: string;
-  name: string;
-  description: string;
-  icon: React.ElementType;
-  category: 'communication' | 'research' | 'creation' | 'analysis';
-  status: 'available' | 'coming_soon';
-}
-
-const skills: Skill[] = [
-  // Communication
-  {
-    id: 'read-email',
-    name: 'Read Email',
-    description: 'Read and parse incoming emails from connected accounts',
-    icon: Mail,
-    category: 'communication',
-    status: 'available',
-  },
-  {
-    id: 'write-email',
-    name: 'Write Email',
-    description: 'Compose and send emails on behalf of agents',
-    icon: Send,
-    category: 'communication',
-    status: 'available',
-  },
-  {
-    id: 'send-slack',
-    name: 'Send Slack Message',
-    description: 'Post messages and updates to Slack channels',
-    icon: MessageCircle,
-    category: 'communication',
-    status: 'coming_soon',
-  },
-  {
-    id: 'schedule-meeting',
-    name: 'Schedule Meeting',
-    description: 'Create and manage calendar events and invites',
-    icon: Calendar,
-    category: 'communication',
-    status: 'coming_soon',
-  },
-
-  // Research
-  {
-    id: 'research-web',
-    name: 'Research Web',
-    description: 'Search and analyze web pages for information gathering',
-    icon: Globe,
-    category: 'research',
-    status: 'available',
-  },
-  {
-    id: 'read-tweets',
-    name: 'Read X / Tweets',
-    description: 'Monitor and analyze posts from X (Twitter) feeds',
-    icon: Twitter,
-    category: 'research',
-    status: 'available',
-  },
-  {
-    id: 'research-reddit',
-    name: 'Research Reddit',
-    description: 'Search subreddits and threads for insights and trends',
-    icon: Rss,
-    category: 'research',
-    status: 'available',
-  },
-  {
-    id: 'deep-search',
-    name: 'Deep Search',
-    description: 'Multi-source deep research across web, papers, and forums',
-    icon: Search,
-    category: 'research',
-    status: 'coming_soon',
-  },
-
-  // Creation
-  {
-    id: 'create-images',
-    name: 'Create Images',
-    description: 'Generate images using AI image models (DALL-E, Midjourney)',
-    icon: Image,
-    category: 'creation',
-    status: 'available',
-  },
-  {
-    id: 'write-document',
-    name: 'Write Document',
-    description: 'Draft reports, memos, proposals, and other documents',
-    icon: FileText,
-    category: 'creation',
-    status: 'available',
-  },
-  {
-    id: 'generate-code',
-    name: 'Generate Code',
-    description: 'Write, review, and debug code in multiple languages',
-    icon: Code,
-    category: 'creation',
-    status: 'available',
-  },
-
-  // Analysis
-  {
-    id: 'analyze-data',
-    name: 'Analyze Data',
-    description: 'Process datasets, generate charts, and extract insights',
-    icon: BarChart3,
-    category: 'analysis',
-    status: 'coming_soon',
-  },
-];
+import { loadSkills, saveSkill, updateSkillModel, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService } from '../../lib/database';
+import { MODEL_OPTIONS, getServiceForModel } from '../../lib/models';
+import { skills, type SkillDefinition } from '../../data/skillDefinitions';
 
 const categoryLabels: Record<string, string> = {
   communication: 'COMMUNICATION',
@@ -143,17 +24,180 @@ const categoryColors: Record<string, string> = {
   analysis: '#ffb86c',
 };
 
-export default function SkillsView() {
-  const [enabledSkills, setEnabledSkills] = useState<Set<string>>(new Set());
+interface SkillConfig {
+  enabled: boolean;
+  model: string | null;
+}
 
-  const toggleSkill = (id: string) => {
-    setEnabledSkills(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+function getRequiredService(skill: SkillDefinition, model: string | null): string | null {
+  if (skill.serviceType === 'fixed') return skill.fixedService ?? null;
+  if (model) return getServiceForModel(model);
+  return null;
+}
+
+function hasApiKey(service: string): boolean {
+  return getVaultEntryByService(service) !== null;
+}
+
+function ensureApproval(service: string, skillName: string, model: string | null): void {
+  const pending = loadApprovals();
+  const alreadyRequested = pending.some(a => {
+    try {
+      const meta = JSON.parse(a.metadata ?? '{}');
+      return meta.service === service;
+    } catch { return false; }
+  });
+  if (!alreadyRequested) {
+    saveApproval({
+      id: `approval-${Date.now()}`,
+      type: 'api_key_request',
+      title: `API Key Required: ${service}`,
+      description: `Skill "${skillName}" requires a ${service} API key to function.`,
+      status: 'pending',
+      metadata: JSON.stringify({ service, skillId: skillName, model }),
+    });
+  }
+}
+
+/** Check if a pending approval for a service is still needed by any enabled skill. If not, dismiss it. */
+function cleanupStaleApproval(oldService: string, allConfigs: Map<string, SkillConfig>): void {
+  // Check if any other enabled skill still needs this service
+  const stillNeeded = skills.some(s => {
+    if (s.status === 'coming_soon') return false;
+    const cfg = allConfigs.get(s.id);
+    if (!cfg?.enabled) return false;
+    const svc = getRequiredService(s, cfg.model);
+    return svc === oldService;
+  });
+  if (stillNeeded) return;
+
+  // Also check if the key now exists (user may have provided it)
+  if (hasApiKey(oldService)) return;
+
+  // Find and dismiss the pending approval for this service
+  const pending = loadApprovals();
+  for (const a of pending) {
+    try {
+      const meta = JSON.parse(a.metadata ?? '{}');
+      if (meta.service === oldService) {
+        updateApprovalStatus(a.id, 'dismissed');
+      }
+    } catch { /* ignore */ }
+  }
+}
+
+/** Check if a pending approval exists for a given service. */
+function hasPendingApproval(service: string): boolean {
+  const pending = loadApprovals();
+  return pending.some(a => {
+    try {
+      const meta = JSON.parse(a.metadata ?? '{}');
+      return meta.service === service;
+    } catch { return false; }
+  });
+}
+
+/** Check if a dismissed approval exists for a given service (key was never provided). */
+function hasDismissedApproval(service: string): boolean {
+  const all = loadAllApprovals();
+  return all.some(a => {
+    if (a.status !== 'dismissed') return false;
+    try {
+      const meta = JSON.parse(a.metadata ?? '{}');
+      return meta.service === service;
+    } catch { return false; }
+  });
+}
+
+export default function SkillsView() {
+  const navigate = useNavigate();
+  const [skillConfigs, setSkillConfigs] = useState<Map<string, SkillConfig>>(() => {
+    const rows = loadSkills();
+    const map = new Map<string, SkillConfig>();
+    for (const row of rows) {
+      map.set(row.id, { enabled: row.enabled === 1, model: row.model });
+    }
+    return map;
+  });
+
+  // Disable confirmation dialog state
+  const [disableConfirm, setDisableConfirm] = useState<SkillDefinition | null>(null);
+
+  const getConfig = (id: string): SkillConfig => skillConfigs.get(id) ?? { enabled: false, model: null };
+
+  const doDisable = useCallback((skill: SkillDefinition) => {
+    const current = getConfig(skill.id);
+    saveSkill(skill.id, false, current.model);
+    setSkillConfigs(prev => {
+      const next = new Map(prev);
+      next.set(skill.id, { enabled: false, model: current.model });
       return next;
     });
-  };
+    setDisableConfirm(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillConfigs]);
+
+  const toggleSkill = useCallback((skill: SkillDefinition) => {
+    const current = getConfig(skill.id);
+    const newEnabled = !current.enabled;
+
+    if (newEnabled) {
+      // Turning ON — set default model for LLM skills
+      let model = current.model;
+      if (skill.serviceType === 'llm' && !model && skill.defaultModel) {
+        model = skill.defaultModel;
+      }
+
+      saveSkill(skill.id, true, model);
+
+      // Check vault for required service
+      const service = getRequiredService(skill, model);
+      if (service && !hasApiKey(service)) {
+        ensureApproval(service, skill.name, model);
+        window.dispatchEvent(new Event('approvals-changed'));
+      }
+
+      setSkillConfigs(prev => {
+        const next = new Map(prev);
+        next.set(skill.id, { enabled: true, model });
+        return next;
+      });
+    } else {
+      // Turning OFF — show confirmation
+      setDisableConfirm(skill);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillConfigs]);
+
+  const handleModelChange = useCallback((skill: SkillDefinition, newModel: string) => {
+    const current = getConfig(skill.id);
+    const enabled = current.enabled;
+    const oldModel = current.model;
+    const oldService = oldModel ? getServiceForModel(oldModel) : null;
+    const newService = getServiceForModel(newModel);
+
+    saveSkill(skill.id, enabled, newModel);
+
+    // Update local state first so cleanup sees the new config
+    const updatedConfigs = new Map(skillConfigs);
+    updatedConfigs.set(skill.id, { enabled, model: newModel });
+    setSkillConfigs(updatedConfigs);
+
+    if (enabled) {
+      // If the service changed, clean up old approval if no longer needed
+      if (oldService && oldService !== newService) {
+        cleanupStaleApproval(oldService, updatedConfigs);
+      }
+
+      // Ensure approval for new service if needed
+      if (!hasApiKey(newService)) {
+        ensureApproval(newService, skill.name, newModel);
+      }
+
+      window.dispatchEvent(new Event('approvals-changed'));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillConfigs]);
 
   const categories = ['communication', 'research', 'creation', 'analysis'] as const;
 
@@ -165,7 +209,7 @@ export default function SkillsView() {
           AGENT SKILLS
         </h1>
         <p className="font-pixel text-[8px] tracking-wider text-zinc-500 leading-relaxed">
-          CONFIGURE CAPABILITIES FOR YOUR AGENTS. SKILLS WILL BE SOURCED FROM A GITHUB REPOSITORY IN THE FUTURE.
+          CONFIGURE CAPABILITIES FOR YOUR AGENTS. TOGGLE SKILLS AND ASSIGN AI MODELS TO POWER THEM.
         </p>
       </div>
 
@@ -192,71 +236,124 @@ export default function SkillsView() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {catSkills.map(skill => {
                 const Icon = skill.icon;
-                const isEnabled = enabledSkills.has(skill.id);
+                const config = getConfig(skill.id);
+                const isEnabled = config.enabled;
                 const isComingSoon = skill.status === 'coming_soon';
+
+                // Determine status
+                const service = isEnabled ? getRequiredService(skill, config.model) : null;
+                const keyPresent = service ? hasApiKey(service) : false;
+                const needsKey = isEnabled && service && !keyPresent;
+
+                // Card color scheme
+                const cardBorder = isComingSoon
+                  ? 'border-zinc-800'
+                  : needsKey
+                    ? 'border-amber-500/30'
+                    : isEnabled
+                      ? 'border-emerald-500/40'
+                      : 'border-zinc-700/50';
+                const cardBg = isComingSoon
+                  ? 'bg-zinc-900/30'
+                  : needsKey
+                    ? 'bg-amber-500/[0.04]'
+                    : isEnabled
+                      ? 'bg-emerald-500/[0.06]'
+                      : 'bg-jarvis-surface';
+                const iconBg = isComingSoon
+                  ? 'bg-zinc-800'
+                  : needsKey
+                    ? 'bg-amber-500/20'
+                    : isEnabled
+                      ? 'bg-emerald-500/20'
+                      : 'bg-zinc-800';
+                const iconColor = isComingSoon
+                  ? 'text-zinc-500'
+                  : needsKey
+                    ? 'text-amber-400'
+                    : isEnabled
+                      ? 'text-emerald-400'
+                      : 'text-zinc-400';
+                const toggleColor = needsKey ? 'bg-amber-500' : isEnabled ? 'bg-emerald-500' : 'bg-zinc-700';
 
                 return (
                   <div
                     key={skill.id}
-                    className={[
-                      'relative rounded-lg border p-4 transition-all duration-200 cursor-pointer group',
-                      isComingSoon
-                        ? 'border-zinc-800 bg-zinc-900/30 opacity-60'
-                        : isEnabled
-                          ? 'border-emerald-500/40 bg-emerald-500/[0.06]'
-                          : 'border-zinc-700/50 bg-jarvis-surface hover:border-zinc-600',
-                    ].join(' ')}
-                    onClick={() => !isComingSoon && toggleSkill(skill.id)}
+                    className={`relative rounded-lg border p-4 transition-all duration-200 ${isComingSoon ? 'opacity-60' : 'cursor-pointer'} group ${cardBorder} ${cardBg} ${!isComingSoon ? 'hover:border-zinc-600' : ''}`}
+                    onClick={() => !isComingSoon && toggleSkill(skill)}
                   >
-                    {/* Icon + Title row */}
-                    <div className="flex items-start justify-between mb-3">
+                    {/* Icon + Title + Toggle row */}
+                    <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2.5">
-                        <div
-                          className={[
-                            'w-8 h-8 rounded-md flex items-center justify-center',
-                            isEnabled
-                              ? 'bg-emerald-500/20'
-                              : 'bg-zinc-800',
-                          ].join(' ')}
-                        >
-                          <Icon
-                            size={16}
-                            className={isEnabled ? 'text-emerald-400' : 'text-zinc-400'}
-                          />
+                        <div className={`w-8 h-8 rounded-md flex items-center justify-center ${iconBg}`}>
+                          <Icon size={16} className={iconColor} />
                         </div>
-                        <div>
-                          <div className="font-pixel text-[9px] tracking-wider text-zinc-200">
-                            {skill.name}
-                          </div>
+                        <div className="font-pixel text-[9px] tracking-wider text-zinc-200">
+                          {skill.name}
                         </div>
                       </div>
 
-                      {/* Toggle / Badge */}
                       {isComingSoon ? (
                         <span className="font-pixel text-[6px] tracking-widest text-zinc-600 border border-zinc-700/50 rounded px-2 py-0.5 bg-zinc-800/30">
                           SOON
                         </span>
                       ) : (
-                        <div
-                          className={[
-                            'w-8 h-4 rounded-full transition-colors duration-200 flex items-center px-0.5',
-                            isEnabled ? 'bg-emerald-500' : 'bg-zinc-700',
-                          ].join(' ')}
-                        >
-                          <div
-                            className={[
-                              'w-3 h-3 rounded-full bg-white transition-transform duration-200',
-                              isEnabled ? 'translate-x-3.5' : 'translate-x-0',
-                            ].join(' ')}
-                          />
+                        <div className={`w-8 h-4 rounded-full transition-colors duration-200 flex items-center px-0.5 ${toggleColor}`}>
+                          <div className={`w-3 h-3 rounded-full bg-white transition-transform duration-200 ${isEnabled ? 'translate-x-3.5' : 'translate-x-0'}`} />
                         </div>
                       )}
                     </div>
 
                     {/* Description */}
-                    <p className="font-pixel text-[7px] tracking-wider text-zinc-500 leading-relaxed">
+                    <p className="font-pixel text-[7px] tracking-wider text-zinc-500 leading-relaxed mb-3">
                       {skill.description}
                     </p>
+
+                    {/* Bottom row: Model selector / Service badge + Status */}
+                    {!isComingSoon && (
+                      <div className="flex items-center justify-between gap-2 min-h-[20px]">
+                        {/* Model dropdown or service badge */}
+                        {isEnabled ? (
+                          skill.serviceType === 'llm' ? (
+                            <div className="relative" onClick={e => e.stopPropagation()}>
+                              <select
+                                value={config.model ?? ''}
+                                onChange={e => handleModelChange(skill, e.target.value)}
+                                className="appearance-none font-pixel text-[7px] tracking-wider bg-zinc-900 border border-zinc-700 rounded px-2 py-1 pr-5 text-zinc-300 focus:outline-none focus:border-emerald-500/40 cursor-pointer"
+                              >
+                                <option value="" disabled>SELECT MODEL</option>
+                                {MODEL_OPTIONS.map(m => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                              </select>
+                              <ChevronDown size={8} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                            </div>
+                          ) : (
+                            <span className="font-pixel text-[7px] tracking-wider px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-400">
+                              {skill.fixedService} API
+                            </span>
+                          )
+                        ) : (
+                          <span />
+                        )}
+
+                        {/* Status indicator */}
+                        {isEnabled && (
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${needsKey ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+                            {needsKey ? (
+                              <span className="font-pixel text-[6px] tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
+                                KEY NEEDED
+                              </span>
+                            ) : (
+                              <span className="font-pixel text-[6px] tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.5">
+                                {skill.serviceType === 'llm' && config.model ? getServiceForModel(config.model) : skill.fixedService}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -270,8 +367,108 @@ export default function SkillsView() {
         <p className="font-pixel text-[7px] tracking-wider text-zinc-600 leading-relaxed">
           SKILLS WILL LOAD FROM YOUR CONFIGURED GITHUB REPOSITORY IN A FUTURE UPDATE.
           <br />
-          FOR NOW, TOGGLE SKILLS TO INDICATE WHICH CAPABILITIES YOUR AGENTS SHOULD HAVE.
+          TOGGLE SKILLS AND ASSIGN MODELS TO CONFIGURE WHAT YOUR AGENTS CAN DO.
         </p>
+      </div>
+
+      {/* Disable Confirmation Dialog */}
+      {disableConfirm && <DisableSkillDialog
+        skill={disableConfirm}
+        config={getConfig(disableConfirm.id)}
+        onConfirm={() => doDisable(disableConfirm)}
+        onCancel={() => setDisableConfirm(null)}
+        onGoApprovals={() => { setDisableConfirm(null); navigate('/approvals'); }}
+        onGoVault={() => { setDisableConfirm(null); navigate('/vault'); }}
+      />}
+    </div>
+  );
+}
+
+/** Inline dialog for confirming skill disable */
+function DisableSkillDialog({
+  skill, config, onConfirm, onCancel, onGoApprovals, onGoVault,
+}: {
+  skill: SkillDefinition;
+  config: SkillConfig;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onGoApprovals: () => void;
+  onGoVault: () => void;
+}) {
+  const service = getRequiredService(skill, config.model);
+  const keyPresent = service ? hasApiKey(service) : true;
+  const pendingExists = service ? hasPendingApproval(service) : false;
+  const dismissedExists = service ? hasDismissedApproval(service) : false;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative z-10 w-full max-w-sm mx-4">
+        <div className="bg-jarvis-surface border border-zinc-600/40 rounded-lg shadow-lg overflow-hidden">
+          <div className="flex items-center gap-3 px-5 py-4 bg-zinc-500/10 border-b border-zinc-600/20">
+            <AlertTriangle size={18} className="text-amber-400 flex-shrink-0" />
+            <div>
+              <h2 className="text-amber-300 font-semibold text-sm tracking-wide">DISABLE SKILL</h2>
+              <p className="text-zinc-500 text-xs mt-0.5">{skill.name}</p>
+            </div>
+          </div>
+
+          <div className="px-5 py-4">
+            <p className="text-jarvis-text text-sm leading-relaxed mb-4">
+              Are you sure you want to disable <span className="text-amber-300 font-semibold">{skill.name}</span>?
+            </p>
+
+            {!keyPresent && service && (
+              <div className="mb-4 p-3 rounded-lg bg-amber-500/[0.06] border border-amber-500/20">
+                <p className="text-amber-300/80 text-xs mb-2">
+                  This skill is missing its <span className="font-semibold">{service}</span> API key.
+                </p>
+                {pendingExists && (
+                  <button
+                    onClick={onGoApprovals}
+                    className="flex items-center gap-2 text-xs text-emerald-400 hover:text-emerald-300 transition-colors mb-1"
+                  >
+                    <ClipboardCheck size={12} />
+                    A pending approval exists — go provide the key
+                  </button>
+                )}
+                {!pendingExists && dismissedExists && (
+                  <button
+                    onClick={onGoVault}
+                    className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    <Shield size={12} />
+                    Add key directly in the Vault
+                  </button>
+                )}
+                {!pendingExists && !dismissedExists && (
+                  <button
+                    onClick={onGoVault}
+                    className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    <Shield size={12} />
+                    Add {service} key in the Vault
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-3 px-5 py-3 border-t border-jarvis-border bg-jarvis-bg/50">
+            <button
+              onClick={onCancel}
+              className="px-4 py-2 text-xs text-jarvis-muted hover:text-jarvis-text border border-jarvis-border rounded transition-colors"
+            >
+              KEEP ENABLED
+            </button>
+            <button
+              onClick={onConfirm}
+              className="px-4 py-2 text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded transition-colors"
+            >
+              DISABLE
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

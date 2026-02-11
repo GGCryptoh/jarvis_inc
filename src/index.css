@@ -265,7 +265,6 @@
   /* Base agent sprite container */
   .agent-sprite {
     position: absolute;
-    transition: left 1.5s ease-in-out, top 1.5s ease-in-out;
     will-change: left, top;
     z-index: 5;
   }

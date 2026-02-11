@@ -1,27 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { getFounderInfo } from '../../lib/database';
-import { saveCEO } from '../../lib/database';
+import { getFounderInfo, saveCEO, saveVaultEntry } from '../../lib/database';
+import { MODEL_OPTIONS, getServiceForModel, SERVICE_KEY_HINTS } from '../../lib/models';
 
 interface CEOCeremonyProps {
   onComplete: () => void;
 }
 
-type Phase = 'intro' | 'reveal' | 'form' | 'activating' | 'done';
-
-const MODEL_OPTIONS = [
-  'Claude Opus 4.6',
-  'Claude Opus 4.5',
-  'Claude Sonnet 4.5',
-  'Claude Haiku 4.5',
-  'GPT-5.2',
-  'o3-pro',
-  'o4-mini',
-  'Gemini 3 Pro',
-  'Gemini 2.5 Flash',
-  'DeepSeek R1',
-  'Llama 3.3',
-  'Grok 4',
-];
+type Phase = 'intro' | 'reveal' | 'form' | 'api_key' | 'activating' | 'done';
 
 const PHILOSOPHY_PRESETS = [
   'Move fast, break things',
@@ -50,6 +35,8 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   const [showCustomPhilosophy, setShowCustomPhilosophy] = useState(false);
   const [riskTolerance, setRiskTolerance] = useState<'conservative' | 'moderate' | 'aggressive'>('moderate');
 
+  const [apiKey, setApiKey] = useState('');
+
   const [activationProgress, setActivationProgress] = useState(0);
   const terminalRef = useRef<HTMLDivElement>(null);
 
@@ -73,7 +60,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   useEffect(() => {
     if (phase !== 'intro') return;
     const lines = [
-      { text: `FOUNDER ${founderName} VERIFIED`, delay: 0 },
+      { text: `FOUNDER ${founderName.toUpperCase()} VERIFIED`, delay: 0 },
       { text: '', delay: 400 },
       { text: 'Initializing executive layer...', delay: 800 },
       { text: '[OK] Strategic planning module', delay: 1400 },
@@ -130,7 +117,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
 
   const effectivePhilosophy = showCustomPhilosophy ? customPhilosophy : philosophy;
 
-  function handleActivate() {
+  function handleDesignate() {
     if (!ceoName.trim() || !effectivePhilosophy.trim()) return;
     saveCEO({
       name: ceoName.trim().toUpperCase(),
@@ -138,6 +125,26 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
       philosophy: effectivePhilosophy.trim(),
       risk_tolerance: riskTolerance,
       status: 'nominal',
+    });
+    setPhase('api_key');
+  }
+
+  const service = getServiceForModel(model);
+  const hints = SERVICE_KEY_HINTS[service];
+
+  function maskKey(key: string): string {
+    if (key.length <= 10) return key;
+    return key.slice(0, 10) + '\u2022'.repeat(Math.min(key.length - 10, 8));
+  }
+
+  function handleHireCEO() {
+    if (apiKey.trim().length < 10) return;
+    saveVaultEntry({
+      id: `vault-${Date.now()}`,
+      name: `${service} API Key`,
+      type: 'api_key',
+      service,
+      key_value: apiKey.trim(),
     });
     setPhase('activating');
   }
@@ -339,9 +346,9 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
                 </div>
               </div>
 
-              {/* Activate button */}
+              {/* Designate button */}
               <button
-                onClick={handleActivate}
+                onClick={handleDesignate}
                 disabled={!isValid}
                 className="w-full font-pixel text-sm tracking-[0.3em] py-4 rounded-sm border-2 transition-all duration-300"
                 style={{
@@ -353,6 +360,94 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
                 }}
               >
                 ▶ DESIGNATE CEO
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* API Key phase */}
+        {phase === 'api_key' && (
+          <div className="animate-[fadeIn_0.6s_ease-out]">
+            <h1
+              className="font-pixel text-2xl tracking-wider mb-2 text-center"
+              style={{ color: gold, textShadow: `0 0 20px ${gold}4d` }}
+            >
+              CONNECT {service.toUpperCase()} API
+            </h1>
+            <p className="font-pixel text-[10px] tracking-wider text-center mb-8" style={{ color: `${gold}80` }}>
+              {ceoName.toUpperCase()} needs an API key to operate with {model}
+            </p>
+
+            <div className="max-w-lg mx-auto space-y-6">
+              {/* Steps */}
+              {hints && (
+                <div className="space-y-2">
+                  <div className="font-pixel text-[9px] tracking-widest mb-3" style={{ color: `${gold}b3` }}>
+                    HOW TO GET YOUR KEY
+                  </div>
+                  {hints.steps.map((step, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <span
+                        className="font-pixel text-[10px] w-5 h-5 flex items-center justify-center border rounded-sm flex-shrink-0"
+                        style={{ borderColor: `${gold}4d`, color: gold }}
+                      >
+                        {i + 1}
+                      </span>
+                      <span className="font-pixel text-[9px] tracking-wider pt-0.5" style={{ color: `${gold}cc` }}>
+                        {step}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="font-pixel text-[8px] tracking-wider mt-2" style={{ color: '#8be9fd' }}>
+                    {hints.url}
+                  </div>
+                </div>
+              )}
+
+              {/* Key Input */}
+              <div>
+                <label className="block font-pixel text-xs tracking-widest mb-2" style={{ color: `${gold}b3` }}>
+                  API KEY
+                </label>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={e => setApiKey(e.target.value)}
+                  onPaste={e => {
+                    e.preventDefault();
+                    const pasted = e.clipboardData.getData('text');
+                    setApiKey(pasted);
+                  }}
+                  placeholder="Paste your API key here"
+                  className="w-full bg-black border-2 font-mono text-sm tracking-wider px-4 py-3 rounded-sm focus:outline-none transition-colors placeholder:opacity-30"
+                  style={{
+                    borderColor: apiKey.length >= 10 ? '#50fa7b80' : `${gold}4d`,
+                    color: apiKey.length >= 10 ? '#50fa7b' : gold,
+                  }}
+                  onFocus={e => (e.target.style.borderColor = apiKey.length >= 10 ? '#50fa7b' : `${gold}b3`)}
+                  onBlur={e => (e.target.style.borderColor = apiKey.length >= 10 ? '#50fa7b80' : `${gold}4d`)}
+                />
+                {apiKey.length > 0 && (
+                  <div className="font-mono text-sm mt-2 tracking-wider" style={{ color: '#50fa7b' }}>
+                    {maskKey(apiKey)}
+                  </div>
+                )}
+              </div>
+
+              {/* Hire CEO button */}
+              <button
+                onClick={handleHireCEO}
+                disabled={apiKey.trim().length < 10}
+                className="w-full font-pixel text-sm tracking-[0.3em] py-4 rounded-sm border-2 transition-all duration-300"
+                style={{
+                  borderColor: apiKey.trim().length >= 10 ? gold : `${gold}33`,
+                  backgroundColor: apiKey.trim().length >= 10 ? `${gold}1a` : 'transparent',
+                  color: apiKey.trim().length >= 10 ? gold : `${gold}4d`,
+                  cursor: apiKey.trim().length >= 10 ? 'pointer' : 'not-allowed',
+                  boxShadow: apiKey.trim().length >= 10 ? `0 0 30px ${gold}33` : 'none',
+                }}
+              >
+                ▶ HIRE CEO
               </button>
             </div>
           </div>

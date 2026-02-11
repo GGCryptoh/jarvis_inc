@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import ResetDBDialog from './ResetDBDialog'
-import { loadCEO } from '../../lib/database'
+import { loadCEO, getPendingApprovalCount } from '../../lib/database'
 
 interface NavItem {
   label: string
@@ -46,21 +46,37 @@ const statusColorMap: Record<CeoStatus, string> = {
 
 interface NavigationRailProps {
   onResetDB: () => Promise<void>
+  onFireCEO: () => void
 }
 
-export default function NavigationRail({ onResetDB }: NavigationRailProps) {
+export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailProps) {
   const [hoveredItem, setHoveredItem] = useState<string | null>(null)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
 
   const [ceoName, setCeoName] = useState<string | null>(null)
   const [ceoStatus, setCeoStatus] = useState<CeoStatus>('nominal')
+  const [pendingApprovals, setPendingApprovals] = useState(0)
 
-  // Load CEO from DB on mount
+  // Load CEO + approvals count from DB on mount
   useEffect(() => {
     const row = loadCEO()
     if (row) {
       setCeoName(row.name)
       setCeoStatus((row.status as CeoStatus) || 'nominal')
+    }
+    try { setPendingApprovals(getPendingApprovalCount()); } catch { /* DB not ready */ }
+  }, [])
+
+  // Refresh approval count periodically + on custom event
+  useEffect(() => {
+    const refreshCount = () => {
+      try { setPendingApprovals(getPendingApprovalCount()); } catch { /* ignore */ }
+    }
+    const interval = setInterval(refreshCount, 5000)
+    window.addEventListener('approvals-changed', refreshCount)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('approvals-changed', refreshCount)
     }
   }, [])
 
@@ -112,6 +128,13 @@ export default function NavigationRail({ onResetDB }: NavigationRailProps) {
                       <span className="absolute top-2 right-2 flex h-2 w-2">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40" />
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                      </span>
+                    )}
+
+                    {/* Approvals badge */}
+                    {item.label === 'Approvals' && pendingApprovals > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-black px-1">
+                        {pendingApprovals}
                       </span>
                     )}
 
@@ -173,9 +196,13 @@ export default function NavigationRail({ onResetDB }: NavigationRailProps) {
       <ResetDBDialog
         open={resetDialogOpen}
         onClose={() => setResetDialogOpen(false)}
-        onConfirm={async () => {
+        onResetDB={async () => {
           setResetDialogOpen(false)
           await onResetDB()
+        }}
+        onFireCEO={() => {
+          setResetDialogOpen(false)
+          onFireCEO()
         }}
       />
     </>

@@ -3,6 +3,7 @@ import type { Agent } from '../../types';
 interface AgentSpriteProps {
   agent: Agent;
   onClick: () => void;
+  floorPlannerActive?: boolean;
 }
 
 function getAnimationClass(status: Agent['status']): string {
@@ -44,19 +45,20 @@ function getStatusColor(status: Agent['status']): string {
   }
 }
 
-export default function AgentSprite({ agent, onClick }: AgentSpriteProps) {
+export default function AgentSprite({ agent, onClick, floorPlannerActive }: AgentSpriteProps) {
   const animationClass = getAnimationClass(agent.status);
   const statusColor = getStatusColor(agent.status);
+  const isSeated = agent.status === 'working';
 
   return (
     <div
-      className="agent-sprite cursor-pointer group"
+      className={`agent-sprite cursor-pointer group ${floorPlannerActive ? 'ring-2 ring-pixel-cyan/40 rounded-sm' : ''}`}
       style={{
         left: `${agent.position.x}%`,
         top: `${agent.position.y}%`,
-        transform: 'translate(-50%, -50%)',
+        transform: `translate(-50%, -50%) translateY(${isSeated ? '14px' : '0px'})`,
       }}
-      onClick={onClick}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
       {/* Hover tooltip */}
       <div className="absolute -top-16 left-1/2 -translate-x-1/2 hidden group-hover:block z-30">

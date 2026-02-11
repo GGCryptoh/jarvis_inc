@@ -1,4 +1,4 @@
-import { Agent, DashboardStat, Mission, AuditEntry, VaultEntry, FinancialEntry } from '../types';
+import { Agent, DashboardStat, Mission, AuditEntry, FinancialEntry } from '../types';
 import { generateDeskPositions } from '../lib/positionGenerator';
 
 export const ENTRANCE_POSITION = { x: 50, y: 92 };
@@ -124,15 +124,6 @@ export const auditLog: AuditEntry[] = [
   { id: 'a6', timestamp: '2026-02-10 13:30:55', agent: 'ECHO', action: 'PUBLISH', details: 'Draft saved: "AI Trends 2026" (2,400 words)', severity: 'info' },
   { id: 'a7', timestamp: '2026-02-10 13:15:33', agent: 'BOLT', action: 'COMMIT', details: 'Pushed 12 commits to feature/auth-v2', severity: 'info' },
   { id: 'a8', timestamp: '2026-02-10 12:58:20', agent: 'CIPHER', action: 'SCAN', details: 'Completed dependency scan: 4 issues found', severity: 'warning' },
-];
-
-export const vaultEntries: VaultEntry[] = [
-  { id: 'v1', name: 'OpenAI API Key', type: 'api_key', service: 'OpenAI', lastRotated: '2026-01-15', status: 'active' },
-  { id: 'v2', name: 'Anthropic API Key', type: 'api_key', service: 'Anthropic', lastRotated: '2026-02-01', status: 'active' },
-  { id: 'v3', name: 'AWS Root Credentials', type: 'credential', service: 'AWS', lastRotated: '2025-12-20', status: 'expiring' },
-  { id: 'v4', name: 'GitHub Deploy Token', type: 'token', service: 'GitHub', lastRotated: '2026-01-28', status: 'active' },
-  { id: 'v5', name: 'Stripe Secret Key', type: 'secret', service: 'Stripe', lastRotated: '2025-11-10', status: 'expired' },
-  { id: 'v6', name: 'Supabase Service Key', type: 'api_key', service: 'Supabase', lastRotated: '2026-02-05', status: 'active' },
 ];
 
 export const financials: FinancialEntry[] = [

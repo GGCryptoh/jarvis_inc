@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import type { Agent } from '../../types';
+import { MODEL_OPTIONS } from '../../lib/models';
 
 export interface AgentConfig {
   name: string;
@@ -50,21 +51,6 @@ const ROLE_PRESETS = [
   'Product Manager',
   'Designer',
   'Sales Agent',
-];
-
-const MODEL_OPTIONS = [
-  'Claude Opus 4.6',
-  'Claude Opus 4.5',
-  'Claude Sonnet 4.5',
-  'Claude Haiku 4.5',
-  'GPT-5.2',
-  'o3-pro',
-  'o4-mini',
-  'Gemini 3 Pro',
-  'Gemini 2.5 Flash',
-  'DeepSeek R1',
-  'Llama 3.3',
-  'Grok 4',
 ];
 
 export default function HireAgentModal({ open, onClose, onSubmit, editAgent }: HireAgentModalProps) {

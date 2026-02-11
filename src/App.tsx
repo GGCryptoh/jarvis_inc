@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useDatabase } from './hooks/useDatabase'
 import { useCallback } from 'react'
+import { fireCEO as fireCEOFromDB } from './lib/database'
 import AppLayout from './components/Layout/AppLayout'
 import DashboardView from './components/Dashboard/DashboardView'
 import MissionsView from './components/Missions/MissionsView'
@@ -24,6 +25,12 @@ export default function App() {
     reinit()
     navigate('/surveillance', { replace: true })
   }, [reinit, navigate])
+
+  // Fire CEO: remove CEO row + ceremony settings, then re-check DB state
+  const handleFireCEO = useCallback(() => {
+    fireCEOFromDB()
+    reinit()
+  }, [reinit])
 
   // Loading state while SQLite boots
   if (!ready) {
@@ -51,7 +58,7 @@ export default function App() {
   // Main app
   return (
     <Routes>
-      <Route element={<AppLayout onResetDB={reset} />}>
+      <Route element={<AppLayout onResetDB={reset} onFireCEO={handleFireCEO} />}>
         <Route path="/" element={<Navigate to="/surveillance" replace />} />
         <Route path="/dashboard" element={<DashboardView />} />
         <Route path="/chat" element={<ChatView />} />
