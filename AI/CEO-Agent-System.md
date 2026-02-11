@@ -218,17 +218,105 @@ cron.schedule('*/30 * * * * *', async () => {
 
 ---
 
+### Option E: Supabase Edge Function + pg_cron
+
+**How**: A Deno-based Edge Function (`supabase/functions/ceo-heartbeat/index.ts`) runs the CEO evaluation cycle. Triggered by `pg_cron` extension (built into self-hosted Supabase) on a configurable schedule (default: every 60 seconds). Has direct Postgres access via service role key. Pushes results to frontend via Supabase Realtime subscriptions on `chat_messages` and `ceo_action_queue` tables.
+
+**Setup**:
+```typescript
+// supabase/functions/ceo-heartbeat/index.ts (Deno runtime)
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+serve(async (req) => {
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  );
+
+  // 1. Load CEO + system state from Postgres
+  const { data: ceo } = await supabase.from('ceo').select('*').single();
+  const { data: missions } = await supabase.from('missions').select('*');
+  const { data: agents } = await supabase.from('agents').select('*');
+  const { data: pendingApprovals } = await supabase.from('approvals').select('*').eq('status', 'pending');
+
+  // 2. Load CEO's API key from vault
+  const { data: vaultEntry } = await supabase
+    .from('vault').select('key_value')
+    .eq('service', getServiceForModel(ceo.model)).single();
+
+  // 3. Build prompt, call LLM, parse actions
+  const prompt = buildCEOPrompt(ceo, { missions, agents, pendingApprovals });
+  const response = await callLLM(ceo.model, vaultEntry.key_value, prompt);
+  const actions = parseCEOActions(response);
+
+  // 4. Write actions → ceo_action_queue, chat_messages
+  //    Frontend receives updates instantly via Supabase Realtime
+  for (const action of actions) {
+    await supabase.from('ceo_action_queue').insert(action);
+  }
+
+  // 5. Update scheduler state
+  await supabase.from('scheduler_state').upsert({ id: 'main', last_run: new Date().toISOString() });
+
+  return new Response(JSON.stringify({ actions: actions.length }));
+});
+```
+
+**pg_cron schedule** (in Supabase migration):
+```sql
+-- supabase/migrations/005_ceo_cron.sql
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+SELECT cron.schedule('ceo-heartbeat', '* * * * *',
+  $$SELECT net.http_post(
+    url := current_setting('app.supabase_url') || '/functions/v1/ceo-heartbeat',
+    headers := jsonb_build_object('Authorization', 'Bearer ' || current_setting('app.service_role_key')),
+    body := '{}'::jsonb
+  );$$
+);
+```
+
+**Frontend Realtime subscription**:
+```typescript
+supabase.channel('ceo-actions')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, (payload) => {
+    addMessage(payload.new); // Instant chat update
+  })
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'ceo_action_queue' }, (payload) => {
+    handleCEOAction(payload.new); // Trigger approval notification, etc.
+  })
+  .subscribe();
+```
+
+| Pros | Cons |
+|------|------|
+| Runs even when browser is closed | Requires Supabase Docker (but needed anyway for full mode) |
+| Direct Postgres access (no message passing) | Cold start latency (~500ms first call) |
+| True cron via pg_cron | Deno runtime (not Node.js — minor learning curve) |
+| Realtime push to frontend (no polling) | Self-hosted Edge Functions less documented than cloud |
+| Same infrastructure as the DB | Edge Function timeout limits (default 60s) |
+| Can call any external LLM API | Debugging requires Supabase CLI tools |
+
+**Why this is the recommended approach**: Supabase is already needed for auth, real-time updates, and server-side DB. The Edge Function runs in the same infrastructure — no separate server, no separate deployment. pg_cron is built into Supabase Postgres, so scheduling is a single SQL statement.
+
+---
+
 ### Summary Matrix
 
-| | A: setInterval | B: Visibility-aware | C: Web Worker | D: Real Cron |
-|---|---|---|---|---|
-| **Complexity** | Trivial | Low | Medium | High |
-| **Backend required** | No | No | No | Yes |
-| **Background tab** | Throttled | Pauses | Runs | N/A |
-| **Browser closed** | No | No | No | Yes |
-| **sql.js compatible** | Yes | Yes | Via messages | Needs migration |
-| **Best for** | Quick MVP | Client-side prod | Niche | Multi-user server |
-| **Recommended phase** | Prototype | Pre-backend | Skip | Post-backend |
+| | A: setInterval | B: Visibility-aware | C: Web Worker | D: Real Cron | E: Supabase Edge |
+|---|---|---|---|---|---|
+| **Complexity** | Trivial | Low | Medium | High | Medium |
+| **Backend required** | No | No | No | Yes (custom) | Yes (Supabase) |
+| **Background tab** | Throttled | Pauses | Runs | N/A | N/A |
+| **Browser closed** | No | No | No | Yes | Yes |
+| **sql.js compatible** | Yes | Yes | Via messages | Needs migration | Needs Supabase |
+| **Realtime push** | No | No | No | Via WebSocket | Via Supabase Realtime |
+| **Best for** | Quick MVP | Demo mode | Niche | Custom backend | Supabase full mode |
+| **Recommended phase** | Prototype | Demo mode | Skip | If not using Supabase | With Supabase |
+
+**Recommended path**: Use **Option B** for demo mode (sql.js, client-side only). Use **Option E** for full mode (Supabase). Options A, C, D are documented for reference but not recommended.
 
 ---
 
@@ -362,14 +450,144 @@ CEO writes the agent's system prompt incorporating:
 - CEO's philosophy
 - Specific responsibilities and constraints
 - Communication style expectations
+- **Assigned skills** — only the tools this agent is authorized to use (see Skill Assignment below)
 
 #### Tool-Calling Description
 Short string for other agents/CEO to know what this agent does:
 `"Agent SCOUT (Research Analyst). Capabilities: Research Web, Read X/Tweets. Use for information gathering and analysis tasks."`
 
 #### User/Assistant Prompt Templates
-- **User prompt**: `Task: {task_description}\nContext: {context}\nConstraints: {constraints}\nExpected output: {output_format}`
+- **User prompt (CEO → Agent)**: `Task: {task_description}\nContext: {context}\nConstraints: {constraints}\nExpected output: {output_format}\nTools available: {assigned_skills_with_commands}`
 - **Assistant prompt**: `Approach: {steps}\nResults: {results}\nStatus: {status}\nTokens used: {tokens}`
+
+---
+
+## Skill Assignment Model
+
+Skills are **NOT** globally available to all agents. The CEO controls which tools each agent can use.
+
+### Flow
+
+1. **Founder enables skills org-wide** — Skills page toggle determines what's available to the org
+2. **CEO checks enabled skills** during evaluation cycle — knows what tools exist
+3. **CEO requests founder enable more** — if a mission needs a skill that's off, CEO sends a chat message asking the founder to enable it (with a skill-enable action card)
+4. **CEO assigns specific skill IDs per agent** — stored in agent's `skills` column (JSON array)
+5. **Agent's system prompt** includes only its assigned skills as callable tools — with command definitions pulled from skill JSON
+6. **CEO's user prompt per task** tells the agent which specific skills to use for that task — a subset of the agent's total assigned skills
+
+### Agent Schema
+
+```sql
+ALTER TABLE agents ADD COLUMN skills TEXT DEFAULT '[]';  -- JSON array of skill IDs
+-- Example: '["research-web", "write-document", "summarize-document"]'
+```
+
+### CEO Prompts
+
+**CEO system prompt** includes:
+```
+Available org skills (enabled by founder): {enabled_skill_ids_with_titles}
+```
+
+**CEO user prompt per evaluation cycle** includes:
+```
+Check if any missions need skills that are not enabled.
+For each agent, verify they have the skills needed for their current task.
+When delegating a task, specify which tools the agent should use.
+```
+
+**Agent system prompt** includes:
+```
+You are {agent_name}, a {role} at {org_name}.
+Your CEO is {ceo_name}. Report results back to the CEO.
+
+You have access to the following tools:
+{for each assigned skill: skill_title - skill_description, commands: [command definitions]}
+
+Do NOT attempt to use tools not listed above.
+If you need a tool you don't have, report this to the CEO.
+```
+
+**CEO → Agent user prompt per task**:
+```
+Task: {task_description}
+Context: {context}
+Use these tools: {specific_skill_ids_for_this_task}
+Constraints: {constraints}
+Expected output: {output_format}
+
+If you need founder approval for anything, pause and report back.
+```
+
+---
+
+## Agent Task Execution & Persistence
+
+### Task Lifecycle
+
+```
+CEO delegates task → Agent starts working → Agent may need approval →
+Agent reports results → CEO reviews → Mission updated → Audit logged
+```
+
+### Persistent Task Context
+
+Agents need conversation history (memory) to resume after interruption. Each task execution stores its full context in a `task_executions` table:
+
+```sql
+CREATE TABLE IF NOT EXISTS task_executions (
+  id              TEXT PRIMARY KEY,
+  task_id         TEXT NOT NULL,       -- links to missions.id
+  agent_id        TEXT NOT NULL,       -- who's executing
+  status          TEXT NOT NULL DEFAULT 'running',  -- running | paused | waiting_approval | completed | failed
+  conversation    TEXT NOT NULL DEFAULT '[]',  -- JSON: full LLM conversation history [{role, content}]
+  assigned_skills TEXT NOT NULL DEFAULT '[]',  -- JSON: skill IDs assigned for this task
+  tokens_used     INTEGER DEFAULT 0,
+  cost            REAL DEFAULT 0.0,
+  started_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  paused_at       TEXT DEFAULT NULL,
+  completed_at    TEXT DEFAULT NULL,
+  result          TEXT DEFAULT NULL,    -- JSON: final output / artifacts
+  error           TEXT DEFAULT NULL
+);
+```
+
+### Execution Flow
+
+1. **CEO delegates task**: Creates `task_executions` row with status='running', assigned_skills, and initial conversation (system prompt + user prompt)
+2. **Agent executes**: Calls LLM API with conversation history. Each response appended to `conversation` JSON. Agent status in surveillance = 'working'
+3. **Agent needs approval**: Sets status='waiting_approval', creates `approvals` entry. Agent status in surveillance = 'idle' with amber indicator. Saves full conversation so it can resume
+4. **Founder approves**: Approval triggers agent resume. Load `conversation` from `task_executions`, continue from where it left off with approval result injected as a message
+5. **Process dies / tab closes**: On next boot or scheduler tick, find `task_executions` with status='waiting_approval' that now have matching approved `approvals`. Resume agent with full conversation history
+6. **Agent reports results**: Sets status='completed', stores result JSON. CEO picks this up on next evaluation cycle
+7. **CEO reviews**: Reads result, updates mission status (in_progress → review → done), writes audit log entry, may send chat message to founder
+8. **Real-time updates**: Throughout execution, these update:
+   - `/surveillance` — agent sprite shows 'working' status, switches to 'idle' when paused
+   - `/missions` — mission card shows progress, assignee, status
+   - `/dashboard` — agent details, task counts, cost tracking
+   - `/audit` — execution events logged
+
+### Mid-Task Approval Flow (Detail)
+
+```
+Agent running → needs external action (e.g., send email, spend > $X)
+  → Agent pauses execution
+  → Saves full conversation to task_executions.conversation
+  → Creates approval: { type: 'agent_action', metadata: { agent_id, task_id, action_description } }
+  → Status: task_executions.status = 'waiting_approval'
+  → Surveillance: agent sprite → idle with amber dot
+  → Approvals page: shows approval with context
+  → Founder approves/declines
+  → If approved:
+      → Load conversation from task_executions
+      → Inject approval message: "Founder approved: {action}. Proceed."
+      → Resume LLM call with full history
+      → Agent continues working
+  → If declined:
+      → Inject decline message: "Founder declined: {action}. Find alternative."
+      → Resume with decline context
+      → Agent adapts or reports inability
+```
 
 ### Full Hire Pipeline
 
@@ -495,6 +713,7 @@ ALTER TABLE agents ADD COLUMN tasks_completed INTEGER DEFAULT 0;
 ALTER TABLE agents ADD COLUMN tokens_used INTEGER DEFAULT 0;
 ALTER TABLE agents ADD COLUMN cost_total REAL DEFAULT 0.0;
 ALTER TABLE agents ADD COLUMN current_task_id TEXT DEFAULT NULL;
+ALTER TABLE agents ADD COLUMN skills TEXT DEFAULT '[]';  -- JSON array of assigned skill IDs
 ```
 
 ### Modified: `ceo` table
@@ -543,50 +762,105 @@ CREATE TABLE IF NOT EXISTS scheduler_state (
 );
 ```
 
+### New: `task_executions`
+```sql
+CREATE TABLE IF NOT EXISTS task_executions (
+  id              TEXT PRIMARY KEY,
+  task_id         TEXT NOT NULL,
+  agent_id        TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'running',
+  conversation    TEXT NOT NULL DEFAULT '[]',
+  assigned_skills TEXT NOT NULL DEFAULT '[]',
+  tokens_used     INTEGER DEFAULT 0,
+  cost            REAL DEFAULT 0.0,
+  started_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  paused_at       TEXT DEFAULT NULL,
+  completed_at    TEXT DEFAULT NULL,
+  result          TEXT DEFAULT NULL,
+  error           TEXT DEFAULT NULL
+);
+```
+
 ### Extended approval types
 No schema change needed — `type` column is already TEXT. New values:
 - `hire_agent` — CEO wants to hire an agent
 - `budget_override` — CEO wants to exceed budget
 - `execute_skill` — CEO wants to run an expensive skill
+- `agent_action` — Agent needs founder permission for a mid-task action
 
 ---
 
 ## New Files Summary
 
+### CEO Agent Core
 | File | Purpose |
 |------|---------|
-| `src/lib/ceoScheduler.ts` | Scheduler class (visibility-aware or chosen option) |
+| `src/lib/ceoScheduler.ts` | Scheduler class (visibility-aware for demo, Edge Function for full) |
 | `src/lib/ceoDecisionEngine.ts` | CEO brain — state evaluation → action production |
 | `src/lib/ceoExecutor.ts` | Direct skill execution via LLM API fetch() |
 | `src/lib/ceoPersonality.ts` | Tone/threshold modifiers |
-| `src/lib/agentFactory.ts` | Agent config generation |
+| `src/lib/agentFactory.ts` | Agent config generation + skill assignment |
 | `src/lib/events.ts` | Centralized custom events |
 | `src/data/agentNamePool.ts` | Thematic callsign pools |
 | `src/hooks/useCEOScheduler.ts` | React hook for scheduler lifecycle |
 | `src/hooks/useChatMessages.ts` | Persistent chat messages |
 
+### Supabase Infrastructure (Full Mode)
+| File | Purpose |
+|------|---------|
+| `supabase/config.toml` | Supabase CLI local config (ports, auth, no email confirm) |
+| `supabase/migrations/001_initial_schema.sql` | Core tables (settings, agents, ceo, missions, etc.) |
+| `supabase/migrations/002_auth_users.sql` | user_profiles linked to auth.users |
+| `supabase/migrations/003_rls_policies.sql` | Row Level Security (authenticated full access) |
+| `supabase/migrations/004_ceo_scheduler.sql` | scheduler_state, ceo_action_queue, chat_messages, task_executions |
+| `supabase/migrations/005_ceo_cron.sql` | pg_cron + pg_net for CEO heartbeat schedule |
+| `supabase/functions/ceo-heartbeat/index.ts` | Deno Edge Function — CEO evaluation cycle |
+
+### Data Layer Abstraction (Dual-Mode)
+| File | Purpose |
+|------|---------|
+| `src/lib/dataService.ts` | DataService interface (async) |
+| `src/lib/sqliteDataService.ts` | sql.js implementation (wraps existing database.ts) |
+| `src/lib/supabaseDataService.ts` | Supabase JS client implementation |
+| `src/lib/supabaseClient.ts` | Supabase client singleton + health check |
+| `src/contexts/DataContext.tsx` | React context for DataService + useData() hook |
+| `src/contexts/AuthContext.tsx` | Auth state context (Supabase mode) |
+| `src/hooks/useAuth.ts` | Auth session management hook |
+| `src/hooks/useAppState.ts` | Replaces useDatabase, works through DataService |
+| `src/AppBoot.tsx` | New top-level: mode detection → boot routing |
+| `src/components/ModeSelection/ModeSelectionScreen.tsx` | Demo vs Full Setup chooser |
+| `src/components/Auth/LoginScreen.tsx` | CRT-themed login/signup |
+| `src/scripts/reset-password.ts` | CLI password reset (service role key) |
+
 ## Modified Files
 
 | File | Changes |
 |------|---------|
-| `src/lib/database.ts` | Schema migrations, CRUD for chat_messages, ceo_action_queue, scheduler_state, extended columns |
-| `src/types/index.ts` | Extended Agent, new CEOAction, SchedulerState, ChatMessageRow types |
-| `src/components/Chat/ChatView.tsx` | Replace PostMeetingChat with ActiveChat, action cards, DB persistence |
+| `src/lib/database.ts` | Schema migrations, CRUD for new tables, extended columns |
+| `src/types/index.ts` | Extended Agent (skills), TaskExecution, CEOAction, ChatMessageRow types |
+| `src/data/skillDefinitions.ts` | 6 new skills (18 total) |
+| `src/main.tsx` | Render AppBoot instead of App |
+| `src/App.tsx` | Use DataService via context instead of direct imports |
+| `src/components/Chat/ChatView.tsx` | Replace PostMeetingChat with ActiveChat, action cards |
 | `src/components/Layout/AppLayout.tsx` | Mount useCEOScheduler hook |
-| `src/components/Layout/NavigationRail.tsx` | Chat badge, CEO status from heartbeat |
-| `src/components/Approvals/ApprovalsView.tsx` | Handle hire_agent approval type |
-| `src/components/Surveillance/SurveillanceView.tsx` | Listen for agent-hired events |
-| `src/components/Surveillance/HireAgentModal.tsx` | Extended AgentConfig with new fields |
+| `src/components/Layout/NavigationRail.tsx` | Chat badge, CEO status, sign-out (full mode) |
+| `src/components/Approvals/ApprovalsView.tsx` | Handle hire_agent + agent_action approval types |
+| `src/components/Surveillance/SurveillanceView.tsx` | Real-time agent status from task_executions |
+| `src/components/Surveillance/HireAgentModal.tsx` | Extended AgentConfig with skills assignment |
+| `src/components/FounderCeremony/FounderCeremony.tsx` | system_setup phase (full mode) |
 
 ---
 
 ## Implementation Phases
 
-1. **Foundation**: DB migrations, events.ts, types, agentNamePool
-2. **Agent Factory**: agentFactory.ts, ceoPersonality.ts, extended HireAgentModal
-3. **Scheduler**: ceoScheduler.ts, useCEOScheduler hook, mount in AppLayout
-4. **Decision Engine**: ceoDecisionEngine.ts, evaluateCycle(), action pipeline
-5. **Chat Integration**: useChatMessages, ActiveChat component, action cards, chat badge
-6. **Approvals Extension**: hire_agent type in ApprovalsView, agent preview/edit
-7. **CEO Self-Execution**: ceoExecutor.ts, API wrappers, cost tracking
-8. **Polish**: CEO pip status from heartbeat, audit logging, dashboard integration
+1. **Supabase Foundation**: DataService interface, SqliteDataService wrapper, DataContext, AppBoot, ModeSelectionScreen
+2. **Supabase Full Mode**: config.toml, migrations, SupabaseDataService, supabaseClient, Auth (LoginScreen, AuthContext)
+3. **Founder Ceremony**: system_setup phase, health checks, account creation
+4. **Agent Factory**: agentFactory.ts, ceoPersonality.ts, skill assignment, extended HireAgentModal
+5. **Scheduler**: ceoScheduler.ts (demo: visibility-aware, full: Edge Function), useCEOScheduler hook
+6. **Decision Engine**: ceoDecisionEngine.ts, evaluateCycle(), action pipeline
+7. **Task Execution**: task_executions table, persistent conversation, mid-task approvals, resume flow
+8. **Chat Integration**: useChatMessages, ActiveChat, action cards, chat badge, Supabase Realtime
+9. **Approvals Extension**: hire_agent, agent_action types in ApprovalsView
+10. **CEO Self-Execution**: ceoExecutor.ts, API wrappers, cost tracking
+11. **Polish**: CEO pip from heartbeat, audit logging, dashboard integration, surveillance real-time status

@@ -1,0 +1,48 @@
+{
+  "id": "read-tweets",
+  "title": "Read X / Tweets",
+  "description": "Search tweets, analyze profiles, and track trending topics on X (formerly Twitter)",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "research",
+  "icon": "Twitter",
+  "tags": ["twitter", "x", "tweets", "social-media", "trending", "research"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "search_tweets",
+      "description": "Search for tweets matching a query",
+      "parameters": [
+        { "name": "query", "type": "string", "required": true, "description": "Search query (supports Twitter search operators like from:, to:, #hashtag)" },
+        { "name": "max_results", "type": "number", "required": false, "description": "Maximum number of tweets to return", "default": 20 },
+        { "name": "time_range", "type": "string", "required": false, "description": "Time filter: 'hour', 'day', 'week', or 'month'", "default": "week" }
+      ],
+      "returns": { "type": "array", "description": "Array of tweet objects with author, text, engagement metrics, timestamp, and media" }
+    },
+    {
+      "name": "analyze_profile",
+      "description": "Analyze a Twitter/X user profile and recent activity",
+      "parameters": [
+        { "name": "username", "type": "string", "required": true, "description": "Twitter/X username (without @ symbol)" }
+      ],
+      "returns": { "type": "object", "description": "Profile analysis with bio, follower count, posting frequency, top topics, sentiment breakdown, and influence score" }
+    },
+    {
+      "name": "track_topic",
+      "description": "Monitor a topic or hashtag for new tweets over a time period",
+      "parameters": [
+        { "name": "topic", "type": "string", "required": true, "description": "Topic, hashtag, or keyword to track" },
+        { "name": "duration_hours", "type": "number", "required": false, "description": "How many hours to track (monitoring window)", "default": 24 }
+      ],
+      "returns": { "type": "object", "description": "Tracking report with tweet volume over time, top authors, sentiment trend, and key tweets" }
+    }
+  ]
+}

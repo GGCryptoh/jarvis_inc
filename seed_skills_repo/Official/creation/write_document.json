@@ -1,0 +1,51 @@
+{
+  "id": "write-document",
+  "title": "Write Document",
+  "description": "Draft, edit, and format long-form documents including reports, articles, proposals, and technical documentation",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "creation",
+  "icon": "FileText",
+  "tags": ["document", "writing", "report", "article", "draft", "creative-writing"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "draft",
+      "description": "Draft a new document from scratch",
+      "parameters": [
+        { "name": "type", "type": "string", "required": true, "description": "Document type: 'report', 'article', 'proposal', 'memo', 'whitepaper', 'blog_post', 'newsletter', 'technical_doc'" },
+        { "name": "topic", "type": "string", "required": true, "description": "The subject or topic of the document" },
+        { "name": "outline", "type": "array", "required": false, "description": "Optional array of section headings to structure the document" },
+        { "name": "tone", "type": "string", "required": false, "description": "Writing tone: 'formal', 'casual', 'technical', 'persuasive', 'informative'", "default": "professional" },
+        { "name": "max_length", "type": "number", "required": false, "description": "Approximate maximum word count", "default": 1500 }
+      ],
+      "returns": { "type": "object", "description": "Document object with title, sections array (heading + content), word count, and suggested next steps" }
+    },
+    {
+      "name": "edit",
+      "description": "Edit and improve an existing document based on instructions",
+      "parameters": [
+        { "name": "content", "type": "string", "required": true, "description": "The existing document content to edit" },
+        { "name": "instructions", "type": "string", "required": true, "description": "Editing instructions (e.g. 'make it more concise', 'add more data points', 'fix grammar')" }
+      ],
+      "returns": { "type": "object", "description": "Edited document with tracked changes summary and the revised content" }
+    },
+    {
+      "name": "format",
+      "description": "Convert document content to a specific output format",
+      "parameters": [
+        { "name": "content", "type": "string", "required": true, "description": "The document content to format" },
+        { "name": "output_format", "type": "string", "required": true, "description": "Target format: 'markdown', 'html', 'plain_text', 'latex', 'docx_xml'" }
+      ],
+      "returns": { "type": "object", "description": "Formatted document content in the requested output format" }
+    }
+  ]
+}

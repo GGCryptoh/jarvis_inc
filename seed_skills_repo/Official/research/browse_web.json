@@ -1,0 +1,48 @@
+{
+  "id": "browse-web",
+  "title": "Browse Web",
+  "description": "Navigate web pages, extract structured data, and interact with web forms using AI-driven browser automation",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "research",
+  "icon": "MonitorSmartphone",
+  "tags": ["browse", "web", "automation", "scrape", "form", "extract"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "navigate",
+      "description": "Navigate to a URL and perform instructions on the page",
+      "parameters": [
+        { "name": "url", "type": "string", "required": true, "description": "The URL to navigate to" },
+        { "name": "instructions", "type": "string", "required": false, "description": "Natural language instructions for what to do on the page (e.g. 'click the pricing tab and read the enterprise plan')" }
+      ],
+      "returns": { "type": "object", "description": "Page content with extracted text, screenshots, and action results" }
+    },
+    {
+      "name": "extract_data",
+      "description": "Extract structured data from a web page based on a schema",
+      "parameters": [
+        { "name": "url", "type": "string", "required": true, "description": "The URL to extract data from" },
+        { "name": "schema", "type": "object", "required": true, "description": "JSON schema defining the structure of data to extract (field names and types)" }
+      ],
+      "returns": { "type": "object", "description": "Extracted data matching the provided schema, with confidence scores per field" }
+    },
+    {
+      "name": "fill_form",
+      "description": "Navigate to a page and fill out a form with provided data",
+      "parameters": [
+        { "name": "url", "type": "string", "required": true, "description": "The URL containing the form" },
+        { "name": "fields", "type": "object", "required": true, "description": "Key-value pairs mapping form field labels or names to values to fill in" }
+      ],
+      "returns": { "type": "object", "description": "Form submission result with success status, confirmation message, and any validation errors" }
+    }
+  ]
+}

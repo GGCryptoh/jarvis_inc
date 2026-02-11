@@ -19,10 +19,10 @@
 - [x] Docker support (Dockerfile)
 - [x] Founder Ceremony — boot sequence, registration, SQLite persistence
 - [x] Reset DB flow — 3-step dialog with Fire CEO, Shutter Business (export + wipe), and Reset Database options
-- [ ] **Backend server** — No backend exists. Need an API server (Node/Express, Fastify, or Python) to host the AI CEO, agent runtime, gateway, and scheduler
-- [ ] **Database migration to server-side** — Move from client-only sql.js to a proper server-side SQLite/Postgres with API endpoints
-- [ ] **Authentication** — No auth. PRD requires human owner identity beyond the ceremony
-- [ ] **WebSocket / SSE layer** — Real-time push from backend to frontend for live agent status, approvals, and system events
+- [~] **Backend server** — Planned: Supabase self-hosted via Docker (Postgres, Auth, Realtime, Edge Functions). See Section 19
+- [~] **Database migration to server-side** — Planned: Dual-mode architecture. sql.js for demo, Supabase Postgres for full mode. See Section 19
+- [~] **Authentication** — Planned: Supabase Auth with first-user auto-confirm, password reset script. See Section 19
+- [~] **WebSocket / SSE layer** — Planned: Supabase Realtime for live push (chat messages, CEO actions, agent status). See Section 19
 
 ---
 
@@ -292,18 +292,27 @@
 ### Decision Engine & Scheduler
 - [ ] **CEO decision engine** (`ceoDecisionEngine.ts`) — Evaluates missions, agents, skills, budget each cycle
 - [ ] **CEO personality system** (`ceoPersonality.ts`) — Philosophy + risk_tolerance influence tone and thresholds
-- [ ] **Scheduler system** (`ceoScheduler.ts`) — 4 options documented: setInterval, Visibility API-aware, Web Worker, Real Cron
+- [ ] **Scheduler system** (`ceoScheduler.ts`) — 5 options documented: setInterval, Visibility API-aware, Web Worker, Real Cron, Supabase Edge Function (recommended for full mode)
 - [ ] **`useCEOScheduler` hook** — Mounted in AppLayout, manages scheduler lifecycle
 - [ ] **CEO action queue** — `ceo_action_queue` table for pending/approved/completed actions
 - [ ] **`scheduler_state` table** — Persistent scheduler state (last_run, cycle_count, frequency)
 
 ### Agent Hiring & Factory
-- [ ] **Agent factory** (`agentFactory.ts`) — CEO generates full agent config: name, role, model, appearance, system prompt, description, prompt templates
+- [ ] **Agent factory** (`agentFactory.ts`) — CEO generates full agent config: name, role, model, appearance, system prompt, description, prompt templates, assigned skills
 - [ ] **Agent name pool** (`agentNamePool.ts`) — Thematic callsign pools by role category (research, code, content, design, security, data, ops)
 - [ ] **Model selection strategy** — Cost-tier selection (cheap/mid/expensive) based on risk_tolerance + task complexity
-- [ ] **System prompt generation** — CEO writes agent system prompts from mission + philosophy context
+- [ ] **Skill assignment** — CEO assigns specific skill IDs per agent based on role + mission. Agent's system prompt lists only assigned tools
+- [ ] **System prompt generation** — CEO writes agent system prompts with assigned skills as callable tools, org mission context, philosophy
 - [ ] **Hire recommendation flow** — CEO proposes hire in chat → approval card → founder approves/modifies/declines → ceremony triggers
 - [ ] **Decline handling** — CEO says "No problem, I'll handle it myself" → marks self as executor
+
+### Agent Task Execution
+- [ ] **`task_executions` table** — Persistent task context: conversation history, assigned skills, status, tokens, cost, result
+- [ ] **Task delegation** — CEO creates task_execution with system prompt + user prompt + assigned skills for the task
+- [ ] **Conversation persistence** — Full LLM conversation history saved to DB so agents can resume after interruption
+- [ ] **Mid-task approvals** — Agent pauses, creates approval, saves conversation. Approval triggers resume with full history
+- [ ] **CEO review** — When agent completes task, CEO reviews results, updates mission status, writes audit log
+- [ ] **Real-time status propagation** — Agent status updates surveillance sprites, missions board, dashboard, and agent details
 
 ### CEO Self-Execution
 - [ ] **CEO executor** (`ceoExecutor.ts`) — CEO executes skills directly via LLM API fetch() when no specialist agent exists
@@ -318,17 +327,65 @@
 - [ ] **`hire_agent` approval type** — CEO proposes agent with full config preview/edit in ApprovalsView
 - [ ] **`budget_override` approval type** — CEO requests to exceed daily/monthly budget
 - [ ] **`execute_skill` approval type** — CEO requests permission for expensive skill execution
+- [ ] **`agent_action` approval type** — Agent requests founder permission for mid-task actions
 
 ### Database Extensions
-- [ ] **Agent columns**: system_prompt, description, user_prompt_template, assistant_prompt_template, hired_by, hired_at, tasks_assigned, tasks_completed, tokens_used, cost_total, current_task_id
+- [ ] **Agent columns**: system_prompt, description, user_prompt_template, assistant_prompt_template, hired_by, hired_at, tasks_assigned, tasks_completed, tokens_used, cost_total, current_task_id, skills (JSON array)
 - [ ] **CEO columns**: token_budget_daily/monthly, tokens_used_today/month, cost_today/month, last_heartbeat, autonomous_mode
 - [ ] **`chat_messages` table** — id, sender, text, metadata JSON, created_at
 - [ ] **`ceo_action_queue` table** — id, type, status, payload JSON, priority, requires_approval, timestamps
+- [ ] **`task_executions` table** — id, task_id, agent_id, status, conversation (JSON), assigned_skills (JSON), tokens, cost, result
 - [ ] **Daily executive reports** — CEO produces daily summaries of work, spend, risks, and outcomes
 
 ---
 
-## 19. Cross-Cutting Concerns
+## 19. Supabase Integration & Dual-Mode Architecture
+
+> Supabase self-hosted via Docker provides Postgres, Auth, Realtime, and Edge Functions. sql.js remains as offline/demo fallback.
+
+### Data Layer Abstraction
+- [ ] **DataService interface** (`dataService.ts`) — Async interface for all CRUD ops
+- [ ] **SqliteDataService** (`sqliteDataService.ts`) — Wraps existing database.ts (sync→async)
+- [ ] **SupabaseDataService** (`supabaseDataService.ts`) — Supabase JS client implementation
+- [ ] **DataContext** (`contexts/DataContext.tsx`) — React context + `useData()` hook
+- [ ] **Component migration** — Replace direct database.ts imports with useData() in all 8+ components
+
+### Boot Sequence & Mode Selection
+- [ ] **AppBoot** (`AppBoot.tsx`) — New top-level: mode detection → service init → auth gate → App
+- [ ] **Mode selection screen** (`ModeSelectionScreen.tsx`) — "DEMO MODE" vs "FULL SETUP" in CRT theme
+- [ ] **Health check** (`supabaseClient.ts`) — Ping Supabase REST endpoint to detect availability
+- [ ] **Reconnect screen** — Shown when full mode but Supabase unreachable (retry / switch / reconfig)
+
+### Supabase Infrastructure
+- [ ] **supabase/config.toml** — Local Supabase CLI config (ports, auth settings, no email confirmation)
+- [ ] **Migration 001** — Initial schema (settings, agents, ceo, missions, audit_log, vault, approvals, skills)
+- [ ] **Migration 002** — Auth: user_profiles table linked to auth.users
+- [ ] **Migration 003** — RLS policies (authenticated full access for single-tenant)
+- [ ] **Migration 004** — CEO scheduler tables (scheduler_state, ceo_action_queue, chat_messages, task_executions)
+- [ ] **Migration 005** — pg_cron + pg_net for CEO heartbeat Edge Function
+
+### Authentication
+- [ ] **LoginScreen** (`Auth/LoginScreen.tsx`) — CRT-themed login/signup
+- [ ] **AuthContext** (`contexts/AuthContext.tsx`) — Session management via Supabase Auth
+- [ ] **useAuth hook** — getSession, onAuthStateChange, signIn, signUp, signOut
+- [ ] **First user auto-confirm** — No email verification for local self-hosted
+- [ ] **Password reset script** (`scripts/reset-password.ts`) — CLI tool using service role key
+- [ ] **Sign-out in NavigationRail** — Only shown in full mode
+
+### Founder Ceremony Expansion
+- [ ] **system_setup phase** — New phase in FounderCeremony for full mode only
+- [ ] **Service check UI** — Live status indicators (Docker, Postgres, Auth, Realtime)
+- [ ] **Supabase URL/key input** — Pre-filled for local dev, stored in localStorage
+- [ ] **Account creation** — signUp during ceremony, creates user_profiles row
+
+### CEO Scheduler (Edge Function)
+- [ ] **ceo-heartbeat Edge Function** (`supabase/functions/ceo-heartbeat/index.ts`) — Deno, direct Postgres access
+- [ ] **pg_cron schedule** — Every 60 seconds, calls Edge Function via pg_net
+- [ ] **Realtime subscriptions** — Frontend subscribes to chat_messages + ceo_action_queue changes
+
+---
+
+## 20. Cross-Cutting Concerns
 
 - [ ] **Error handling** — No global error boundary or toast system
 - [ ] **Loading states** — Only the initial DB boot has a loading screen
@@ -341,44 +398,53 @@
 
 ## Priority Order (Suggested)
 
-### Phase 1 — Skills Repository & CEO Autonomy (Client-Side)
-1. Seed skills repo — JSON files for all 13 skills
-2. Skill resolver + icon resolver + refresh mechanism
-3. CEO scheduler (Visibility API-aware) + decision engine
-4. Chat message persistence + proactive CEO messaging
-5. Agent factory + hire recommendation flow
+### Phase 1 — Supabase Foundation & Dual-Mode Boot
+1. DataService interface + SqliteDataService wrapper
+2. DataContext + useData() hook
+3. Migrate components to useData() (async)
+4. AppBoot + ModeSelectionScreen
+5. Supabase config + migrations (001-003)
+6. SupabaseDataService implementation
+7. Auth (LoginScreen, AuthContext, useAuth)
+8. FounderCeremony system_setup phase
 
-### Phase 2 — Backend Foundation
-6. Stand up backend server with API routes
-7. Migrate DB to server-side
-8. WebSocket/SSE for real-time updates
-9. Wire existing frontend pages to real API data
-10. Migrate CEO scheduler to real cron job
+### Phase 2 — Skills Repository & Marketplace
+9. Seed skills JSON → GitHub repo (18 files)
+10. Skill resolver + icon resolver + refresh mechanism
+11. Skill test dialog
 
-### Phase 3 — CEO & Agent Runtime
-11. Implement AI CEO orchestrator (real LLM calls)
-12. Implement agent execution engine
-13. Task lifecycle (create → assign → execute → complete)
-14. CEO self-execution via API wrappers
+### Phase 3 — CEO Autonomy
+12. CEO scheduler: Visibility-aware (demo) + Edge Function + pg_cron (full mode, migration 004-005)
+13. Decision engine + personality system
+14. Chat message persistence + Realtime subscriptions + proactive CEO messaging
+15. Agent factory + skill assignment model
+16. Hire recommendation flow + approval cards
 
-### Phase 4 — Governance & Controls
-15. Permission model + UI
-16. Budget enforcement + real cost tracking
-17. Extended approval types (hire, budget, skill execution)
-18. Kill switch & system state machine
+### Phase 4 — Agent Runtime
+17. Task execution engine — persistent conversation, mid-task approvals, resume flow
+18. Agent LLM calls via skill definitions + assigned tools
+19. CEO self-execution (ceoExecutor.ts)
+20. Task lifecycle (delegate → execute → pause/approve → complete → CEO review)
+21. Real-time status propagation (surveillance, missions, dashboard)
 
-### Phase 5 — Remaining Modules
-19. Vault — real secret storage + scoped access + OAuth connections
-20. Audit — real logging + immutability
-21. Gallery & Artifacts
-22. System Stats & Health page
-23. Channels & Telegram integration
-24. Skills marketplace (community repos)
+### Phase 5 — Governance & Controls
+22. Permission model + UI
+23. Budget enforcement + real cost tracking
+24. Extended approval types (hire, budget, skill execution, agent action)
+25. Kill switch & system state machine
 
-### Phase 6 — Polish
-25. Org Chart visualization
-26. Dashboard live data binding
-27. Mission CRUD + CEO integration
-28. Navigation additions (Human Tasks, Gallery, Stats, Channels)
-29. Error handling, toasts, loading states
-30. Skill test dialog (dry-run → live execution)
+### Phase 6 — Remaining Modules
+26. Vault — encrypted storage (pgcrypto) + scoped access + OAuth connections
+27. Audit — real logging + immutability
+28. Gallery & Artifacts
+29. System Stats & Health page
+30. Channels & Telegram integration
+31. Skills marketplace (community repos)
+
+### Phase 7 — Polish
+32. Org Chart visualization
+33. Dashboard live data binding
+34. Mission CRUD + CEO integration
+35. Navigation additions (Human Tasks, Gallery, Stats, Channels)
+36. Error handling, toasts, loading states
+37. Skill test dialog (dry-run → live execution)

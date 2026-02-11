@@ -1,0 +1,48 @@
+{
+  "id": "translate-text",
+  "title": "Translate Text",
+  "description": "Translate text between languages, detect source languages, and perform batch translations with context-aware AI",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "analysis",
+  "icon": "Languages",
+  "tags": ["translation", "language", "localization", "multilingual", "i18n"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "translate",
+      "description": "Translate text from one language to another",
+      "parameters": [
+        { "name": "text", "type": "string", "required": true, "description": "The text to translate" },
+        { "name": "source_language", "type": "string", "required": false, "description": "Source language code (e.g. 'en', 'es', 'zh'). Auto-detected if omitted" },
+        { "name": "target_language", "type": "string", "required": true, "description": "Target language code (e.g. 'en', 'es', 'fr', 'de', 'ja', 'zh', 'ko', 'pt', 'ar', 'hi')" }
+      ],
+      "returns": { "type": "object", "description": "Translation result with translated text, detected source language, confidence score, and alternative translations for ambiguous phrases" }
+    },
+    {
+      "name": "detect_language",
+      "description": "Detect the language of a given text",
+      "parameters": [
+        { "name": "text", "type": "string", "required": true, "description": "The text to analyze for language detection" }
+      ],
+      "returns": { "type": "object", "description": "Detection result with primary language code, language name, confidence score, and alternative language candidates" }
+    },
+    {
+      "name": "batch_translate",
+      "description": "Translate multiple texts to the same target language in a single request",
+      "parameters": [
+        { "name": "texts", "type": "array", "required": true, "description": "Array of text strings to translate" },
+        { "name": "target_language", "type": "string", "required": true, "description": "Target language code for all texts" }
+      ],
+      "returns": { "type": "array", "description": "Array of translation results, one per input text, each with translated text and detected source language" }
+    }
+  ]
+}

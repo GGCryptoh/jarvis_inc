@@ -1,0 +1,49 @@
+{
+  "id": "schedule-meeting",
+  "title": "Schedule Meeting",
+  "description": "Create and manage calendar events and invites",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "communication",
+  "icon": "Calendar",
+  "tags": ["calendar", "meeting", "schedule", "events", "google-calendar"],
+  "status": "coming_soon",
+  "connection_type": "oauth",
+  "models": null,
+  "default_model": null,
+  "fixed_service": "Google",
+  "service_type": "fixed",
+  "oauth_config": {
+    "provider": "google",
+    "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "scopes": ["https://www.googleapis.com/auth/calendar.events"],
+    "pkce": true
+  },
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "create_event",
+      "description": "Create a new calendar event",
+      "parameters": [
+        { "name": "title", "type": "string", "required": true, "description": "Event title" },
+        { "name": "start_time", "type": "string", "required": true, "description": "Start time in ISO 8601 format" },
+        { "name": "end_time", "type": "string", "required": true, "description": "End time in ISO 8601 format" },
+        { "name": "attendees", "type": "array", "required": false, "description": "Array of attendee email addresses" },
+        { "name": "description", "type": "string", "required": false, "description": "Event description" },
+        { "name": "location", "type": "string", "required": false, "description": "Event location or meeting link" }
+      ],
+      "returns": { "type": "object", "description": "Created event with ID, link, and status" }
+    },
+    {
+      "name": "list_events",
+      "description": "List upcoming calendar events",
+      "parameters": [
+        { "name": "days_ahead", "type": "number", "required": false, "description": "Number of days to look ahead", "default": 7 },
+        { "name": "max_results", "type": "number", "required": false, "description": "Maximum events to return", "default": 10 }
+      ],
+      "returns": { "type": "array", "description": "Array of upcoming event objects" }
+    }
+  ]
+}

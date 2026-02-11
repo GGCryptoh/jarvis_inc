@@ -1,0 +1,48 @@
+{
+  "id": "summarize-document",
+  "title": "Summarize Document",
+  "description": "Summarize long documents, extract key points, and create structured outlines from any text content",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "analysis",
+  "icon": "FileSearch",
+  "tags": ["summary", "document", "key-points", "outline", "tldr", "analysis"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "summarize",
+      "description": "Create a concise summary of a document or text",
+      "parameters": [
+        { "name": "content", "type": "string", "required": true, "description": "The document text to summarize (or URL to fetch)" },
+        { "name": "max_length", "type": "number", "required": false, "description": "Maximum summary length in words", "default": 300 },
+        { "name": "format", "type": "string", "required": false, "description": "Summary format: 'paragraph', 'bullets', 'executive_brief', 'tldr'", "default": "paragraph" }
+      ],
+      "returns": { "type": "object", "description": "Summary object with condensed text, word count, compression ratio, and key topics covered" }
+    },
+    {
+      "name": "extract_key_points",
+      "description": "Extract the most important points from a document",
+      "parameters": [
+        { "name": "content", "type": "string", "required": true, "description": "The document text to analyze" },
+        { "name": "max_points", "type": "number", "required": false, "description": "Maximum number of key points to extract", "default": 10 }
+      ],
+      "returns": { "type": "array", "description": "Array of key point objects with statement, importance rating, source section, and supporting quote" }
+    },
+    {
+      "name": "create_outline",
+      "description": "Generate a structured hierarchical outline from document content",
+      "parameters": [
+        { "name": "content", "type": "string", "required": true, "description": "The document text to outline" }
+      ],
+      "returns": { "type": "object", "description": "Hierarchical outline with nested sections, each containing heading, summary, and sub-sections" }
+    }
+  ]
+}

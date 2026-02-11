@@ -1,0 +1,48 @@
+{
+  "id": "web-scraping",
+  "title": "Web Scraping",
+  "description": "Scrape web pages for content, extract structured data using CSS selectors, and run batch scraping jobs across multiple URLs",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "research",
+  "icon": "FileCode",
+  "tags": ["scraping", "web", "extract", "css-selectors", "batch", "data-collection"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "scrape_page",
+      "description": "Scrape content from a single web page using CSS selectors",
+      "parameters": [
+        { "name": "url", "type": "string", "required": true, "description": "The URL to scrape" },
+        { "name": "selectors", "type": "object", "required": true, "description": "Named CSS selectors to extract, e.g. { \"title\": \"h1\", \"prices\": \".price-tag\", \"links\": \"a.product-link\" }" }
+      ],
+      "returns": { "type": "object", "description": "Scraped data keyed by selector names, with arrays of matched text content and attributes" }
+    },
+    {
+      "name": "extract_structured",
+      "description": "Extract structured data from a page using an AI-inferred schema",
+      "parameters": [
+        { "name": "url", "type": "string", "required": true, "description": "The URL to extract data from" },
+        { "name": "schema", "type": "object", "required": true, "description": "Desired output schema with field names, types, and descriptions" }
+      ],
+      "returns": { "type": "object", "description": "Extracted data conforming to the requested schema, with extraction confidence scores" }
+    },
+    {
+      "name": "batch_scrape",
+      "description": "Scrape the same data structure from multiple URLs",
+      "parameters": [
+        { "name": "urls", "type": "array", "required": true, "description": "Array of URLs to scrape" },
+        { "name": "selectors", "type": "object", "required": true, "description": "Named CSS selectors to apply to each URL" }
+      ],
+      "returns": { "type": "array", "description": "Array of results per URL, each containing scraped data and any errors encountered" }
+    }
+  ]
+}

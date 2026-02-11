@@ -1,0 +1,49 @@
+{
+  "id": "analyze-data",
+  "title": "Analyze Data",
+  "description": "Analyze datasets, generate visualizations, and produce statistical summaries using AI-powered data analysis",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "analysis",
+  "icon": "BarChart3",
+  "tags": ["data", "analytics", "statistics", "visualization", "charts", "insights"],
+  "status": "coming_soon",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "analyze",
+      "description": "Analyze a dataset and answer specific questions about it",
+      "parameters": [
+        { "name": "data", "type": "string", "required": true, "description": "Dataset as CSV string, JSON array, or URL to a data file" },
+        { "name": "question", "type": "string", "required": true, "description": "The analytical question to answer about the data" }
+      ],
+      "returns": { "type": "object", "description": "Analysis result with answer, supporting statistics, methodology used, confidence level, and caveats" }
+    },
+    {
+      "name": "visualize",
+      "description": "Generate a chart or visualization from data",
+      "parameters": [
+        { "name": "data", "type": "string", "required": true, "description": "Dataset as CSV string, JSON array, or URL to a data file" },
+        { "name": "chart_type", "type": "string", "required": true, "description": "Chart type: 'bar', 'line', 'pie', 'scatter', 'heatmap', 'histogram', 'area', 'treemap'" },
+        { "name": "title", "type": "string", "required": false, "description": "Chart title" }
+      ],
+      "returns": { "type": "object", "description": "Visualization object with chart config (Vega-Lite spec), rendered image URL, and data insights" }
+    },
+    {
+      "name": "summarize_dataset",
+      "description": "Generate a comprehensive statistical summary of a dataset",
+      "parameters": [
+        { "name": "data", "type": "string", "required": true, "description": "Dataset as CSV string, JSON array, or URL to a data file" },
+        { "name": "columns", "type": "array", "required": false, "description": "Specific columns to analyze (defaults to all)" }
+      ],
+      "returns": { "type": "object", "description": "Summary with column types, descriptive statistics, distributions, correlations, missing values, outliers, and key observations" }
+    }
+  ]
+}

@@ -65,16 +65,16 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
       { text: 'Initializing executive layer...', delay: 800 },
       { text: '[OK] Strategic planning module', delay: 1400 },
       { text: '[OK] Decision engine primed', delay: 2000 },
-      { text: '[OK] Risk assessment calibrated', delay: 2600 },
-      { text: '[OK] Command chain framework loaded', delay: 3200 },
+      { text: '[OK] Risk assessment calibrated', delay: 2100 },
+      { text: '[OK] Command chain framework loaded', delay: 2700 },
       { text: '', delay: 3600 },
-      { text: '> CEO position: VACANT', delay: 4000 },
+      { text: '> CEO position: VACANT', delay: 2100 },
     ];
     const timers: ReturnType<typeof setTimeout>[] = [];
     lines.forEach(({ text, delay }) => {
       timers.push(setTimeout(() => setVisibleLines(prev => [...prev, text]), delay));
     });
-    timers.push(setTimeout(() => setPhase('reveal'), 7000));
+    timers.push(setTimeout(() => setPhase('reveal'), 4100));
     return () => timers.forEach(clearTimeout);
   }, [phase, founderName]);
 

@@ -1,0 +1,47 @@
+{
+  "id": "analyze-image",
+  "title": "Analyze Image",
+  "description": "Describe images, extract text via OCR, and compare multiple images using AI vision models",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "analysis",
+  "icon": "ScanEye",
+  "tags": ["image", "vision", "ocr", "description", "comparison", "analysis"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "describe",
+      "description": "Generate a detailed description of an image",
+      "parameters": [
+        { "name": "image_url", "type": "string", "required": true, "description": "URL of the image to analyze" },
+        { "name": "detail_level", "type": "string", "required": false, "description": "Level of detail: 'brief' (1-2 sentences), 'standard' (paragraph), 'detailed' (comprehensive)", "default": "standard" }
+      ],
+      "returns": { "type": "object", "description": "Image description with main subject, scene details, colors, text found, objects detected, and suggested tags" }
+    },
+    {
+      "name": "extract_text",
+      "description": "Extract all text content from an image using OCR",
+      "parameters": [
+        { "name": "image_url", "type": "string", "required": true, "description": "URL of the image containing text" }
+      ],
+      "returns": { "type": "object", "description": "Extracted text with full content, structured blocks (headers, paragraphs, lists), and confidence scores" }
+    },
+    {
+      "name": "compare",
+      "description": "Compare two or more images and identify similarities and differences",
+      "parameters": [
+        { "name": "image_urls", "type": "array", "required": true, "description": "Array of image URLs to compare (2-4 images)" },
+        { "name": "criteria", "type": "array", "required": false, "description": "Specific criteria to compare on: 'content', 'style', 'quality', 'color', 'composition'" }
+      ],
+      "returns": { "type": "object", "description": "Comparison report with similarities, differences, per-criteria analysis, and ranking if applicable" }
+    }
+  ]
+}

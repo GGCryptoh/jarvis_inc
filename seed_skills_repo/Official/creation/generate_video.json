@@ -1,0 +1,40 @@
+{
+  "id": "generate-video",
+  "title": "Generate Video",
+  "description": "Generate and edit short videos from text prompts using AI video generation models",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "creation",
+  "icon": "Video",
+  "tags": ["video", "generation", "animation", "creative", "sora"],
+  "status": "coming_soon",
+  "connection_type": "api_key",
+  "models": null,
+  "default_model": null,
+  "fixed_service": "OpenAI",
+  "service_type": "fixed",
+  "oauth_config": null,
+  "curl_example": "curl -X POST https://api.openai.com/v1/videos/generations -H \"Content-Type: application/json\" -H \"Authorization: Bearer $OPENAI_API_KEY\" -d '{\"model\": \"sora\", \"prompt\": \"A drone flyover of a futuristic city at sunset\", \"duration\": 10, \"resolution\": \"1080p\"}'",
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "generate",
+      "description": "Generate a video from a text prompt",
+      "parameters": [
+        { "name": "prompt", "type": "string", "required": true, "description": "Detailed text description of the video to generate" },
+        { "name": "duration", "type": "number", "required": false, "description": "Video duration in seconds (5-60)", "default": 10 },
+        { "name": "resolution", "type": "string", "required": false, "description": "Output resolution: '480p', '720p', '1080p'", "default": "1080p" }
+      ],
+      "returns": { "type": "object", "description": "Generated video object with url, duration, resolution, and generation metadata" }
+    },
+    {
+      "name": "edit",
+      "description": "Edit an existing video based on text instructions",
+      "parameters": [
+        { "name": "video_url", "type": "string", "required": true, "description": "URL of the source video to edit" },
+        { "name": "instructions", "type": "string", "required": true, "description": "Natural language description of the desired edits (e.g. 'change the sky to a starry night')" }
+      ],
+      "returns": { "type": "object", "description": "Edited video object with url and edit summary" }
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "send-slack",
+  "title": "Send Slack Message",
+  "description": "Post messages and updates to Slack channels",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "communication",
+  "icon": "MessageCircle",
+  "tags": ["slack", "messaging", "channels", "communication", "team"],
+  "status": "coming_soon",
+  "connection_type": "oauth",
+  "models": null,
+  "default_model": null,
+  "fixed_service": "Slack",
+  "service_type": "fixed",
+  "oauth_config": {
+    "provider": "slack",
+    "auth_url": "https://slack.com/oauth/v2/authorize",
+    "token_url": "https://slack.com/api/oauth.v2.access",
+    "scopes": ["chat:write", "channels:read"],
+    "pkce": false
+  },
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "send_message",
+      "description": "Send a message to a Slack channel",
+      "parameters": [
+        { "name": "channel", "type": "string", "required": true, "description": "Channel name or ID (e.g. '#general' or 'C01234ABCD')" },
+        { "name": "text", "type": "string", "required": true, "description": "Message text (supports Slack markdown)" },
+        { "name": "thread_ts", "type": "string", "required": false, "description": "Thread timestamp to reply in a thread" }
+      ],
+      "returns": { "type": "object", "description": "Message confirmation with timestamp and channel" }
+    },
+    {
+      "name": "list_channels",
+      "description": "List available Slack channels",
+      "parameters": [
+        { "name": "limit", "type": "number", "required": false, "description": "Max channels to return", "default": 50 }
+      ],
+      "returns": { "type": "array", "description": "Array of channel objects with id, name, topic" }
+    }
+  ]
+}

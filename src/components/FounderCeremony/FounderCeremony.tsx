@@ -23,8 +23,8 @@ const BOOT_LINES = [
   { text: '[OK] Audit log initialized', delay: 3000 },
   { text: '[OK] Vault encryption active', delay: 3400 },
   { text: '', delay: 3800 },
-  { text: 'Scanning for founder credentials...', delay: 4000 },
-  { text: '> No founder detected.', delay: 4800 },
+  { text: 'Scanning for founder credentials...', delay: 2000 },
+  { text: '> No founder detected.', delay: 3200 },
 ];
 
 const SCAN_BLOCK = [
@@ -84,7 +84,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
   // Phase: welcome → form after delay (extra time to read the text)
   useEffect(() => {
     if (phase !== 'welcome') return;
-    const t = setTimeout(() => setPhase('form'), 7500);
+    const t = setTimeout(() => setPhase('form'), 4500);
     return () => clearTimeout(t);
   }, [phase]);
 

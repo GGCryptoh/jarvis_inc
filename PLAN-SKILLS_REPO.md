@@ -339,7 +339,7 @@ This repository is licensed under the [Apache License 2.0](LICENSE).
 
 ---
 
-## 4. Skill Mapping (Current 13 Skills → JSON Schema)
+## 4. Skill Mapping (18 Skills → JSON Schema)
 
 | Skill ID | connection_type | service_type | fixed_service | models | icon | status |
 |----------|----------------|-------------|---------------|--------|------|--------|
@@ -351,22 +351,39 @@ This repository is licensed under the [Apache License 2.0](LICENSE).
 | `read-tweets` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Twitter | available |
 | `research-reddit` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Rss | available |
 | `deep-search` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Search | coming_soon |
+| `browse-web` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Monitor | available |
+| `web-scraping` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | ScanSearch | available |
 | `create-images` | api_key | fixed | OpenAI | null | Image | available |
+| `generate-video` | api_key | fixed | OpenAI | null | Video | coming_soon |
 | `write-document` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | FileText | available |
 | `generate-code` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Code | available |
 | `analyze-data` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | BarChart3 | coming_soon |
+| `analyze-image` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Eye | available |
+| `summarize-document` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | BookOpen | available |
+| `translate-text` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Languages | available |
 
-**Note**: `read-email`, `write-email`, `send-slack`, `schedule-meeting` are reclassified from `api_key`/`fixed` to `oauth`/`fixed` since they actually need OAuth flows (Gmail API, Slack API, Google Calendar API).
+**Notes**:
+- `read-email`, `write-email`, `send-slack`, `schedule-meeting` are reclassified from `api_key`/`fixed` to `oauth`/`fixed` since they actually need OAuth flows (Gmail API, Slack API, Google Calendar API).
+- 6 new skills added: `browse-web`, `web-scraping`, `generate-video`, `analyze-image`, `summarize-document`, `translate-text`.
+
+### Skill-Agent Assignment Model
+
+Skills are NOT globally available to all agents. The CEO controls which tools each agent can use:
+1. Founder enables skills org-wide (Skills page toggle)
+2. CEO checks enabled skills during evaluation cycle
+3. CEO assigns specific skill IDs per agent (stored in agent's `skills` column as JSON array)
+4. Agent's system prompt lists only its assigned skills as callable tools
+5. CEO's user prompt per task tells agent which specific skills to use
 
 ---
 
 ## 5. Seed Skills Repo Structure
 
-Create `/seed_skills_repo/` in the project for local development:
+Create `/seed_skills_repo/` in the project for local development. Mirrors the GitHub repo structure at https://github.com/GGCryptoh/jarvis_inc_skills (which already has `Official/`, `Marketplace/`, and `LICENSE`):
 
 ```
 seed_skills_repo/
-├── skills/
+├── Official/
 │   ├── communication/
 │   │   ├── read_email.json
 │   │   ├── write_email.json
@@ -376,17 +393,25 @@ seed_skills_repo/
 │   │   ├── research_web.json
 │   │   ├── read_tweets.json
 │   │   ├── research_reddit.json
-│   │   └── deep_search.json
+│   │   ├── deep_search.json
+│   │   ├── browse_web.json
+│   │   └── web_scraping.json
 │   ├── creation/
 │   │   ├── create_images.json
+│   │   ├── generate_video.json
 │   │   ├── write_document.json
 │   │   └── generate_code.json
-│   └── analysis/
-│       └── analyze_data.json
+│   ├── analysis/
+│   │   ├── analyze_data.json
+│   │   ├── analyze_image.json
+│   │   ├── summarize_document.json
+│   │   └── translate_text.json
+│   └── README.md
+├── Marketplace/
+│   └── README.md
 ├── schema/
 │   └── skill.schema.json
 ├── manifest.json
-├── LICENSE
 └── README.md
 ```
 

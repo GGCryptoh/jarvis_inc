@@ -1,0 +1,54 @@
+{
+  "id": "read-email",
+  "title": "Read Email",
+  "description": "Read and parse incoming emails from connected accounts",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "communication",
+  "icon": "Mail",
+  "tags": ["email", "gmail", "inbox", "communication"],
+  "status": "available",
+  "connection_type": "oauth",
+  "models": null,
+  "default_model": null,
+  "fixed_service": "Google",
+  "service_type": "fixed",
+  "oauth_config": {
+    "provider": "google",
+    "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+    "pkce": true
+  },
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "fetch_inbox",
+      "description": "Fetch recent emails from inbox",
+      "parameters": [
+        { "name": "max_results", "type": "number", "required": false, "description": "Maximum number of emails to return", "default": 10 },
+        { "name": "query", "type": "string", "required": false, "description": "Gmail search query filter (e.g. 'from:boss@company.com')" },
+        { "name": "unread_only", "type": "boolean", "required": false, "description": "Only return unread emails", "default": false }
+      ],
+      "returns": { "type": "array", "description": "Array of email objects with subject, from, date, snippet, body" }
+    },
+    {
+      "name": "get_email",
+      "description": "Get full content of a specific email by ID",
+      "parameters": [
+        { "name": "email_id", "type": "string", "required": true, "description": "The email message ID" }
+      ],
+      "returns": { "type": "object", "description": "Full email object with headers, body (text and HTML), and attachments list" }
+    },
+    {
+      "name": "search",
+      "description": "Search emails with advanced Gmail query syntax",
+      "parameters": [
+        { "name": "query", "type": "string", "required": true, "description": "Gmail search query (supports from:, to:, subject:, has:attachment, etc.)" },
+        { "name": "max_results", "type": "number", "required": false, "description": "Maximum results", "default": 20 }
+      ],
+      "returns": { "type": "array", "description": "Array of matching email objects" }
+    }
+  ]
+}

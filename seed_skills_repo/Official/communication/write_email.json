@@ -1,0 +1,60 @@
+{
+  "id": "write-email",
+  "title": "Write Email",
+  "description": "Compose and send emails on behalf of agents",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "communication",
+  "icon": "Send",
+  "tags": ["email", "gmail", "send", "compose", "communication"],
+  "status": "available",
+  "connection_type": "oauth",
+  "models": null,
+  "default_model": null,
+  "fixed_service": "Google",
+  "service_type": "fixed",
+  "oauth_config": {
+    "provider": "google",
+    "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "scopes": ["https://www.googleapis.com/auth/gmail.send"],
+    "pkce": true
+  },
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "compose",
+      "description": "Compose and send an email",
+      "parameters": [
+        { "name": "to", "type": "string", "required": true, "description": "Recipient email address(es), comma-separated" },
+        { "name": "subject", "type": "string", "required": true, "description": "Email subject line" },
+        { "name": "body", "type": "string", "required": true, "description": "Email body content (plain text or HTML)" },
+        { "name": "cc", "type": "string", "required": false, "description": "CC recipients, comma-separated" },
+        { "name": "bcc", "type": "string", "required": false, "description": "BCC recipients, comma-separated" },
+        { "name": "html", "type": "boolean", "required": false, "description": "Whether body is HTML", "default": false }
+      ],
+      "returns": { "type": "object", "description": "Sent message confirmation with message ID and thread ID" }
+    },
+    {
+      "name": "reply",
+      "description": "Reply to an existing email thread",
+      "parameters": [
+        { "name": "thread_id", "type": "string", "required": true, "description": "The thread ID to reply to" },
+        { "name": "body", "type": "string", "required": true, "description": "Reply body content" },
+        { "name": "reply_all", "type": "boolean", "required": false, "description": "Reply to all recipients", "default": false }
+      ],
+      "returns": { "type": "object", "description": "Sent reply confirmation" }
+    },
+    {
+      "name": "draft",
+      "description": "Create a draft email without sending",
+      "parameters": [
+        { "name": "to", "type": "string", "required": true, "description": "Recipient email address(es)" },
+        { "name": "subject", "type": "string", "required": true, "description": "Email subject" },
+        { "name": "body", "type": "string", "required": true, "description": "Email body content" }
+      ],
+      "returns": { "type": "object", "description": "Draft object with draft ID for later editing or sending" }
+    }
+  ]
+}

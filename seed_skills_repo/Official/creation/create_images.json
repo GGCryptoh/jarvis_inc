@@ -1,0 +1,50 @@
+{
+  "id": "create-images",
+  "title": "Create Images",
+  "description": "Generate, edit, and create variations of images using AI image generation models",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "creation",
+  "icon": "Image",
+  "tags": ["image", "generation", "art", "design", "dall-e", "creative"],
+  "status": "available",
+  "connection_type": "api_key",
+  "models": null,
+  "default_model": null,
+  "fixed_service": "OpenAI",
+  "service_type": "fixed",
+  "oauth_config": null,
+  "curl_example": "curl -X POST https://api.openai.com/v1/images/generations -H \"Content-Type: application/json\" -H \"Authorization: Bearer $OPENAI_API_KEY\" -d '{\"model\": \"dall-e-3\", \"prompt\": \"A pixel art office with retro computers\", \"n\": 1, \"size\": \"1024x1024\"}'",
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "generate",
+      "description": "Generate images from a text prompt",
+      "parameters": [
+        { "name": "prompt", "type": "string", "required": true, "description": "Detailed text description of the image to generate" },
+        { "name": "size", "type": "string", "required": false, "description": "Image dimensions: '1024x1024', '1024x1792', '1792x1024'", "default": "1024x1024" },
+        { "name": "count", "type": "number", "required": false, "description": "Number of images to generate (1-4)", "default": 1 },
+        { "name": "style", "type": "string", "required": false, "description": "Style preset: 'vivid' (dramatic, hyper-real) or 'natural' (less hyper-real)", "default": "vivid" }
+      ],
+      "returns": { "type": "array", "description": "Array of generated image objects with url, revised_prompt, and creation timestamp" }
+    },
+    {
+      "name": "edit",
+      "description": "Edit an existing image based on a text prompt",
+      "parameters": [
+        { "name": "image_url", "type": "string", "required": true, "description": "URL of the source image to edit" },
+        { "name": "prompt", "type": "string", "required": true, "description": "Description of the desired edits" }
+      ],
+      "returns": { "type": "object", "description": "Edited image object with url and metadata" }
+    },
+    {
+      "name": "variation",
+      "description": "Create variations of an existing image",
+      "parameters": [
+        { "name": "image_url", "type": "string", "required": true, "description": "URL of the source image" },
+        { "name": "count", "type": "number", "required": false, "description": "Number of variations to generate (1-4)", "default": 1 }
+      ],
+      "returns": { "type": "array", "description": "Array of variation image objects with urls" }
+    }
+  ]
+}

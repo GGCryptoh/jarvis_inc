@@ -1,0 +1,49 @@
+{
+  "id": "research-reddit",
+  "title": "Research Reddit",
+  "description": "Search Reddit posts, analyze discussion threads, and monitor subreddits for relevant content",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "research",
+  "icon": "MessageSquareText",
+  "tags": ["reddit", "forums", "discussion", "social-media", "research", "community"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "search_posts",
+      "description": "Search Reddit for posts matching a query",
+      "parameters": [
+        { "name": "query", "type": "string", "required": true, "description": "Search query string" },
+        { "name": "subreddit", "type": "string", "required": false, "description": "Limit search to a specific subreddit (without r/ prefix)" },
+        { "name": "sort_by", "type": "string", "required": false, "description": "Sort order: 'relevance', 'hot', 'top', 'new', 'comments'", "default": "relevance" },
+        { "name": "max_results", "type": "number", "required": false, "description": "Maximum number of posts to return", "default": 15 }
+      ],
+      "returns": { "type": "array", "description": "Array of post objects with title, subreddit, author, score, comment count, url, and preview text" }
+    },
+    {
+      "name": "analyze_thread",
+      "description": "Deeply analyze a Reddit discussion thread and its comments",
+      "parameters": [
+        { "name": "url", "type": "string", "required": true, "description": "Full Reddit thread URL" }
+      ],
+      "returns": { "type": "object", "description": "Thread analysis with summary, key arguments, sentiment breakdown, top comments, consensus points, and controversial takes" }
+    },
+    {
+      "name": "monitor_subreddit",
+      "description": "Monitor a subreddit for posts matching specific keywords",
+      "parameters": [
+        { "name": "subreddit", "type": "string", "required": true, "description": "Subreddit name to monitor (without r/ prefix)" },
+        { "name": "keywords", "type": "array", "required": true, "description": "Array of keywords or phrases to watch for" }
+      ],
+      "returns": { "type": "object", "description": "Monitoring report with matched posts, frequency analysis, and trending keyword co-occurrences" }
+    }
+  ]
+}

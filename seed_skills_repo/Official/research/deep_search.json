@@ -1,0 +1,40 @@
+{
+  "id": "deep-search",
+  "title": "Deep Search",
+  "description": "Perform multi-source deep research across the web, academic papers, and databases, then synthesize findings into comprehensive reports",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "research",
+  "icon": "SearchCode",
+  "tags": ["deep-research", "multi-source", "synthesis", "academic", "comprehensive", "analysis"],
+  "status": "coming_soon",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "multi_source_research",
+      "description": "Conduct in-depth research across multiple source types",
+      "parameters": [
+        { "name": "query", "type": "string", "required": true, "description": "The research question or topic to investigate" },
+        { "name": "sources", "type": "array", "required": false, "description": "Source types to include: 'web', 'academic', 'news', 'patents', 'government'", "default": ["web", "academic", "news"] },
+        { "name": "depth", "type": "string", "required": false, "description": "Research depth: 'quick' (5 min), 'standard' (15 min), 'thorough' (30 min), 'exhaustive' (60 min)", "default": "standard" }
+      ],
+      "returns": { "type": "object", "description": "Research report with executive summary, detailed findings per source, cross-references, confidence ratings, and bibliography" }
+    },
+    {
+      "name": "synthesize",
+      "description": "Synthesize information from multiple provided sources into a coherent analysis",
+      "parameters": [
+        { "name": "sources", "type": "array", "required": true, "description": "Array of source objects with url or text content to synthesize" },
+        { "name": "question", "type": "string", "required": true, "description": "The specific question or angle to synthesize around" }
+      ],
+      "returns": { "type": "object", "description": "Synthesis report with unified answer, agreement/disagreement matrix, knowledge gaps, and recommended further reading" }
+    }
+  ]
+}

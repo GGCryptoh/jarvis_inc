@@ -1,0 +1,50 @@
+{
+  "id": "generate-code",
+  "title": "Generate Code",
+  "description": "Generate, review, and debug code across multiple programming languages and frameworks",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "creation",
+  "icon": "Code",
+  "tags": ["code", "programming", "development", "debug", "review", "generation"],
+  "status": "available",
+  "connection_type": "llm",
+  "models": ["Claude Opus 4.6", "Claude Opus 4.5", "Claude Sonnet 4.5", "Claude Haiku 4.5", "GPT-5.2", "o3-pro", "o4-mini", "Gemini 3 Pro", "Gemini 2.5 Flash", "DeepSeek R1", "Llama 3.3", "Grok 4"],
+  "default_model": "Claude Opus 4.6",
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": null,
+  "cli_config": null,
+  "commands": [
+    {
+      "name": "generate",
+      "description": "Generate code based on a natural language description",
+      "parameters": [
+        { "name": "language", "type": "string", "required": true, "description": "Programming language (e.g. 'python', 'typescript', 'rust', 'go', 'java', 'sql')" },
+        { "name": "description", "type": "string", "required": true, "description": "Natural language description of what the code should do" },
+        { "name": "framework", "type": "string", "required": false, "description": "Framework or library context (e.g. 'react', 'fastapi', 'express', 'django')" }
+      ],
+      "returns": { "type": "object", "description": "Generated code with source, filename suggestion, dependencies list, and usage instructions" }
+    },
+    {
+      "name": "review",
+      "description": "Review code for bugs, security issues, and improvement opportunities",
+      "parameters": [
+        { "name": "code", "type": "string", "required": true, "description": "The source code to review" },
+        { "name": "focus_areas", "type": "array", "required": false, "description": "Specific areas to focus on: 'security', 'performance', 'readability', 'best_practices', 'bugs'" }
+      ],
+      "returns": { "type": "object", "description": "Review report with severity-rated issues, line-specific comments, suggested fixes, and overall quality score" }
+    },
+    {
+      "name": "debug",
+      "description": "Analyze code and error messages to identify and fix bugs",
+      "parameters": [
+        { "name": "code", "type": "string", "required": true, "description": "The source code containing the bug" },
+        { "name": "error_message", "type": "string", "required": true, "description": "The error message or description of unexpected behavior" },
+        { "name": "language", "type": "string", "required": false, "description": "Programming language of the code" }
+      ],
+      "returns": { "type": "object", "description": "Debug analysis with root cause, explanation, fixed code, and prevention tips" }
+    }
+  ]
+}
