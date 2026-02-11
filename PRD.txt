@@ -489,3 +489,57 @@ If you want, next we can:
 	•	Or explicitly lock v1 boundaries so this never leaks in early
 
 Just say which.
+
+
+⸻
+
+20. Current Implementation Status (v0.1.0)
+
+Status
+
+Demo mode — client-side only, no backend, no real LLM calls.
+
+Architecture: React 18 + TypeScript + Vite 6 + Tailwind CSS 3 + sql.js (SQLite WASM) + IndexedDB persistence. Deployable via Docker (nginx) or npm run dev.
+
+⸻
+
+What's Built
+
+| PRD Section | Feature | Status |
+|-------------|---------|--------|
+| 1-3. Core Principles | Local-first system of record | Shipped (sql.js + IndexedDB) |
+| 4. System Overview | Three-layer architecture | UI layer shipped; execution + control layers planned |
+| 5. Roles | Human Owner (Founder Ceremony) | Shipped — callsign, org name, DB persistence |
+| 5. Roles | AI CEO | Shipped — ceremony, walk-in, onboarding chat. Autonomous runtime not implemented |
+| 5. Roles | AI Agents | Shipped — hire/edit/fire with sprite animations. Task execution not implemented |
+| 6. Org Model | Org Chart | Not started |
+| 6. Org Model | Employee Monitor (Surveillance) | Shipped — pixel office, 7 animation states, 4 floor tiers, floor planner |
+| 7. Task Orchestration | Task definition model | Not started |
+| 7. Task Orchestration | Agent assignment | Not started (CEO assigns manually in future) |
+| 7. Task Orchestration | Crew-style delegation | Not started |
+| 7. Task Orchestration | Task monitoring | Not started |
+| 8. Permissions | Permission model | Not started |
+| 9. Budget | Financial controls | Placeholder UI only |
+| 10. Vault | Secrets management | Shipped — full CRUD, model-service mapping, dependency warnings |
+| 11. Human Tasks | Approvals | Shipped — skill_enable + api_key_request types, badge counter, cross-component sync |
+| 12. Channels | Telegram / notifications | Not started |
+| 13. Gallery | Artifact storage | Not started |
+| 14. System Stats | Health dashboard | Not started |
+| 15. Audit | Audit trail | Placeholder UI only |
+| 16. Safety Controls | Kill switch, system states | Not started |
+| 17. Initial Scope | v1 local-first execution | In progress |
+| 19. Multi-Company | Founder-level control plane | Out of scope for v1 |
+
+⸻
+
+What's Documented but Not Coded
+
+These systems are fully designed in /AI/ architecture documents:
+
+	•	CEO Autonomous Agent System — Scheduler (5 options), decision engine, agent factory, skill assignment model, task execution pipeline, self-execution, proactive communication
+	•	CEO Personality System — 8 archetypes, risk tolerance thresholds, philosophy tone mapping
+	•	CEO Prompt Templates — System prompts, evaluation tick prompts, agent delegation prompts, JSON action schemas
+	•	Supabase Dual-Mode — DataService interface, migrations, Edge Functions, Realtime, Auth
+	•	Skills Repository — 18 seed JSON files, GitHub-based manifest sync, marketplace path
+
+See TASKS.md for the full gap analysis and phased priority order.

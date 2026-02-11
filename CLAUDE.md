@@ -21,6 +21,8 @@ Detailed architecture docs live in the `AI/` directory. **Read these before maki
 | [`AI/Data-Layer.md`](AI/Data-Layer.md) | 8 DB tables (current), 4 future tables, sql.js singleton, dual-mode plan (demo vs Supabase), DataService interface, model→service mapping |
 | [`AI/Surveillance.md`](AI/Surveillance.md) | Pixel office: floor tiers, sprite system, animation states, movement, ceremonies (walk-in, hire), position system, CSS classes, color palettes |
 | [`AI/Ceremonies.md`](AI/Ceremonies.md) | All ceremony flows: Founder, CEO, Walk-in, Agent Hire — state machines, triggers, settings, sound, door animations |
+| [`AI/CEO-Designate.md`](AI/CEO-Designate.md) | CEO personality config: 8 archetypes (Wharton MBA, Wall Street, MIT, etc.), risk tolerance thresholds, philosophy tone mapping, combined prompt assembly |
+| [`AI/CEO/CEO-Prompts.md`](AI/CEO/CEO-Prompts.md) | Every prompt template: CEO system/evaluation/delegation prompts, agent system/task prompts, JSON action schema, approval card metadata, conversation persistence |
 
 ## Tech Stack
 - **React 18** + **TypeScript** + **Vite 6**

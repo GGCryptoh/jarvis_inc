@@ -1,6 +1,6 @@
 # TASKS — Jarvis Inc. v1
 
-> PRD-to-code gap analysis. Checked against current codebase as of 2026-02-10.
+> PRD-to-code gap analysis. Checked against current codebase as of 2026-02-11.
 
 ---
 
@@ -19,10 +19,10 @@
 - [x] Docker support (Dockerfile)
 - [x] Founder Ceremony — boot sequence, registration, SQLite persistence
 - [x] Reset DB flow — 3-step dialog with Fire CEO, Shutter Business (export + wipe), and Reset Database options
-- [~] **Backend server** — Planned: Supabase self-hosted via Docker (Postgres, Auth, Realtime, Edge Functions). See Section 19
-- [~] **Database migration to server-side** — Planned: Dual-mode architecture. sql.js for demo, Supabase Postgres for full mode. See Section 19
-- [~] **Authentication** — Planned: Supabase Auth with first-user auto-confirm, password reset script. See Section 19
-- [~] **WebSocket / SSE layer** — Planned: Supabase Realtime for live push (chat messages, CEO actions, agent status). See Section 19
+- [ ] **Backend server** — Planned: Supabase self-hosted via Docker. Not needed for demo mode. See Section 19
+- [ ] **Database migration to server-side** — Planned: Dual-mode architecture. See Section 19
+- [ ] **Authentication** — Planned: Supabase Auth. See Section 19
+- [ ] **WebSocket / SSE layer** — Planned: Supabase Realtime. See Section 19
 
 ---
 
@@ -44,7 +44,7 @@
 ## 3. Agent Execution Runtime (PRD Section 5, 7)
 
 - [x] Agent CRUD — Hire/edit/fire agents in Surveillance UI, persisted to DB. Skills page functional with DB-backed toggles, model selection per skill, and vault integration
-- [x] **Skills configuration** — 13 skills across 4 categories, org-wide toggle + model assignment, auto-approval for missing API keys
+- [x] **Skills configuration** — 18 skills across 4 categories, org-wide toggle + model assignment, auto-approval for missing API keys, filter (All/Enabled/Disabled) + search bar
 - [ ] **Agent execution engine** — Agents actually run tasks using LLM calls, tools, and external actions
 - [ ] **Agent tool access** — Each agent has a defined set of tools they can use (web search, code gen, email, etc.)
 - [ ] **Agent reporting** — Agents report progress and results upward to CEO
@@ -92,8 +92,10 @@
 ## 7. Human Tasks & Approvals (PRD Section 11)
 
 - [x] **Approvals page** — Pending queue with inline API key provision, service setup hints, approve/dismiss actions
+- [x] **Approval types** — `skill_enable` (with auto-enable on approve) and `api_key_request` (with inline key provision)
 - [x] **Approval triggers** — Auto-created when hiring agents or enabling skills whose model's service lacks a vault key
-- [x] **Notification badges** — Approvals nav item shows count of pending approvals (refreshed every 5s)
+- [x] **Cross-component approval sync** — ChatView and ApprovalsView sync via `approvals-changed` custom event
+- [x] **Notification badges** — Approvals nav item shows count of pending approvals (refreshed every 5s + event-driven)
 - [x] **Approval history** — Collapsible history tab showing approved/dismissed past decisions
 - [ ] **Extended approval types** — Budget overrides, high-risk actions, multi-agent delegation approvals
 - [ ] **Time-bound approvals** — Approvals expire and are auditable
@@ -240,8 +242,8 @@
 
 - [x] Left nav rail with tooltips and active states
 - [x] CEO status pip above Reset DB (green/yellow/red indicator)
-- [x] Skills page — functional with DB-backed toggles, model dropdowns, vault integration
-- [x] Chat page — CEO onboarding conversation with mission-based skill recommendations, inline approval card, auto-enable flow
+- [x] Skills page — functional with DB-backed toggles, model dropdowns, vault integration, filter (All/Enabled/Disabled), search bar
+- [x] Chat page — CEO onboarding conversation with mission-based skill recommendations, single-skill approval card, test interaction, LLM:ENABLED badge
 - [x] Approvals page added to navigation with pending count badge
 - [ ] **Add Human Tasks** to navigation
 - [ ] **Add Gallery** to navigation
@@ -259,9 +261,9 @@
 - [x] Skill definitions extracted to shared module (`src/data/skillDefinitions.ts`)
 - [x] Keyword-to-skill recommender (`src/lib/skillRecommender.ts`)
 - [x] CEO chat skill recommendations with inline approval card
-- [ ] **Skill JSON schema spec** — `create_images.json` format with author, version, title, description, models, connection_type, commands
-- [ ] **Seed skills repo** — 13 JSON files in `/seed_skills_repo/` matching current hardcoded skills
-- [ ] **Official skills GitHub repo** — README, LICENSE (Apache 2.0), manifest.json
+- [x] **Skill JSON schema spec** — `skill.schema.json` with author, version, title, description, models, connection_type, commands
+- [x] **Seed skills repo** — 18 JSON files in `/seed_skills_repo/` across 4 categories + schema + manifest
+- [x] **Official skills GitHub repo** — README, LICENSE (Apache 2.0), manifest.json, real-manifest.json
 - [ ] **Marketplace path** — Community skills from external repos, curated/cataloged
 - [ ] **Skills refresh mechanism** — Daily auto-sync on page visit + manual refresh icon button
 - [ ] **GitHub fetching engine** (`skillsRepository.ts`) — Manifest-based sync, checksum diffing
@@ -289,9 +291,15 @@
 - [ ] **Inline action cards in chat** — Hire recommendations, budget warnings, skill suggestions with approve/reject
 - [ ] **ActiveChat component** — Replace PostMeetingChat placeholder with full interactive chat
 
+### CEO Personality & Designation
+- [ ] **CEO personality archetypes** — 8 founder-selectable archetypes (Wharton MBA, Wall Street Shark, MIT Engineer, Silicon Valley Founder, Beach Bum Philosopher, Military Commander, Creative Director, Research Professor) that inject personality blocks into CEO system prompt. See `AI/CEO-Designate.md`
+- [ ] **CEO Ceremony archetype selector** — New step in CEOCeremony.tsx with visual archetype picker cards (2x4 grid, green border glow on selection)
+- [ ] **`ceo` table column**: `archetype TEXT DEFAULT NULL` — stores selected personality archetype
+- [ ] **CEO prompt assembly** (`ceoPersonality.ts`) — Runtime assembly of system prompt from archetype + philosophy + risk tolerance. See `AI/CEO/CEO-Prompts.md`
+
 ### Decision Engine & Scheduler
 - [ ] **CEO decision engine** (`ceoDecisionEngine.ts`) — Evaluates missions, agents, skills, budget each cycle
-- [ ] **CEO personality system** (`ceoPersonality.ts`) — Philosophy + risk_tolerance influence tone and thresholds
+- [ ] **CEO personality system** (`ceoPersonality.ts`) — Philosophy + risk_tolerance + archetype influence tone and thresholds
 - [ ] **Scheduler system** (`ceoScheduler.ts`) — 5 options documented: setInterval, Visibility API-aware, Web Worker, Real Cron, Supabase Edge Function (recommended for full mode)
 - [ ] **`useCEOScheduler` hook** — Mounted in AppLayout, manages scheduler lifecycle
 - [ ] **CEO action queue** — `ceo_action_queue` table for pending/approved/completed actions
@@ -341,6 +349,8 @@
 
 ## 19. Supabase Integration & Dual-Mode Architecture
 
+> **Not needed for demo mode.** All items below are required only when implementing the CEO autonomous agent runtime with persistent scheduling, real-time updates, and multi-tab support. The current sql.js + IndexedDB stack is sufficient for the onboarding flow and UI development.
+>
 > Supabase self-hosted via Docker provides Postgres, Auth, Realtime, and Edge Functions. sql.js remains as offline/demo fallback.
 
 ### Data Layer Abstraction
@@ -398,53 +408,56 @@
 
 ## Priority Order (Suggested)
 
+> **Note:** Phase 1 (Supabase) is only needed when moving past demo mode to enable the CEO autonomous agent runtime. Demo mode can proceed with Option B scheduler (Visibility-aware setInterval) + direct sql.js reads. The existing Dockerfile works for deploying the SPA — no Supabase Docker setup is needed until Phase 1.
+
+### Phase 0 — Demo Mode Enhancements (no backend needed)
+1. CEO personality archetypes + ceremony archetype selector
+2. Skill resolver + icon resolver + refresh mechanism from GitHub repo
+3. Skill test dialog (dry-run mode)
+4. Mission CRUD (create, edit, move, complete)
+5. Dashboard live data binding (from sql.js)
+6. Audit real logging (sql.js writes on every action)
+
 ### Phase 1 — Supabase Foundation & Dual-Mode Boot
-1. DataService interface + SqliteDataService wrapper
-2. DataContext + useData() hook
-3. Migrate components to useData() (async)
-4. AppBoot + ModeSelectionScreen
-5. Supabase config + migrations (001-003)
-6. SupabaseDataService implementation
-7. Auth (LoginScreen, AuthContext, useAuth)
-8. FounderCeremony system_setup phase
+7. DataService interface + SqliteDataService wrapper
+8. DataContext + useData() hook
+9. Migrate components to useData() (async)
+10. AppBoot + ModeSelectionScreen
+11. Supabase config + migrations (001-003)
+12. SupabaseDataService implementation
+13. Auth (LoginScreen, AuthContext, useAuth)
+14. FounderCeremony system_setup phase
 
-### Phase 2 — Skills Repository & Marketplace
-9. Seed skills JSON → GitHub repo (18 files)
-10. Skill resolver + icon resolver + refresh mechanism
-11. Skill test dialog
+### Phase 2 — CEO Autonomy
+15. CEO scheduler: Visibility-aware (demo) + Edge Function + pg_cron (full mode)
+16. Decision engine + personality system + archetype prompt assembly
+17. Chat message persistence + proactive CEO messaging
+18. Agent factory + skill assignment model
+19. Hire recommendation flow + approval cards
 
-### Phase 3 — CEO Autonomy
-12. CEO scheduler: Visibility-aware (demo) + Edge Function + pg_cron (full mode, migration 004-005)
-13. Decision engine + personality system
-14. Chat message persistence + Realtime subscriptions + proactive CEO messaging
-15. Agent factory + skill assignment model
-16. Hire recommendation flow + approval cards
+### Phase 3 — Agent Runtime
+20. Task execution engine — persistent conversation, mid-task approvals, resume flow
+21. Agent LLM calls via skill definitions + assigned tools
+22. CEO self-execution (ceoExecutor.ts)
+23. Task lifecycle (delegate → execute → pause/approve → complete → CEO review)
+24. Real-time status propagation (surveillance, missions, dashboard)
 
-### Phase 4 — Agent Runtime
-17. Task execution engine — persistent conversation, mid-task approvals, resume flow
-18. Agent LLM calls via skill definitions + assigned tools
-19. CEO self-execution (ceoExecutor.ts)
-20. Task lifecycle (delegate → execute → pause/approve → complete → CEO review)
-21. Real-time status propagation (surveillance, missions, dashboard)
+### Phase 4 — Governance & Controls
+25. Permission model + UI
+26. Budget enforcement + real cost tracking
+27. Extended approval types (hire, budget, skill execution, agent action)
+28. Kill switch & system state machine
 
-### Phase 5 — Governance & Controls
-22. Permission model + UI
-23. Budget enforcement + real cost tracking
-24. Extended approval types (hire, budget, skill execution, agent action)
-25. Kill switch & system state machine
+### Phase 5 — Remaining Modules
+29. Vault — encrypted storage (pgcrypto) + scoped access + OAuth connections
+30. Audit — immutability + export
+31. Gallery & Artifacts
+32. System Stats & Health page
+33. Channels & Telegram integration
+34. Skills marketplace (community repos)
 
-### Phase 6 — Remaining Modules
-26. Vault — encrypted storage (pgcrypto) + scoped access + OAuth connections
-27. Audit — real logging + immutability
-28. Gallery & Artifacts
-29. System Stats & Health page
-30. Channels & Telegram integration
-31. Skills marketplace (community repos)
-
-### Phase 7 — Polish
-32. Org Chart visualization
-33. Dashboard live data binding
-34. Mission CRUD + CEO integration
-35. Navigation additions (Human Tasks, Gallery, Stats, Channels)
-36. Error handling, toasts, loading states
-37. Skill test dialog (dry-run → live execution)
+### Phase 6 — Polish
+35. Org Chart visualization
+36. Navigation additions (Human Tasks, Gallery, Stats, Channels)
+37. Error handling, toasts, loading states
+38. Responsive design, keyboard shortcuts, accessibility
