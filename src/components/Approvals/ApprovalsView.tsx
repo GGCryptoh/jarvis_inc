@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react';
-import { ClipboardCheck, Check, X, Key, ChevronDown, ChevronUp } from 'lucide-react';
+import { ClipboardCheck, Check, X, Key, Blocks, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   loadApprovals,
   loadAllApprovals,
   updateApprovalStatus,
   saveVaultEntry,
+  saveSkill,
 } from '../../lib/database';
 import type { ApprovalRow } from '../../lib/database';
 import { SERVICE_KEY_HINTS } from '../../lib/models';
@@ -51,6 +52,18 @@ export default function ApprovalsView() {
       delete next[approval.id];
       return next;
     });
+    refresh();
+  }
+
+  function handleApproveSkillEnable(approval: ApprovalRow) {
+    let meta: { skillId?: string; model?: string } = {};
+    try { meta = approval.metadata ? JSON.parse(approval.metadata) : {}; } catch { /* ignore */ }
+
+    if (meta.skillId) {
+      saveSkill(meta.skillId, true, meta.model ?? null);
+    }
+
+    updateApprovalStatus(approval.id, 'approved');
     refresh();
   }
 
@@ -101,7 +114,10 @@ export default function ApprovalsView() {
                 {/* Card header */}
                 <div className="flex items-center gap-3 px-6 py-4 border-b border-white/[0.06]">
                   <div className="w-9 h-9 rounded-full bg-amber-500/15 flex items-center justify-center flex-shrink-0">
-                    <Key size={18} className="text-amber-400" />
+                    {approval.type === 'skill_enable'
+                      ? <Blocks size={18} className="text-amber-400" />
+                      : <Key size={18} className="text-amber-400" />
+                    }
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-semibold text-jarvis-text">{approval.title}</h3>
@@ -159,6 +175,15 @@ export default function ApprovalsView() {
                       >
                         <Key size={14} />
                         PROVIDE KEY
+                      </button>
+                    )}
+                    {approval.type === 'skill_enable' && (
+                      <button
+                        onClick={() => handleApproveSkillEnable(approval)}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/20 transition-colors"
+                      >
+                        <Check size={14} />
+                        APPROVE
                       </button>
                     )}
                     <button

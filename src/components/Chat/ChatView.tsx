@@ -1,35 +1,44 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Send, Blocks, ClipboardCheck, Check } from 'lucide-react';
-import { loadCEO, getFounderInfo, getSetting, setSetting, saveMission, saveSkill, loadApprovals, saveApproval, getVaultEntryByService } from '../../lib/database';
+import { Send, ClipboardCheck, Cctv } from 'lucide-react';
+import {
+  loadCEO, getFounderInfo, getSetting, setSetting, saveMission,
+  saveSkill, loadSkills, loadApprovals, saveApproval, updateApprovalStatus,
+  getVaultEntryByService,
+} from '../../lib/database';
 import { getServiceForModel } from '../../lib/models';
 import { skills as skillDefinitions, type SkillDefinition } from '../../data/skillDefinitions';
 import { recommendSkills } from '../../lib/skillRecommender';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface ChatMessage {
   id: string;
   sender: 'ceo' | 'user' | 'system';
   text: string;
-  /** Special message type for inline skill approval card */
-  skillCard?: {
-    recommendations: SkillDefinition[];
+  approvalCard?: {
+    skillName: string;
+    skillDescription: string;
+    skillIcon: React.ElementType;
   };
 }
 
 type ConvoStep =
   | 'welcome'
-  | 'ask_mission'
   | 'waiting_input'
   | 'acknowledging'
-  | 'recommending_skills'
-  | 'waiting_skill_approval'
-  | 'skills_enabled'
-  | 'suggest_skills'
+  | 'waiting_skill_approve'
+  | 'waiting_test_input'
+  | 'testing_skill'
   | 'done';
 
 // ---------------------------------------------------------------------------
-// Helpers (duplicated from SkillsView to avoid tight coupling)
+// Constants & Helpers
 // ---------------------------------------------------------------------------
+
+const FIRST_SKILL_ID = 'research-web';
 
 function getRequiredService(skill: SkillDefinition, model: string | null): string | null {
   if (skill.serviceType === 'fixed') return skill.fixedService ?? null;
@@ -41,24 +50,19 @@ function hasApiKey(service: string): boolean {
   return getVaultEntryByService(service) !== null;
 }
 
-function ensureApproval(service: string, skillName: string, model: string | null): void {
-  const pending = loadApprovals();
-  const alreadyRequested = pending.some(a => {
-    try {
-      const meta = JSON.parse(a.metadata ?? '{}');
-      return meta.service === service;
-    } catch { return false; }
-  });
-  if (!alreadyRequested) {
-    saveApproval({
-      id: `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      type: 'api_key_request',
-      title: `API Key Required: ${service}`,
-      description: `Skill "${skillName}" requires a ${service} API key to function.`,
-      status: 'pending',
-      metadata: JSON.stringify({ service, skillId: skillName, model }),
-    });
-  }
+function generateTestResponse(query: string): string {
+  const q = query.length > 60 ? query.slice(0, 60) + '...' : query;
+  return [
+    `Research results for "${q}":`,
+    '',
+    'Scanned 14 web sources in 2.8 seconds.',
+    '',
+    '1. Multiple credible sources confirm strong activity in this area.',
+    '2. Recent developments in the last 30 days show growing momentum.',
+    '3. Three primary angles worth deeper investigation were identified.',
+    '',
+    'I\'d recommend assigning a dedicated research agent for a full deep-dive once the team is assembled.',
+  ].join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -72,17 +76,20 @@ export default function ChatView() {
   const [step, setStep] = useState<ConvoStep>('welcome');
   const [typing, setTyping] = useState(false);
   const [meetingDone, setMeetingDone] = useState(false);
-  const [recommendedSkills, setRecommendedSkills] = useState<SkillDefinition[]>([]);
-  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
+  const [llmEnabled, setLlmEnabled] = useState(false);
   const [needsApprovalNav, setNeedsApprovalNav] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const onboardingRan = useRef(false);
   const missionTextRef = useRef('');
+  const approvalIdRef = useRef<string | null>(null);
+  const skillApprovedRef = useRef(false);
+  const stepRef = useRef<ConvoStep>('welcome');
+
+  useEffect(() => { stepRef.current = step; }, [step]);
 
   const ceoRow = useRef(loadCEO());
   const founderInfo = useRef(getFounderInfo());
-
   const ceoName = ceoRow.current?.name ?? 'CEO';
   const founderName = founderInfo.current?.founderName ?? 'Founder';
   const orgName = founderInfo.current?.orgName ?? 'the organization';
@@ -91,6 +98,8 @@ export default function ChatView() {
   useEffect(() => {
     if (getSetting('ceo_meeting_done')) {
       setMeetingDone(true);
+      const skills = loadSkills();
+      setLlmEnabled(skills.some(s => s.id === FIRST_SKILL_ID && s.enabled));
     }
   }, []);
 
@@ -121,6 +130,40 @@ export default function ChatView() {
     });
   }, [addCeoMessage]);
 
+  // Handle skill approved from Approvals page (external)
+  const advanceAfterApproval = useCallback(async () => {
+    const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID)!;
+    const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
+    saveSkill(firstSkill.id, true, model);
+
+    await typeWithDelay(
+      `I see you've approved ${firstSkill.name} from the Approvals page — nice work!`,
+      1500,
+    );
+    await typeWithDelay(
+      `Want to take it for a spin? Ask me to research anything and I'll show you what it can do.`,
+      2000,
+    );
+    setStep('waiting_test_input');
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }, [typeWithDelay]);
+
+  // Listen for external approval changes (from Approvals page)
+  useEffect(() => {
+    function handleApprovalsChanged() {
+      if (stepRef.current === 'waiting_skill_approve' && approvalIdRef.current && !skillApprovedRef.current) {
+        const pending = loadApprovals();
+        const stillPending = pending.some(a => a.id === approvalIdRef.current);
+        if (!stillPending) {
+          skillApprovedRef.current = true;
+          advanceAfterApproval();
+        }
+      }
+    }
+    window.addEventListener('approvals-changed', handleApprovalsChanged);
+    return () => window.removeEventListener('approvals-changed', handleApprovalsChanged);
+  }, [advanceAfterApproval]);
+
   // Onboarding conversation flow
   useEffect(() => {
     if (meetingDone) return;
@@ -144,133 +187,187 @@ export default function ChatView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingDone]);
 
-  // Handle user sending their mission
+  // Handle user sending a message
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || step !== 'waiting_input') return;
+    if (!text) return;
 
-    missionTextRef.current = text;
-
-    // Add user message
-    setMessages(prev => [...prev, {
-      id: `msg-${Date.now()}`,
-      sender: 'user',
-      text,
-    }]);
-    setInput('');
-    setStep('acknowledging');
-
-    // CEO acknowledges
-    await typeWithDelay(
-      `That's a strong direction. I've noted this as our primary mission for ${orgName}.`,
-      2000,
-    );
-
-    // Recommend skills based on mission text
-    const recommendedIds = recommendSkills(text);
-    const recommended = recommendedIds
-      .map(id => skillDefinitions.find(s => s.id === id))
-      .filter((s): s is SkillDefinition => s !== undefined);
-
-    if (recommended.length > 0) {
-      setRecommendedSkills(recommended);
-      setSelectedSkillIds(new Set(recommended.map(s => s.id)));
-
-      setStep('recommending_skills');
+    if (step === 'waiting_input') {
+      missionTextRef.current = text;
+      setMessages(prev => [...prev, { id: `msg-${Date.now()}`, sender: 'user', text }]);
+      setInput('');
+      setStep('acknowledging');
 
       await typeWithDelay(
-        `Based on your mission, I'd recommend enabling these skills for our agents:`,
+        `That's a strong direction. I've noted this as our primary mission for ${orgName}.`,
         2000,
-        { skillCard: { recommendations: recommended } },
       );
 
-      setStep('waiting_skill_approval');
-    } else {
-      // Fallback — no specific skills matched (unlikely since research-web is always added)
+      const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID)!;
+      const recommendedIds = recommendSkills(text);
+      const recommended = recommendedIds
+        .map(id => skillDefinitions.find(s => s.id === id))
+        .filter((s): s is SkillDefinition => s !== undefined);
+
+      // Check if the first skill is already enabled
+      const existingSkills = loadSkills();
+      const alreadyEnabled = existingSkills.some(s => s.id === FIRST_SKILL_ID && s.enabled);
+
+      if (alreadyEnabled) {
+        if (recommended.length > 0) {
+          const skillNames = recommended.map(s => s.name).join(', ');
+          await typeWithDelay(
+            `Based on your mission, capabilities like ${skillNames} will be useful. I see ${firstSkill.name} is already enabled — great!`,
+            2500,
+          );
+        }
+        await typeWithDelay(
+          `Want to take it for a spin? Ask me to research anything and I'll show you what it can do.`,
+          2000,
+        );
+        setLlmEnabled(true);
+        setStep('waiting_test_input');
+        setTimeout(() => inputRef.current?.focus(), 100);
+        return;
+      }
+
+      // Mention recommended skills
+      if (recommended.length > 1) {
+        const skillNames = recommended.map(s => s.name).join(', ');
+        await typeWithDelay(
+          `Based on your mission, I'd recommend capabilities like ${skillNames}. We can enable more later from the Skills page.`,
+          2500,
+        );
+      }
+
+      // Check for existing pending approval for this skill (prevents duplicates on reload)
+      const pendingApprovals = loadApprovals();
+      const existingApproval = pendingApprovals.find(a => {
+        try {
+          const meta = JSON.parse(a.metadata ?? '{}');
+          return a.type === 'skill_enable' && meta.skillId === FIRST_SKILL_ID;
+        } catch { return false; }
+      });
+
+      let approvalId: string;
+      const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
+      if (existingApproval) {
+        approvalId = existingApproval.id;
+      } else {
+        approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        saveApproval({
+          id: approvalId,
+          type: 'skill_enable',
+          title: `Enable Skill: ${firstSkill.name}`,
+          description: `CEO ${ceoName} recommends enabling "${firstSkill.name}" — ${firstSkill.description}`,
+          status: 'pending',
+          metadata: JSON.stringify({ skillId: firstSkill.id, skillName: firstSkill.name, model }),
+        });
+        window.dispatchEvent(new Event('approvals-changed'));
+      }
+      approvalIdRef.current = approvalId;
+
       await typeWithDelay(
-        `I'd recommend heading over to the Skills section to explore what capabilities are available.`,
+        `Let's start by turning on our first skill — ${firstSkill.name}. This will let our agents search and analyze the web for any topic.`,
+        2200,
+        {
+          approvalCard: {
+            skillName: firstSkill.name,
+            skillDescription: firstSkill.description,
+            skillIcon: firstSkill.icon,
+          },
+        },
+      );
+
+      setStep('waiting_skill_approve');
+
+    } else if (step === 'waiting_test_input') {
+      setMessages(prev => [...prev, { id: `msg-${Date.now()}`, sender: 'user', text }]);
+      setInput('');
+      setStep('testing_skill');
+
+      await typeWithDelay(generateTestResponse(text), 3500);
+
+      await typeWithDelay(
+        `That's a taste of what your agents will be able to do. I'm ready to lead — let's head to Surveillance and start building the team.`,
         2500,
       );
-      setStep('suggest_skills');
-      finalizeMeeting(text);
+
+      setLlmEnabled(true);
+      finalizeMeeting(missionTextRef.current);
+      setStep('done');
+      setMeetingDone(true);
     }
-  }, [input, step, typeWithDelay, orgName]);
+  }, [input, step, typeWithDelay, orgName, ceoName]);
 
-  // Toggle a skill in the approval card
-  const toggleSkillSelection = useCallback((skillId: string) => {
-    setSelectedSkillIds(prev => {
-      const next = new Set(prev);
-      if (next.has(skillId)) next.delete(skillId);
-      else next.add(skillId);
-      return next;
-    });
-  }, []);
+  // Handle APPROVE click in chat
+  const handleApproveSkill = useCallback(async () => {
+    if (step !== 'waiting_skill_approve') return;
+    skillApprovedRef.current = true;
 
-  // Approve & enable selected skills
-  const handleApproveSkills = useCallback(async () => {
-    if (step !== 'waiting_skill_approval') return;
+    const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID)!;
+    const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
 
-    const selected = recommendedSkills.filter(s => selectedSkillIds.has(s.id));
-    const missingServices = new Set<string>();
+    saveSkill(firstSkill.id, true, model);
 
-    for (const skill of selected) {
-      let model: string | null = null;
-      if (skill.serviceType === 'llm' && skill.defaultModel) {
-        model = skill.defaultModel;
-      }
-
-      saveSkill(skill.id, true, model);
-
-      const service = getRequiredService(skill, model);
-      if (service && !hasApiKey(service)) {
-        ensureApproval(service, skill.name, model);
-        missingServices.add(service);
-      }
+    if (approvalIdRef.current) {
+      updateApprovalStatus(approvalIdRef.current, 'approved');
     }
 
-    // Dispatch so NavigationRail badge updates
+    const service = getRequiredService(firstSkill, model);
+    const keyMissing = service ? !hasApiKey(service) : false;
+
+    if (keyMissing && service) {
+      saveApproval({
+        id: `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: 'api_key_request',
+        title: `API Key Required: ${service}`,
+        description: `Skill "${firstSkill.name}" requires a ${service} API key to function.`,
+        status: 'pending',
+        metadata: JSON.stringify({ service, skillId: firstSkill.id, model }),
+      });
+      setNeedsApprovalNav(true);
+    }
+
     window.dispatchEvent(new Event('approvals-changed'));
 
-    setStep('skills_enabled');
-
-    const enabledCount = selected.length;
-
-    if (missingServices.size > 0) {
-      const serviceList = Array.from(missingServices).join(', ');
+    if (keyMissing) {
       await typeWithDelay(
-        `I've enabled ${enabledCount} skill${enabledCount > 1 ? 's' : ''}. Some require API keys (${serviceList}) — check the Approvals page to provide them.`,
-        2000,
+        `${firstSkill.name} is now enabled! I've also requested the ${service} API key — you can provide it in Approvals anytime.`,
+        1800,
       );
-      setNeedsApprovalNav(true);
     } else {
       await typeWithDelay(
-        `All ${enabledCount} skill${enabledCount > 1 ? 's' : ''} are configured and ready to go. Your agents can start executing on our mission.`,
-        2000,
+        `${firstSkill.name} is now enabled and connected. We're ready to go!`,
+        1800,
       );
     }
 
     await typeWithDelay(
-      `Once we're set, head to Surveillance and we'll start hiring agents to bring this mission to life.`,
+      `Want to take it for a spin? Ask me to research anything and I'll show you what it can do.`,
       2000,
     );
 
-    finalizeMeeting(missionTextRef.current);
-    setStep('done');
-    setMeetingDone(true);
-  }, [step, recommendedSkills, selectedSkillIds, typeWithDelay]);
+    setStep('waiting_test_input');
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }, [step, typeWithDelay]);
 
-  // Skip skill approval
-  const handleSkipSkills = useCallback(async () => {
-    if (step !== 'waiting_skill_approval') return;
-    setStep('skills_enabled');
+  // Handle LATER click in chat
+  const handleSkipSkill = useCallback(async () => {
+    if (step !== 'waiting_skill_approve') return;
+    skillApprovedRef.current = true;
+
+    if (approvalIdRef.current) {
+      updateApprovalStatus(approvalIdRef.current, 'dismissed');
+    }
+    window.dispatchEvent(new Event('approvals-changed'));
 
     await typeWithDelay(
-      `No problem. You can always configure skills later from the Skills page.`,
+      `No problem — you can enable skills anytime from the Skills page.`,
       1500,
     );
-
     await typeWithDelay(
-      `Head to Surveillance when you're ready and we'll start hiring agents.`,
+      `Head to Surveillance when you're ready and we'll start hiring agents to bring our mission to life.`,
       2000,
     );
 
@@ -293,10 +390,12 @@ export default function ChatView() {
     });
   }
 
-  // Post-meeting chat (placeholder for future)
+  // Post-meeting screen
   if (meetingDone && messages.length === 0) {
-    return <PostMeetingChat ceoName={ceoName} />;
+    return <PostMeetingChat ceoName={ceoName} llmEnabled={llmEnabled} />;
   }
+
+  const inputEnabled = step === 'waiting_input' || step === 'waiting_test_input';
 
   return (
     <div className="flex-1 flex flex-col h-full">
@@ -305,7 +404,7 @@ export default function ChatView() {
         <div className="w-8 h-8 rounded-full bg-yellow-400/20 border border-yellow-400/40 flex items-center justify-center">
           <span className="font-pixel text-[10px] text-yellow-300">{'\u265B'}</span>
         </div>
-        <div>
+        <div className="flex-1">
           <div className="font-pixel text-[10px] tracking-wider text-yellow-300">
             CEO {ceoName}
           </div>
@@ -313,6 +412,14 @@ export default function ChatView() {
             {typing ? 'TYPING...' : 'ONLINE'}
           </div>
         </div>
+        {llmEnabled && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-pixel text-[7px] tracking-widest text-emerald-400">
+              LLM: ENABLED
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Messages */}
@@ -336,28 +443,26 @@ export default function ChatView() {
                 </div>
               )}
               <div className={[
-                'font-pixel text-[9px] tracking-wider leading-relaxed',
+                'font-pixel text-[9px] tracking-wider leading-relaxed whitespace-pre-line',
                 msg.sender === 'user' ? 'text-emerald-200' : 'text-zinc-300',
               ].join(' ')}>
                 {msg.text}
               </div>
 
-              {/* Inline Skill Approval Card */}
-              {msg.skillCard && (
-                <SkillApprovalCard
-                  recommendations={msg.skillCard.recommendations}
-                  selectedIds={selectedSkillIds}
-                  onToggle={toggleSkillSelection}
-                  onApprove={handleApproveSkills}
-                  onSkip={handleSkipSkills}
-                  disabled={step !== 'waiting_skill_approval'}
+              {msg.approvalCard && (
+                <SingleSkillApproval
+                  skillName={msg.approvalCard.skillName}
+                  skillDescription={msg.approvalCard.skillDescription}
+                  skillIcon={msg.approvalCard.skillIcon}
+                  onApprove={handleApproveSkill}
+                  onSkip={handleSkipSkill}
+                  disabled={step !== 'waiting_skill_approve'}
                 />
               )}
             </div>
           </div>
         ))}
 
-        {/* Typing indicator */}
         {typing && (
           <div className="flex justify-start">
             <div className="bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-4 py-3">
@@ -370,10 +475,9 @@ export default function ChatView() {
           </div>
         )}
 
-        {/* CTA Buttons */}
         {step === 'done' && !typing && (
           <div className="flex justify-center gap-3 pt-4">
-            {needsApprovalNav ? (
+            {needsApprovalNav && (
               <button
                 onClick={() => navigate('/approvals')}
                 className="retro-button flex items-center gap-2 !text-[9px] !py-3 !px-6 tracking-widest hover:!text-amber-400"
@@ -381,15 +485,14 @@ export default function ChatView() {
                 <ClipboardCheck size={14} />
                 GO TO APPROVALS
               </button>
-            ) : (
-              <button
-                onClick={() => navigate('/skills')}
-                className="retro-button flex items-center gap-2 !text-[9px] !py-3 !px-6 tracking-widest hover:!text-emerald-400"
-              >
-                <Blocks size={14} />
-                EXPLORE SKILLS
-              </button>
             )}
+            <button
+              onClick={() => navigate('/surveillance')}
+              className="retro-button flex items-center gap-2 !text-[9px] !py-3 !px-6 tracking-widest hover:!text-emerald-400"
+            >
+              <Cctv size={14} />
+              GO TO SURVEILLANCE
+            </button>
           </div>
         )}
       </div>
@@ -406,16 +509,18 @@ export default function ChatView() {
             placeholder={
               step === 'waiting_input'
                 ? 'Type your mission or goal...'
-                : step === 'done' || meetingDone
-                  ? 'Chat coming soon...'
-                  : 'Waiting for CEO...'
+                : step === 'waiting_test_input'
+                  ? 'Ask me to research anything...'
+                  : step === 'done' || meetingDone
+                    ? 'Chat coming soon...'
+                    : 'Waiting for CEO...'
             }
-            disabled={step !== 'waiting_input'}
+            disabled={!inputEnabled}
             className="flex-1 bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-4 py-2.5 font-pixel text-[9px] tracking-wider text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
           />
           <button
             onClick={handleSend}
-            disabled={step !== 'waiting_input' || !input.trim()}
+            disabled={!inputEnabled || !input.trim()}
             className="w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <Send size={16} />
@@ -427,93 +532,65 @@ export default function ChatView() {
 }
 
 // ---------------------------------------------------------------------------
-// Inline Skill Approval Card
+// Single Skill Approval Card
 // ---------------------------------------------------------------------------
 
-function SkillApprovalCard({
-  recommendations,
-  selectedIds,
-  onToggle,
+function SingleSkillApproval({
+  skillName,
+  skillDescription,
+  skillIcon: SkillIcon,
   onApprove,
   onSkip,
   disabled,
 }: {
-  recommendations: SkillDefinition[];
-  selectedIds: Set<string>;
-  onToggle: (id: string) => void;
+  skillName: string;
+  skillDescription: string;
+  skillIcon: React.ElementType;
   onApprove: () => void;
   onSkip: () => void;
   disabled: boolean;
 }) {
   return (
     <div className="mt-3 rounded-lg border border-yellow-400/30 bg-yellow-400/[0.04] overflow-hidden">
-      {/* Card header */}
       <div className="px-3 py-2 border-b border-yellow-400/20 bg-yellow-400/[0.06]">
         <div className="font-pixel text-[8px] tracking-widest text-yellow-300">
-          {'\u265B'} CEO RECOMMENDS
+          {'\u265B'} ENABLE SKILL
         </div>
       </div>
 
-      {/* Skill list */}
-      <div className="px-3 py-2 space-y-2">
-        {recommendations.map(skill => {
-          const Icon = skill.icon;
-          const checked = selectedIds.has(skill.id);
-          return (
-            <label
-              key={skill.id}
-              className={`flex items-start gap-2.5 py-1.5 cursor-pointer ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
-              onClick={e => { e.preventDefault(); if (!disabled) onToggle(skill.id); }}
-            >
-              <div className={`
-                w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center mt-0.5 transition-colors
-                ${checked
-                  ? 'bg-emerald-500 border-emerald-400'
-                  : 'bg-zinc-800 border-zinc-600'
-                }
-              `}>
-                {checked && <Check size={10} className="text-white" />}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <Icon size={12} className="text-zinc-400 flex-shrink-0" />
-                  <span className="font-pixel text-[8px] tracking-wider text-zinc-200">
-                    {skill.name}
-                  </span>
-                </div>
-                <div className="font-pixel text-[7px] tracking-wider text-zinc-500 leading-relaxed mt-0.5">
-                  {skill.description}
-                </div>
-              </div>
-            </label>
-          );
-        })}
+      <div className="px-3 py-3 flex items-start gap-2.5">
+        <SkillIcon size={14} className="text-emerald-400 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <div className="font-pixel text-[9px] tracking-wider text-zinc-200">
+            {skillName}
+          </div>
+          <div className="font-pixel text-[7px] tracking-wider text-zinc-500 leading-relaxed mt-0.5">
+            {skillDescription}
+          </div>
+        </div>
       </div>
 
-      {/* Action buttons */}
       {!disabled && (
         <div className="flex items-center justify-between px-3 py-2.5 border-t border-yellow-400/20 bg-yellow-400/[0.03]">
           <button
             onClick={onSkip}
             className="font-pixel text-[7px] tracking-wider text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            SKIP
+            LATER
           </button>
           <button
             onClick={onApprove}
-            disabled={selectedIds.size === 0}
-            className="retro-button !text-[8px] !py-1.5 !px-4 tracking-widest hover:!text-emerald-400 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="retro-button !text-[8px] !py-1.5 !px-4 tracking-widest hover:!text-emerald-400"
           >
-            APPROVE & ENABLE
+            APPROVE
           </button>
         </div>
       )}
 
-      {/* Disabled state shows "enabled" badge */}
       {disabled && (
         <div className="flex items-center justify-center px-3 py-2 border-t border-emerald-500/20 bg-emerald-500/[0.04]">
           <span className="font-pixel text-[7px] tracking-wider text-emerald-400">
-            {'\u2713'} SKILLS ENABLED
+            {'\u2713'} ENABLED
           </span>
         </div>
       )}
@@ -525,7 +602,7 @@ function SkillApprovalCard({
 // Post-meeting screen
 // ---------------------------------------------------------------------------
 
-function PostMeetingChat({ ceoName }: { ceoName: string }) {
+function PostMeetingChat({ ceoName, llmEnabled }: { ceoName: string; llmEnabled: boolean }) {
   const mission = getSetting('primary_mission');
 
   return (
@@ -535,7 +612,7 @@ function PostMeetingChat({ ceoName }: { ceoName: string }) {
         <div className="w-8 h-8 rounded-full bg-yellow-400/20 border border-yellow-400/40 flex items-center justify-center">
           <span className="font-pixel text-[10px] text-yellow-300">{'\u265B'}</span>
         </div>
-        <div>
+        <div className="flex-1">
           <div className="font-pixel text-[10px] tracking-wider text-yellow-300">
             CEO {ceoName}
           </div>
@@ -543,6 +620,14 @@ function PostMeetingChat({ ceoName }: { ceoName: string }) {
             ONLINE
           </div>
         </div>
+        {llmEnabled && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-pixel text-[7px] tracking-widest text-emerald-400">
+              LLM: ENABLED
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Mission summary + placeholder */}

@@ -1,24 +1,8 @@
 {
-  "version": "1.0.0",
+  "version": "0.0.1",
   "updated_at": "2026-02-11T00:00:00Z",
   "skills": [
-    { "path": "Official/communication/read_email.json", "checksum": "" },
-    { "path": "Official/communication/write_email.json", "checksum": "" },
-    { "path": "Official/communication/send_slack.json", "checksum": "" },
-    { "path": "Official/communication/schedule_meeting.json", "checksum": "" },
     { "path": "Official/research/research_web.json", "checksum": "" },
-    { "path": "Official/research/read_tweets.json", "checksum": "" },
-    { "path": "Official/research/research_reddit.json", "checksum": "" },
-    { "path": "Official/research/deep_search.json", "checksum": "" },
-    { "path": "Official/research/browse_web.json", "checksum": "" },
-    { "path": "Official/research/web_scraping.json", "checksum": "" },
-    { "path": "Official/creation/create_images.json", "checksum": "" },
-    { "path": "Official/creation/generate_video.json", "checksum": "" },
-    { "path": "Official/creation/write_document.json", "checksum": "" },
-    { "path": "Official/creation/generate_code.json", "checksum": "" },
-    { "path": "Official/analysis/analyze_data.json", "checksum": "" },
-    { "path": "Official/analysis/analyze_image.json", "checksum": "" },
-    { "path": "Official/analysis/summarize_document.json", "checksum": "" },
-    { "path": "Official/analysis/translate_text.json", "checksum": "" }
+    { "path": "Official/research/browse_web.json", "checksum": "" }
   ]
 }
