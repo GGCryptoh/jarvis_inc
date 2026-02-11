@@ -1,8 +1,6 @@
 import { useState } from 'react'
-import { Pencil, X, Target, Check, RefreshCw } from 'lucide-react'
-import { getSetting, setSetting, loadMissions, loadAgents, type MissionRow, type AgentRow } from '../../lib/database'
-import { dashboardStats } from '../../data/dummyData'
-import type { DashboardStat } from '../../types'
+import { Pencil, X, Target, Check, RefreshCw, Crown } from 'lucide-react'
+import { getSetting, setSetting, loadMissions, loadAgents, loadCEO, type MissionRow, type AgentRow } from '../../lib/database'
 
 const priorityColor: Record<string, string> = {
   critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -25,47 +23,14 @@ const statusLabel: Record<string, string> = {
   backlog: 'Backlog',
 }
 
-function TrendArrow({ trend, change }: { trend: DashboardStat['trend']; change: string }) {
-  if (trend === 'up') {
-    return (
-      <span className="flex items-center gap-1 text-xs text-emerald-400">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path d="M6 2.5L9.5 6.5H2.5L6 2.5Z" fill="currentColor" />
-        </svg>
-        {change}
-      </span>
-    )
-  }
-  if (trend === 'down') {
-    return (
-      <span className="flex items-center gap-1 text-xs text-red-400">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path d="M6 9.5L2.5 5.5H9.5L6 9.5Z" fill="currentColor" />
-        </svg>
-        {change}
-      </span>
-    )
-  }
-  return (
-    <span className="flex items-center gap-1 text-xs text-zinc-500">
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-        <rect x="2" y="5" width="8" height="2" rx="1" fill="currentColor" />
-      </svg>
-      {change}
-    </span>
-  )
-}
-
-function StatCard({ stat }: { stat: DashboardStat }) {
+function StatCard({ label, value, sublabel }: { label: string; value: string; sublabel?: string }) {
   return (
     <div className="bg-jarvis-surface border border-jarvis-border rounded-lg p-4 flex flex-col gap-1">
       <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">
-        {stat.label}
+        {label}
       </span>
-      <div className="flex items-end justify-between gap-2">
-        <span className="text-2xl font-bold text-white leading-none">{stat.value}</span>
-        <TrendArrow trend={stat.trend} change={stat.change} />
-      </div>
+      <span className="text-2xl font-bold text-white leading-none">{value}</span>
+      {sublabel && <span className="text-[10px] text-zinc-600 mt-0.5">{sublabel}</span>}
     </div>
   )
 }
@@ -230,7 +195,15 @@ export default function DashboardView() {
 
   const [dbMissions] = useState(() => loadMissions())
   const [agents] = useState(() => loadAgents())
+  const [ceo] = useState(() => loadCEO())
   const topMissions = dbMissions.slice(0, 10)
+
+  // Compute real stats from DB
+  const agentCount = agents.length
+  const activeMissions = dbMissions.filter(m => m.status === 'in_progress').length
+  const doneMissions = dbMissions.filter(m => m.status === 'done').length
+  const totalMissions = dbMissions.length
+  const monthlyBudget = parseFloat(getSetting('monthly_budget') ?? '100')
 
   function formatDate(iso: string | null): string {
     if (!iso) return '—'
@@ -255,9 +228,12 @@ export default function DashboardView() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        {dashboardStats.map((stat) => (
-          <StatCard key={stat.label} stat={stat} />
-        ))}
+        <StatCard label="Agents" value={String(agentCount)} sublabel={ceo ? `+ CEO ${ceo.name}` : 'No CEO yet'} />
+        <StatCard label="Active Missions" value={String(activeMissions)} sublabel={`${totalMissions} total`} />
+        <StatCard label="Completed" value={String(doneMissions)} sublabel={totalMissions > 0 ? `${Math.round(doneMissions / totalMissions * 100)}% done` : 'No missions'} />
+        <StatCard label="Monthly Budget" value={`$${monthlyBudget}`} sublabel="Edit in Financials" />
+        <StatCard label="Total Spend" value="$0.00" sublabel="No LLM calls yet" />
+        <StatCard label="System Status" value="Online" sublabel="Demo mode" />
       </div>
 
       {/* Mission Control */}
@@ -334,17 +310,38 @@ export default function DashboardView() {
         <div className="mb-3">
           <h2 className="text-sm font-semibold text-white tracking-wide">Agent Fleet</h2>
         </div>
-        {agents.length === 0 ? (
-          <div className="bg-jarvis-surface border border-jarvis-border rounded-lg px-4 py-8 text-center">
-            <p className="text-xs text-zinc-500">No agents hired yet. Visit Surveillance to hire your first agent.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {agents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} />
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {/* CEO card */}
+          {ceo && (
+            <div className="bg-jarvis-surface border border-yellow-500/20 rounded-lg p-3 flex flex-col gap-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h4 className="text-sm font-semibold text-yellow-300 truncate flex items-center gap-1.5">
+                    <Crown size={12} />
+                    {ceo.name}
+                  </h4>
+                  <p className="text-xs text-jarvis-muted">Chief Executive Officer</p>
+                </div>
+                <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-400/[0.08] text-yellow-400/70 border border-yellow-400/15">
+                  {ceo.model}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-[10px] text-zinc-500">{ceo.status === 'nominal' ? 'Online' : ceo.status}</span>
+              </div>
+            </div>
+          )}
+          {/* Agent cards */}
+          {agents.map((agent) => (
+            <AgentCard key={agent.id} agent={agent} />
+          ))}
+          {!ceo && agents.length === 0 && (
+            <div className="col-span-full bg-jarvis-surface border border-jarvis-border rounded-lg px-4 py-8 text-center">
+              <p className="text-xs text-zinc-500">No agents hired yet. Visit Surveillance to hire your first agent.</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

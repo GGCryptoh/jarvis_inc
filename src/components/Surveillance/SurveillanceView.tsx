@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import type { Agent, AgentStatus, Position } from '../../types';
 import {
   ENTRANCE_POSITION,
-  missions as dummyMissions,
 } from '../../data/dummyData';
 import {
   getRoomTier,
@@ -12,7 +11,7 @@ import {
   generateDeskPositions,
   getDeskCountWithSpare,
 } from '../../lib/positionGenerator';
-import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions, seedMissionsIfEmpty } from '../../lib/database';
+import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions } from '../../lib/database';
 import type { AgentRow } from '../../lib/database';
 import { getServiceForModel } from '../../lib/models';
 import CRTFrame from './CRTFrame';
@@ -153,12 +152,6 @@ export default function SurveillanceView() {
 
   // ---- Load missions for priorities board ----
   useEffect(() => {
-    // Seed dummy missions into DB if empty
-    seedMissionsIfEmpty(dummyMissions.map(m => ({
-      id: m.id, title: m.title, status: m.status,
-      assignee: m.assignee, priority: m.priority, due_date: m.dueDate,
-    })));
-
     const refreshPriorities = () => {
       const all = loadMissions();
       const active = all.filter(m => m.status !== 'done').slice(0, 3);
