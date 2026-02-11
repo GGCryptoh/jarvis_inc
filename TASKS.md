@@ -29,7 +29,7 @@
 ## 2. AI CEO & Orchestration Engine (PRD Section 5, 7)
 
 - [ ] **CEO agent runtime** — Instantiate a persistent AI CEO using an LLM (Claude/GPT). The CEO interprets goals, delegates, approves, and reports
-- [~] **Goal ingestion** — CEO onboarding chat asks for primary mission, saves to DB, recommends skills based on mission keywords, inline approval card. **Missing**: structured goal/constraint editing, ongoing goal management
+- [~] **Goal ingestion** — CEO onboarding chat asks for primary mission, saves to DB, recommends skills based on mission keywords, inline approval card. Post-meeting chat shows random CEO greeting (20 variants) + mission card. LLM:CONNECTED badge checks skill enabled + API key present. **Missing**: structured goal/constraint editing, ongoing goal management, LLM-bolstered mission text
 - [ ] **Task definition model** — Structured tasks with Objective, Context/Backstory, Constraints (time, quality, budget, risk) per PRD
 - [ ] **Task refinement** — CEO refines ambiguous tasks before delegation (not blind pass-through)
 - [ ] **Agent assignment logic** — CEO picks agents based on role, workload, cost profile, permissions, and available tools
@@ -65,13 +65,13 @@
 
 ## 5. Budget & Financial Controls (PRD Section 9)
 
-- [~] Financials page — Shows static bar chart and table with dummy data. **Not functional**
+- [~] Financials page — Bar chart and table use dummy monthly data, but budget is real (DB-backed). Budget stored as `monthly_budget` setting
+- [x] **Budget editing UI** — Pencil icon on Monthly Budget card opens founder-ceremony-themed dialog (CRT green glow, pixel font, $50-$1000 presets), persisted to DB
 - [ ] **Real budget tracking** — Daily and monthly budgets at system and agent level, fed by actual LLM token/API costs
 - [ ] **Overage thresholds** — Configurable (e.g., 10% daily, 5% monthly) with warnings
 - [ ] **Budget enforcement** — Pause agent execution when budget exceeded (unless override approved)
 - [ ] **Budget override flow** — CEO requests override, human approves, time-bound and logged
 - [ ] **Per-agent cost tracking** — Real-time token and API cost attribution per agent
-- [ ] **Budget editing UI** — Human can directly edit budgets
 
 ---
 
@@ -155,8 +155,12 @@
 
 ## 13. Dashboard Enhancements (PRD Section 4, 6)
 
-- [~] Dashboard — Shows hardcoded stats, agent cards, and mission table. **Not connected to real data**
-- [ ] **Live data binding** — Dashboard stats driven by real agent activity, costs, and task counts
+- [x] Dashboard — Stats, missions, and agents all driven by real DB data
+- [x] **Live data binding** — Stats show real agent count, active/done missions, monthly budget from DB
+- [x] **Primary Mission card** — Editable mission statement with pencil icon + in-theme modal dialog, persisted to `primary_mission` setting
+- [x] **Mission Control table** — Real missions from DB (ceremonies seed milestones), with recurring badge + hover tooltip, sorted by status then priority
+- [x] **CEO in Agent Fleet** — Yellow-accented card with crown icon, model, status
+- [x] **Ceremony milestone seeding** — Founder + CEO ceremonies auto-create "done" missions in Mission Control
 - [ ] **Org Chart view** — Visual hierarchy showing CEO → agents reporting structure, with cost/workload rollup
 - [ ] **Employee Monitor** — Live agent status (idle, working, blocked), current task, cost, health indicators
 - [ ] **CEO status widget** — Show CEO heartbeat, current thinking, last report
@@ -166,7 +170,9 @@
 
 ## 14. Missions / Task Management Enhancements
 
-- [~] Missions page — Static Kanban board with dummy data. **No CRUD, no real data**
+- [x] Missions Kanban — Reads real missions from DB, grouped by status (backlog → in_progress → review → done) with recurring badge + hover tooltip
+- [x] **Recurring mission support** — `recurring` column in missions table, cyan RefreshCw icon with hover tooltip for cron description
+- [x] **Mission schema extensions** — `recurring`, `created_by`, `created_at` columns added via migration
 - [ ] **Task CRUD** — Create, edit, move, and complete missions from the UI
 - [ ] **Task detail view** — Objective, context/backstory, constraints, assigned agent, status history
 - [ ] **CEO integration** — Tasks created by CEO delegation, not just manual entry
@@ -243,7 +249,7 @@
 - [x] Left nav rail with tooltips and active states
 - [x] CEO status pip above Reset DB (green/yellow/red indicator)
 - [x] Skills page — functional with DB-backed toggles, model dropdowns, vault integration, filter (All/Enabled/Disabled), search bar
-- [x] Chat page — CEO onboarding conversation with mission-based skill recommendations, single-skill approval card, test interaction, LLM:ENABLED badge
+- [x] Chat page — CEO onboarding conversation with skill recommendations, single-skill approval card, test interaction. Post-meeting: random CEO greeting (20 variants) + mission card. LLM:CONNECTED badge checks skill + API key
 - [x] Approvals page added to navigation with pending count badge
 - [ ] **Add Human Tasks** to navigation
 - [ ] **Add Gallery** to navigation
@@ -289,7 +295,7 @@
 - [ ] **CEO proactive chat** — CEO initiates conversations based on system state analysis
 - [ ] **Chat badge on NavigationRail** — Unread message indicator for CEO proactive messages
 - [ ] **Inline action cards in chat** — Hire recommendations, budget warnings, skill suggestions with approve/reject
-- [ ] **ActiveChat component** — Replace PostMeetingChat placeholder with full interactive chat
+- [~] **PostMeetingChat component** — Shows random CEO greeting + mission card + input (enabled when LLM connected). **Missing**: real LLM API calls, chat history persistence
 
 ### CEO Personality & Designation
 - [ ] **CEO personality archetypes** — 8 founder-selectable archetypes (Wharton MBA, Wall Street Shark, MIT Engineer, Silicon Valley Founder, Beach Bum Philosopher, Military Commander, Creative Director, Research Professor) that inject personality blocks into CEO system prompt. See `AI/CEO-Designate.md`
@@ -411,12 +417,15 @@
 > **Note:** Phase 1 (Supabase) is only needed when moving past demo mode to enable the CEO autonomous agent runtime. Demo mode can proceed with Option B scheduler (Visibility-aware setInterval) + direct sql.js reads. The existing Dockerfile works for deploying the SPA — no Supabase Docker setup is needed until Phase 1.
 
 ### Phase 0 — Demo Mode Enhancements (no backend needed)
-1. CEO personality archetypes + ceremony archetype selector
-2. Skill resolver + icon resolver + refresh mechanism from GitHub repo
-3. Skill test dialog (dry-run mode)
-4. Mission CRUD (create, edit, move, complete)
-5. Dashboard live data binding (from sql.js)
-6. Audit real logging (sql.js writes on every action)
+1. ~~Dashboard live data binding (from sql.js)~~ **DONE** — Real stats, CEO in fleet, mission card with edit, Mission Control from DB
+2. ~~Budget editing UI~~ **DONE** — Founder-ceremony-themed dialog on Financials page
+3. ~~Missions Kanban from DB~~ **DONE** — Real missions with recurring badge, ceremony milestones auto-seeded
+4. CEO Ceremony API key validation (format check + connectivity test + skip dialog)
+5. CEO personality archetypes + ceremony archetype selector
+6. Mission CRUD (create, edit, move, complete from Kanban)
+7. Skill resolver + icon resolver + refresh mechanism from GitHub repo
+8. Skill test dialog (dry-run mode)
+9. Audit real logging (sql.js writes on every action)
 
 ### Phase 1 — Supabase Foundation & Dual-Mode Boot
 7. DataService interface + SqliteDataService wrapper
