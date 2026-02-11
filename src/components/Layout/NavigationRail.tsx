@@ -7,9 +7,14 @@ import {
   ScrollText,
   DollarSign,
   DatabaseZap,
+  MessageSquare,
+  ClipboardCheck,
+  FlaskConical,
+  Blocks,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ResetDBDialog from './ResetDBDialog'
+import { loadCEO } from '../../lib/database'
 
 interface NavItem {
   label: string
@@ -20,11 +25,15 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', icon: BarChart3, path: '/dashboard' },
+  { label: 'Chat', icon: MessageSquare, path: '/chat' },
+  { label: 'Approvals', icon: ClipboardCheck, path: '/approvals' },
   { label: 'Missions', icon: Target, path: '/missions' },
   { label: 'Surveillance', icon: Cctv, path: '/surveillance', isSurveillance: true },
+  { label: 'Skills', icon: Blocks, path: '/skills' },
   { label: 'The Vault', icon: Shield, path: '/vault' },
   { label: 'Audit', icon: ScrollText, path: '/audit' },
   { label: 'Financials', icon: DollarSign, path: '/financials' },
+  { label: 'Sample', icon: FlaskConical, path: '/sample-surveillance' },
 ]
 
 type CeoStatus = 'nominal' | 'thinking' | 'error'
@@ -42,7 +51,21 @@ interface NavigationRailProps {
 export default function NavigationRail({ onResetDB }: NavigationRailProps) {
   const [hoveredItem, setHoveredItem] = useState<string | null>(null)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
-  const ceoStatus: CeoStatus = 'nominal'
+
+  const [ceoName, setCeoName] = useState<string | null>(null)
+  const [ceoStatus, setCeoStatus] = useState<CeoStatus>('nominal')
+
+  // Load CEO from DB on mount
+  useEffect(() => {
+    const row = loadCEO()
+    if (row) {
+      setCeoName(row.name)
+      setCeoStatus((row.status as CeoStatus) || 'nominal')
+    }
+  }, [])
+
+  const ceoInitial = ceoName ? ceoName.charAt(0).toUpperCase() : ':)'
+  const ceoTooltip = ceoName ? `CEO ${ceoName}: ${ceoStatus}` : `CEO: ${ceoStatus}`
 
   return (
     <>
@@ -105,8 +128,29 @@ export default function NavigationRail({ onResetDB }: NavigationRailProps) {
           })}
         </div>
 
-        {/* Reset DB Button */}
+        {/* Bottom section: CEO Status + Reset DB */}
         <div className="flex flex-col items-center gap-3 mt-auto">
+          {/* CEO Status Pip */}
+          <div className="pb-3 border-b border-white/[0.06] w-10 flex justify-center">
+            <div className="relative group cursor-default">
+              <span
+                className={[
+                  'block w-4 h-4 rounded-full border-2 border-zinc-700',
+                  statusColorMap[ceoStatus],
+                ].join(' ')}
+              />
+              <span className="absolute inset-0 flex items-center justify-center text-[7px] leading-none select-none font-bold">
+                {ceoInitial}
+              </span>
+
+              {/* Status tooltip */}
+              <div className="absolute left-full ml-3 px-2.5 py-1.5 bg-zinc-800 border border-white/[0.08] rounded-md text-xs text-zinc-200 whitespace-nowrap z-50 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                {ceoTooltip}
+              </div>
+            </div>
+          </div>
+
+          {/* Reset DB Button */}
           <button
             onClick={() => setResetDialogOpen(true)}
             onMouseEnter={() => setHoveredItem('Reset DB')}
@@ -122,26 +166,6 @@ export default function NavigationRail({ onResetDB }: NavigationRailProps) {
               </div>
             )}
           </button>
-
-          {/* CEO Status Pip */}
-          <div className="pt-3 border-t border-white/[0.06] w-10 flex justify-center">
-            <div className="relative group cursor-default">
-              <span
-                className={[
-                  'block w-4 h-4 rounded-full border-2 border-zinc-700',
-                  statusColorMap[ceoStatus],
-                ].join(' ')}
-              />
-              <span className="absolute inset-0 flex items-center justify-center text-[7px] leading-none select-none">
-                :)
-              </span>
-
-              {/* Status tooltip */}
-              <div className="absolute left-full ml-3 px-2.5 py-1.5 bg-zinc-800 border border-white/[0.08] rounded-md text-xs text-zinc-200 whitespace-nowrap z-50 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                CEO: {ceoStatus}
-              </div>
-            </div>
-          </div>
         </div>
       </nav>
 

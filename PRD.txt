@@ -1,0 +1,491 @@
+Crate a design guideline for this app. So we can come up with mock web app screens. 
+
+Jarvis
+
+Alright. Here is the complete, unified PRD, written cleanly end to end, incorporating everything we discussed, including the CrewAI-style tasking, CEO orchestration, approvals, budgets, vault, audit, stats, and human controls.
+No schema. No code. Pure product and system description.
+
+⸻
+
+Product Requirements Document
+
+Jarvis Inc.
+
+Product Category
+
+Local-first AI Operating System for Governed Autonomous Work
+
+⸻
+
+1. Executive Summary
+
+Jarvis Inc. is a local-first AI operating system that allows a human owner to run an AI-powered company composed of autonomous but governed AI agents. Instead of issuing prompts or configuring brittle automations, users operate a persistent organization with roles, reporting lines, permissions, budgets, audits, and execution rhythms.
+
+At the center of the system is an AI CEO that acts as the orchestrator. The CEO evaluates company goals, system state, agent activity, budgets, permissions, and risks, then delegates work, approves actions, manages tradeoffs, and produces executive-level reporting. Humans retain ultimate authority through approvals, overrides, and visibility, while agents execute independently within clearly defined boundaries.
+
+Jarvis Inc. is designed to feel like operating a real company, not configuring a chatbot or workflow tool.
+
+⸻
+
+2. Product Vision
+
+AI should not behave like a chat interface.
+AI should behave like an organization.
+
+Jarvis Inc. reframes AI from “assistant” to “workforce,” introducing structure, accountability, cost discipline, and governance as first-class concepts. The system emphasizes trust, explainability, and human authority while preserving autonomy and leverage.
+
+⸻
+
+3. Core Principles
+	•	Local-first by default
+The system runs locally as the system of record. Remote access and mobile clients are optional future enhancements.
+	•	CEO-led orchestration
+A single AI authority coordinates delegation, approvals, budgets, and reporting.
+	•	Governance over raw autonomy
+Every action is constrained by permissions, budgets, and auditability.
+	•	Human-in-the-loop by design
+Humans approve meaningful risk without micromanaging routine execution.
+	•	Visibility at all times
+Users always know what the system is doing, why, and at what cost.
+
+⸻
+
+4. System Overview
+
+Jarvis Inc. operates as a persistent system composed of three conceptual layers.
+
+Control Layer
+	•	AI CEO orchestrator
+	•	Human owner approvals and overrides
+	•	Permissions, policies, and budget enforcement
+	•	System state management
+
+Execution Layer
+	•	Autonomous AI agents with defined roles
+	•	A protected gateway that executes external actions
+	•	Scheduled heartbeats and reporting cycles
+	•	Controlled access to tools, models, and channels
+
+Visibility Layer
+	•	Task and work tracking
+	•	Financial usage and budgets
+	•	System health and statistics
+	•	Immutable audit logs
+	•	Artifact and document gallery
+
+⸻
+
+5. Roles and Authority Model
+
+Human Owner
+	•	Sets company name, mission, and constraints
+	•	Approves sensitive actions, permissions, and financial overrides
+	•	Can pause agents, disable execution, or lock budgets
+	•	Retains final authority
+
+AI CEO (Orchestrator)
+	•	Acts as the operational leader
+	•	Interprets goals and converts them into structured tasks
+	•	Delegates work to agents
+	•	Approves actions within policy
+	•	Requests human approval when required
+	•	Monitors progress, costs, and risks
+	•	Produces daily and ad-hoc executive reports
+
+AI Agents
+	•	Are “birthed” into the organization with roles and reporting lines
+	•	Execute tasks autonomously within permissions and budgets
+	•	Can request tools, secrets, or delegation authority
+	•	Report progress and results upward
+
+⸻
+
+6. Organizational Model
+
+Org Chart
+	•	Visual hierarchy showing reporting relationships
+	•	CEO at the top
+	•	Agents may report to the CEO or to other agents
+	•	Cost, workload, and execution status roll up through the hierarchy
+
+Employee Monitor
+	•	Live view of agent status (idle, working, blocked)
+	•	Current task and last action
+	•	Cost and token usage
+	•	Health and responsiveness indicators
+
+⸻
+
+7. Task Orchestration and Delegation
+
+Jarvis Inc. treats work as structured missions, not prompts.
+
+Task Definition
+
+Each task includes:
+	•	Objective: a clear, outcome-based goal
+	•	Context and Backstory: why the task exists and how it fits into the company mission
+	•	Constraints: time sensitivity, quality bar, budget expectations, and risk tolerance
+
+Tasks are refined by the CEO before execution. Ambiguous tasks are clarified, not delegated blindly.
+
+Agent Assignment
+
+The CEO assigns tasks based on:
+	•	Role and expertise
+	•	Reporting relationships
+	•	Current workload
+	•	Cost profile
+	•	Permissions and available tools
+
+Misaligned delegation is treated as an orchestration failure.
+
+Crew-style Delegation
+
+Tasks may require collaboration:
+	•	Agents may request permission to involve other agents
+	•	The CEO evaluates and approves sub-delegation
+	•	Humans may approve, deny, or limit which agents participate
+	•	Delegation scope is explicit before execution begins
+
+Once approved, the task proceeds with a defined execution plan.
+
+Task Monitoring
+
+The CEO:
+	•	Checks in on active tasks during heartbeats
+	•	Requests interim updates when needed
+	•	Estimates completion percentage
+	•	Flags risks, delays, or budget pressure
+	•	Validates outputs before marking tasks complete
+
+⸻
+
+8. Permissions and Capability Governance
+
+Every action an agent can take is governed.
+
+Permission Modes
+
+Each capability is assigned a mode per agent:
+	•	Always ask
+	•	Ask once per task
+	•	Ask once per session
+	•	Allow with budget
+	•	Allow all (still budget-constrained)
+
+Examples:
+	•	Sending email may always require approval
+	•	Image creation may be approved once per task
+	•	Research may be allowed within budget
+
+Approval Flow
+	•	The CEO auto-approves actions within policy
+	•	Humans approve sensitive, high-risk, or financial actions
+	•	Approvals are explicit, time-bound, and auditable
+
+⸻
+
+9. Budget and Financial Controls
+
+Budget Structure
+	•	Daily and monthly budgets at the system and agent level
+	•	Configurable overage allowances (for example, 10% daily, 5% monthly)
+	•	Budgets prevent silent failure while maintaining discipline
+
+Budget Behavior
+	•	Normal execution under budget
+	•	Warnings within overage thresholds
+	•	Paused execution beyond overage unless approved
+	•	Temporary overrides require approval and are time-bound
+
+Financial Authority
+	•	Humans can edit budgets directly
+	•	CEO may request overrides
+	•	All changes are logged and reported
+
+⸻
+
+10. Vault and Secrets Management
+	•	Centralized storage for API keys and credentials
+	•	Secrets are never exposed directly to agents
+	•	Access is scoped, revocable, and auditable
+	•	Model access (e.g., Claude, OpenAI, image models) is granted explicitly
+	•	Usage is tracked for cost and compliance
+
+⸻
+
+11. Human Tasks and Approvals
+
+A dedicated Human Tasks interface captures all points of human intervention.
+
+Triggers include:
+	•	New agent creation
+	•	Secret or model access requests
+	•	Budget overrides
+	•	High-risk actions
+	•	Delegation involving multiple agents
+
+Each task includes:
+	•	Who is requesting
+	•	What is requested
+	•	Why it is needed
+	•	Cost and risk impact
+	•	Approve, reject, or modify options
+
+⸻
+
+12. Channels and Delivery
+	•	Configurable channels for notifications and reports
+	•	Initial focus on Telegram
+	•	Email and SMS as future enhancements
+	•	Channels can be enabled, disabled, and health-checked
+	•	The CEO selects delivery paths based on availability and preference
+
+⸻
+
+13. Gallery and Artifacts
+
+Jarvis Inc. maintains a central gallery for all outputs:
+	•	Documents
+	•	Reports
+	•	Images
+	•	Logs and summaries
+
+Artifacts are searchable and filterable by:
+	•	Date
+	•	Agent
+	•	Task
+	•	Project
+	•	Type
+
+The gallery serves as the institutional memory of the company.
+
+⸻
+
+14. System Stats and Health
+
+A dedicated System Stats view provides always-on visibility.
+
+Includes:
+	•	Gateway and scheduler health
+	•	CEO heartbeat status
+	•	Agent activity and responsiveness
+	•	Budget burn and token usage
+	•	Channel health
+	•	Overall system state (running, degraded, paused, budget constrained)
+
+System stats directly influence CEO behavior and decision-making.
+
+⸻
+
+15. Audit and Accountability
+
+Jarvis Inc. maintains an immutable audit trail.
+
+The audit records:
+	•	Every action taken
+	•	Who initiated it
+	•	Under whose authority
+	•	What permissions were used
+	•	Cost and outcome
+
+The audit is read-only and non-erasable, supporting trust, debugging, and compliance.
+
+⸻
+
+16. System States and Safety Controls
+
+The system operates in explicit states:
+	•	Bootstrapping
+	•	Running
+	•	Waiting for approval
+	•	Budget constrained
+	•	Degraded
+	•	Paused
+
+A human-accessible kill switch allows:
+	•	Pausing all agents
+	•	Pausing individual agents
+	•	Disabling execution
+	•	Locking budgets
+
+⸻
+
+17. Initial Scope and Evolution
+
+v1 Focus
+	•	Local-first execution
+	•	AI CEO orchestration
+	•	Agent management and delegation
+	•	Permissions, budgets, and audit
+	•	Telegram reporting
+	•	Daily executive summaries
+	•	System stats and health
+
+Future Enhancements
+	•	Mobile and PWA clients
+	•	Secure remote access via tunneling
+	•	Multi-user and team support
+	•	Hosted or hybrid deployment
+	•	Expanded agent skills and integrations
+
+⸻
+
+18. Outcome
+
+Jarvis Inc. transforms AI from a reactive tool into a governed operating entity. It allows individuals and teams to run AI systems the same way they run real companies: with structure, accountability, financial discipline, and strategic oversight.
+
+This is not AI that helps you work.
+It is AI that works for you, under control.
+
+⸻
+
+If you want next, we can:
+	•	Cut this into a v1/v2 roadmap
+	•	Pressure-test it against real use cases
+	•	Write the opening “Welcome, Founder” experience
+	•	Or freeze this as the canonical PRD and move to build mode
+
+
+Perfect. This fits cleanly as explicitly out of scope for v1, but intentional platform direction. Below is a PRD addendum section you can drop in without disturbing the core document.
+
+⸻
+
+19. Founder-Level Multi-Company Management (Future Scope)
+
+Status
+
+Out of scope for v1
+Planned for future platform evolution
+
+⸻
+
+Concept Overview
+
+In future versions, Jarvis Inc. supports a Founder-level control plane that allows a human owner to operate multiple AI companies in parallel. Each company functions as an independent instance with its own CEO, agents, budgets, policies, and audit history.
+
+The Founder does not manage day-to-day execution. Instead, the Founder creates, monitors, and governs companies at a portfolio level.
+
+⸻
+
+Founder Role (Future)
+
+The Founder is a meta-role above individual companies.
+
+Founder responsibilities include:
+	•	Creating new companies
+	•	Defining high-level intent and constraints
+	•	Monitoring health and performance across companies
+	•	Allocating capital and attention
+	•	Shutting down or pausing companies
+
+Each company still operates autonomously under its own AI CEO.
+
+⸻
+
+Founder Menu (Future)
+
+A dedicated Founder section appears in the left navigation when multi-company mode is enabled.
+
+Founder Dashboard
+	•	List of all companies
+	•	Current system state per company
+	•	CEO status and responsiveness
+	•	High-level spend and burn rate
+	•	Alerts for degraded or constrained companies
+
+This dashboard answers one question:
+
+“Which of my companies need attention right now?”
+
+⸻
+
+Creating a New Company (Building a CEO)
+
+From the Founder menu, the human owner can create a new company by building a CEO.
+
+The creation flow includes:
+	•	Company name
+	•	Mission and operating philosophy
+	•	Risk tolerance and budget envelope
+	•	Preferred models and cost posture
+	•	Initial constraints and approval thresholds
+
+Once created:
+	•	A new AI CEO is instantiated
+	•	The company starts in a bootstrapping state
+	•	No agents exist until the CEO proposes hires
+	•	All execution is paused until Founder approval
+
+This preserves intentionality and prevents accidental sprawl.
+
+⸻
+
+Company Isolation
+
+Each company is fully isolated:
+	•	Separate agents
+	•	Separate budgets
+	•	Separate vault and secrets
+	•	Separate audit logs
+	•	Separate artifacts and history
+
+Cross-company access is not permitted unless explicitly designed and approved in future versions.
+
+⸻
+
+Founder-Level Metrics (Future)
+
+The Founder has access to roll-up metrics that do not exist inside individual companies:
+
+Health Metrics
+	•	Company operational state
+	•	CEO heartbeat health
+	•	Execution stability
+	•	Approval backlogs
+
+Financial Metrics
+	•	Budget allocation per company
+	•	Burn rate comparisons
+	•	Overages and exceptions
+	•	Cost efficiency signals
+
+Governance Metrics
+	•	Number of approvals required
+	•	Frequency of human intervention
+	•	Audit anomaly signals
+
+These metrics support portfolio-level decisions, not micromanagement.
+
+⸻
+
+Founder Authority and Safety Controls
+
+At the Founder level:
+	•	Companies can be paused or shut down
+	•	Budgets can be frozen
+	•	CEOs can be replaced or retired
+	•	System-wide kill switches are available
+
+These controls are intentionally heavy and rarely used.
+
+⸻
+
+Design Intent
+
+This future capability positions Jarvis Inc. not just as an AI company runner, but as a company factory.
+
+The Founder does not run tasks.
+The Founder builds CEOs.
+CEOs run companies.
+
+⸻
+
+If you want, next we can:
+	•	Fold this cleanly into the main PRD as a “Future Scope” chapter
+	•	Write a Founder onboarding narrative
+	•	Pressure-test this against real portfolio use cases
+	•	Or explicitly lock v1 boundaries so this never leaks in early
+
+Just say which.

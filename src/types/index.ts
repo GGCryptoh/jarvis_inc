@@ -1,4 +1,4 @@
-export type AgentStatus = 'working' | 'meeting' | 'idle' | 'walking' | 'break' | 'arriving';
+export type AgentStatus = 'working' | 'meeting' | 'idle' | 'walking' | 'break' | 'arriving' | 'celebrating';
 
 export type SceneMode = 'working' | 'meeting' | 'welcome' | 'all_hands' | 'break';
 
@@ -21,6 +21,15 @@ export interface Agent {
   costSoFar: number;
   model: string;       // e.g. "GPT-4o", "Claude 3.5"
   isNew?: boolean;
+}
+
+export interface CEO {
+  id: string;
+  name: string;
+  model: string;
+  philosophy: string;
+  riskTolerance: 'conservative' | 'moderate' | 'aggressive';
+  status: 'nominal' | 'thinking' | 'error';
 }
 
 export interface DashboardStat {

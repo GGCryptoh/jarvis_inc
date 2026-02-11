@@ -12,6 +12,8 @@ function getAnimationClass(status: Agent['status']): string {
     case 'walking':
     case 'arriving':
       return 'agent-walking';
+    case 'celebrating':
+      return 'agent-celebrating';
     case 'meeting':
       return 'agent-meeting';
     case 'break':
@@ -34,6 +36,8 @@ function getStatusColor(status: Agent['status']): string {
       return '#8be9fd';
     case 'arriving':
       return '#f1fa8c';
+    case 'celebrating':
+      return '#ff79c6';
     case 'idle':
     default:
       return '#64748b';
@@ -55,7 +59,7 @@ export default function AgentSprite({ agent, onClick }: AgentSpriteProps) {
       onClick={onClick}
     >
       {/* Hover tooltip */}
-      <div className="absolute -top-14 left-1/2 -translate-x-1/2 hidden group-hover:block z-30">
+      <div className="absolute -top-16 left-1/2 -translate-x-1/2 hidden group-hover:block z-30">
         <div className="bg-jarvis-surface border border-jarvis-border rounded px-2 py-1 text-[10px] whitespace-nowrap shadow-lg">
           <div className="text-jarvis-text font-medium">{agent.name}</div>
           <div className="text-jarvis-muted truncate max-w-[140px]">{agent.currentTask}</div>
@@ -71,9 +75,9 @@ export default function AgentSprite({ agent, onClick }: AgentSpriteProps) {
       <div className={`relative ${animationClass}`}>
         {/* Glow on hover */}
         <div
-          className="absolute inset-[-3px] rounded-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+          className="absolute inset-[-4px] rounded-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200"
           style={{
-            boxShadow: `0 0 8px ${agent.color}66, 0 0 16px ${agent.color}33`,
+            boxShadow: `0 0 10px ${agent.color}66, 0 0 20px ${agent.color}33`,
           }}
         />
 
@@ -85,32 +89,32 @@ export default function AgentSprite({ agent, onClick }: AgentSpriteProps) {
 
         {/* Hair / hat */}
         <div
-          className="mx-auto w-[10px] h-[4px] rounded-t-sm"
+          className="mx-auto w-[15px] h-[6px] rounded-t-sm"
           style={{ backgroundColor: agent.color }}
         />
 
         {/* Head */}
         <div
-          className="mx-auto w-[10px] h-[8px] rounded-sm"
+          className="mx-auto w-[15px] h-[12px] rounded-sm"
           style={{ backgroundColor: agent.skinTone }}
         />
 
         {/* Body */}
         <div
-          className="mx-auto w-[12px] h-[10px] rounded-sm"
+          className="mx-auto w-[18px] h-[15px] rounded-sm"
           style={{ backgroundColor: agent.color }}
         />
 
         {/* Legs */}
-        <div className="flex justify-center gap-[2px]">
-          <div className={`w-[4px] h-[6px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob' : ''}`} />
-          <div className={`w-[4px] h-[6px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob [animation-delay:0.2s]' : ''}`} />
+        <div className="flex justify-center gap-[3px]">
+          <div className={`w-[6px] h-[9px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob' : ''}`} />
+          <div className={`w-[6px] h-[9px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob [animation-delay:0.2s]' : ''}`} />
         </div>
       </div>
 
       {/* Working screen glow */}
       {agent.status === 'working' && (
-        <div className="absolute top-[4px] left-1/2 -translate-x-1/2 w-[8px] h-[6px] rounded-sm bg-pixel-monitor opacity-60 animate-screen-flicker" />
+        <div className="absolute top-[6px] left-1/2 -translate-x-1/2 w-[12px] h-[9px] rounded-sm bg-pixel-monitor opacity-60 animate-screen-flicker" />
       )}
 
       {/* Name label */}

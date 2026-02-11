@@ -1,50 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Agent, AgentStatus, SceneMode } from '../../types';
+import type { Agent, AgentStatus, SceneMode, Position } from '../../types';
 import {
   initialAgents,
-  DESK_POSITIONS,
-  MEETING_POSITIONS,
-  WATER_COOLER_POSITIONS,
-  ALL_HANDS_POSITIONS,
   ENTRANCE_POSITION,
 } from '../../data/dummyData';
-import { loadAgents, saveAgent, seedAgentsIfEmpty, deleteAgent as dbDeleteAgent } from '../../lib/database';
-import type { AgentRow } from '../../lib/database';
+import {
+  generateDeskPositions,
+  generateMeetingPositions,
+  generateBreakPositions,
+  generateAllHandsPositions,
+  getDeskCountWithSpare,
+  CEO_OFFICE_POSITION,
+} from '../../lib/positionGenerator';
+import { loadCEO } from '../../lib/database';
 import SurveillanceControls from './SurveillanceControls';
 import CRTFrame from './CRTFrame';
 import PixelOffice from './PixelOffice';
 import HireAgentModal from './HireAgentModal';
 import type { AgentConfig } from './HireAgentModal';
 import { Pencil, Trash2 } from 'lucide-react';
-
-// Default tasks assigned to fresh agents
-const DEFAULT_TASKS = [
-  'Awaiting assignment...',
-  'Running diagnostics...',
-  'Scanning environment...',
-  'Calibrating sensors...',
-  'Indexing knowledge base...',
-  'Optimizing parameters...',
-];
-
-/** Convert a DB row + index into a full runtime Agent. */
-function rowToAgent(row: AgentRow, index: number): Agent {
-  const pos = DESK_POSITIONS[index % DESK_POSITIONS.length];
-  return {
-    id: row.id,
-    name: row.name,
-    role: row.role,
-    color: row.color,
-    skinTone: row.skin_tone,
-    status: 'working',
-    position: { ...pos },
-    targetPosition: { ...pos },
-    currentTask: DEFAULT_TASKS[index % DEFAULT_TASKS.length],
-    confidence: 70 + Math.floor(Math.random() * 25),
-    costSoFar: parseFloat((Math.random() * 0.5).toFixed(2)),
-    model: row.model,
-  };
-}
 
 /** Map a SceneMode to the AgentStatus agents should assume once they arrive. */
 function modeToStatus(mode: SceneMode): AgentStatus {
@@ -69,34 +43,45 @@ export default function SurveillanceModule() {
   const [hireModalOpen, setHireModalOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
-  // ---- Load agents from DB on mount ----
+  // Dynamic desk state
+  const [deskPositions, setDeskPositions] = useState<Position[]>([]);
+  const [newDeskIndex, setNewDeskIndex] = useState<number | null>(null);
+
+  // CEO state
+  const [ceoAgent, setCeoAgent] = useState<Agent | null>(null);
+
+  // ---- Load sample agents from static data (no DB writes) ----
   useEffect(() => {
-    // Seed defaults if DB is empty
-    const seeds: AgentRow[] = initialAgents.map((a) => ({
-      id: a.id,
-      name: a.name,
-      role: a.role,
-      color: a.color,
-      skin_tone: a.skinTone,
-      model: a.model,
+    const count = initialAgents.length;
+    const desks = generateDeskPositions(getDeskCountWithSpare(count));
+    setDeskPositions(desks);
+
+    const loaded: Agent[] = initialAgents.map((a, i) => ({
+      ...a,
+      position: { ...desks[i] },
+      targetPosition: { ...desks[i] },
     }));
-    seedAgentsIfEmpty(seeds);
-
-    // Load from DB
-    const rows = loadAgents();
-    const loaded = rows.map((row, i) => rowToAgent(row, i));
-
-    // Restore dummy task/confidence/cost for the original 6
-    loaded.forEach((agent) => {
-      const original = initialAgents.find((a) => a.id === agent.id);
-      if (original) {
-        agent.currentTask = original.currentTask;
-        agent.confidence = original.confidence;
-        agent.costSoFar = original.costSoFar;
-      }
-    });
 
     setAgents(loaded);
+
+    // Load CEO from DB (read-only)
+    const ceoRow = loadCEO();
+    if (ceoRow) {
+      setCeoAgent({
+        id: 'ceo',
+        name: ceoRow.name,
+        role: 'Chief Executive Officer',
+        color: '#f1fa8c',
+        skinTone: '#ffcc99',
+        status: 'working',
+        position: { ...CEO_OFFICE_POSITION },
+        targetPosition: { ...CEO_OFFICE_POSITION },
+        currentTask: `Philosophy: ${ceoRow.philosophy}`,
+        confidence: 99,
+        costSoFar: 0,
+        model: ceoRow.model,
+      });
+    }
   }, []);
 
   // ---- Scene transitions ----
@@ -104,14 +89,16 @@ export default function SurveillanceModule() {
     setSceneMode(mode);
 
     setAgents(prev => {
-      let updated: Agent[];
+      const realAgents = prev.filter(a => !a.isNew);
+      const count = realAgents.length;
 
       if (mode === 'welcome') {
-        updated = prev.map((agent, i) => ({
+        const positions = generateAllHandsPositions(count);
+        const updated = realAgents.map((agent, i) => ({
           ...agent,
-          targetPosition: ALL_HANDS_POSITIONS[i % ALL_HANDS_POSITIONS.length],
+          targetPosition: positions[i],
         }));
-        // placeholder welcome — the real one is triggered by hiring
+        // placeholder welcome
         const newId = `agent-${Date.now()}`;
         const newAgent: Agent = {
           id: newId,
@@ -129,41 +116,46 @@ export default function SurveillanceModule() {
           isNew: true,
         };
         updated.push(newAgent);
-      } else {
-        const targetPositions =
-          mode === 'working'
-            ? DESK_POSITIONS
-            : mode === 'meeting'
-              ? MEETING_POSITIONS
-              : mode === 'all_hands'
-                ? ALL_HANDS_POSITIONS
-                : WATER_COOLER_POSITIONS;
-
-        updated = prev
-          .filter(a => !a.isNew)
-          .map((agent, i) => ({
-            ...agent,
-            targetPosition: targetPositions[i % targetPositions.length],
-          }));
+        return updated;
       }
 
-      return updated;
+      let targetPositions: Position[];
+      if (mode === 'working') {
+        targetPositions = generateDeskPositions(getDeskCountWithSpare(count));
+        setDeskPositions(targetPositions);
+      } else if (mode === 'meeting') {
+        targetPositions = generateMeetingPositions(count);
+      } else if (mode === 'all_hands') {
+        targetPositions = generateAllHandsPositions(count);
+      } else {
+        // break
+        targetPositions = generateBreakPositions(count);
+      }
+
+      return realAgents.map((agent, i) => ({
+        ...agent,
+        targetPosition: targetPositions[i],
+      }));
+    });
+
+    // Move CEO to meeting/allhands or back to office
+    setCeoAgent(prev => {
+      if (!prev) return prev;
+      if (mode === 'meeting') {
+        const pos = generateMeetingPositions(1)[0];
+        // Put CEO at a distinct spot near the table
+        return { ...prev, targetPosition: { x: pos.x + 6, y: pos.y - 4 } };
+      }
+      if (mode === 'all_hands') {
+        return { ...prev, targetPosition: { x: 38, y: 38 } };
+      }
+      return { ...prev, targetPosition: { ...CEO_OFFICE_POSITION } };
     });
   }, []);
 
-  // ---- Hire a new agent ----
+  // ---- Hire a new agent (state-only, no DB) ----
   const handleHire = useCallback((config: AgentConfig) => {
     const id = `agent-${Date.now()}`;
-
-    // Save to DB
-    saveAgent({
-      id,
-      name: config.name,
-      role: config.role,
-      color: config.color,
-      skin_tone: config.skinTone,
-      model: config.model,
-    });
 
     // Create runtime agent at entrance
     const newAgent: Agent = {
@@ -184,46 +176,46 @@ export default function SurveillanceModule() {
     // Move existing agents to welcome positions, add new one
     setSceneMode('welcome');
     setAgents(prev => {
-      const updated = prev
-        .filter(a => !a.isNew)
-        .map((agent, i) => ({
-          ...agent,
-          targetPosition: ALL_HANDS_POSITIONS[i % ALL_HANDS_POSITIONS.length],
-        }));
+      const realAgents = prev.filter(a => !a.isNew);
+      const positions = generateAllHandsPositions(realAgents.length);
+      const updated = realAgents.map((agent, i) => ({
+        ...agent,
+        targetPosition: positions[i],
+      }));
       updated.push(newAgent);
       return updated;
     });
 
     setHireModalOpen(false);
 
-    // After welcome animation, transition new agent to their desk
+    // After welcome animation, transition all to desks with new desk count
     setTimeout(() => {
       setAgents(prev => {
         const allReal = prev.map(a => ({ ...a, isNew: undefined }));
+        const desks = generateDeskPositions(getDeskCountWithSpare(allReal.length));
+        const oldDeskCount = deskPositions.length;
+
+        setDeskPositions(desks);
+
+        // If new desks were added, trigger sparkle on the first new one
+        if (desks.length > oldDeskCount) {
+          setNewDeskIndex(oldDeskCount); // index of the first new desk
+          setTimeout(() => setNewDeskIndex(null), 1000);
+        }
+
         return allReal.map((agent, i) => ({
           ...agent,
-          targetPosition: DESK_POSITIONS[i % DESK_POSITIONS.length],
+          targetPosition: desks[i],
         }));
       });
       setSceneMode('working');
     }, 4000);
-  }, []);
+  }, [deskPositions.length]);
 
-  // ---- Edit an existing agent ----
+  // ---- Edit an existing agent (state-only, no DB) ----
   const handleEdit = useCallback((config: AgentConfig) => {
     if (!editingAgent) return;
 
-    // Save to DB
-    saveAgent({
-      id: editingAgent.id,
-      name: config.name,
-      role: config.role,
-      color: config.color,
-      skin_tone: config.skinTone,
-      model: config.model,
-    });
-
-    // Update in state
     setAgents(prev =>
       prev.map(a =>
         a.id === editingAgent.id
@@ -232,7 +224,6 @@ export default function SurveillanceModule() {
       ),
     );
 
-    // Update selected agent too
     setSelectedAgent(prev =>
       prev && prev.id === editingAgent.id
         ? { ...prev, name: config.name, role: config.role, color: config.color, skinTone: config.skinTone, model: config.model }
@@ -242,15 +233,15 @@ export default function SurveillanceModule() {
     setEditingAgent(null);
   }, [editingAgent]);
 
-  // ---- Fire (delete) an agent ----
+  // ---- Fire (delete) an agent (state-only, no DB) ----
   const handleFire = useCallback((agentId: string) => {
-    dbDeleteAgent(agentId);
     setAgents(prev => {
       const remaining = prev.filter(a => a.id !== agentId);
-      // Re-assign desk positions
+      const desks = generateDeskPositions(getDeskCountWithSpare(remaining.length));
+      setDeskPositions(desks);
       return remaining.map((agent, i) => ({
         ...agent,
-        targetPosition: DESK_POSITIONS[i % DESK_POSITIONS.length],
+        targetPosition: desks[i],
       }));
     });
     setSelectedAgent(null);
@@ -260,31 +251,32 @@ export default function SurveillanceModule() {
   // ---- Position interpolation (lerp) loop ----
   useEffect(() => {
     const interval = setInterval(() => {
-      setAgents(prev =>
-        prev.map(agent => {
-          const dx = agent.targetPosition.x - agent.position.x;
-          const dy = agent.targetPosition.y - agent.position.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
+      const lerpEntity = (entity: Agent): Agent => {
+        const dx = entity.targetPosition.x - entity.position.x;
+        const dy = entity.targetPosition.y - entity.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
 
-          if (dist < 0.5) {
-            return {
-              ...agent,
-              position: { ...agent.targetPosition },
-              status: modeToStatus(sceneMode),
-            };
-          }
-
-          const speed = 0.08;
+        if (dist < 0.5) {
           return {
-            ...agent,
-            status: 'walking' as AgentStatus,
-            position: {
-              x: agent.position.x + dx * speed,
-              y: agent.position.y + dy * speed,
-            },
+            ...entity,
+            position: { ...entity.targetPosition },
+            status: modeToStatus(sceneMode),
           };
-        }),
-      );
+        }
+
+        const speed = 0.08;
+        return {
+          ...entity,
+          status: 'walking' as AgentStatus,
+          position: {
+            x: entity.position.x + dx * speed,
+            y: entity.position.y + dy * speed,
+          },
+        };
+      };
+
+      setAgents(prev => prev.map(lerpEntity));
+      setCeoAgent(prev => prev ? lerpEntity(prev) : prev);
     }, 50);
 
     return () => clearInterval(interval);
@@ -293,13 +285,15 @@ export default function SurveillanceModule() {
   // Keep selectedAgent in sync when agents update
   useEffect(() => {
     if (selectedAgent) {
-      const fresh = agents.find(a => a.id === selectedAgent.id);
-      if (fresh) {
-        setSelectedAgent(fresh);
+      if (selectedAgent.id === 'ceo' && ceoAgent) {
+        setSelectedAgent(ceoAgent);
+      } else {
+        const fresh = agents.find(a => a.id === selectedAgent.id);
+        if (fresh) setSelectedAgent(fresh);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents]);
+  }, [agents, ceoAgent]);
 
   return (
     <div className="flex h-full">
@@ -314,8 +308,8 @@ export default function SurveillanceModule() {
       {/* Center -- CRT feed */}
       <div className="flex-1 flex flex-col p-4 min-w-0">
         {/* Live indicator */}
-        <div className="font-pixel text-pixel-green text-[9px] mb-2 flex items-center gap-2 tracking-wider">
-          <span className="animate-blink">&#9679;</span> SURVEILLANCE FEED &mdash; LIVE
+        <div className="font-pixel text-pixel-orange text-[9px] mb-2 flex items-center gap-2 tracking-wider">
+          <span className="animate-blink">&#9679;</span> SAMPLE SURVEILLANCE &mdash; DEMO MODE
         </div>
 
         <CRTFrame>
@@ -323,6 +317,10 @@ export default function SurveillanceModule() {
             agents={agents}
             onAgentClick={setSelectedAgent}
             sceneMode={sceneMode}
+            deskPositions={deskPositions}
+            newDeskIndex={newDeskIndex}
+            ceo={ceoAgent}
+            doorOpen={null}
           />
         </CRTFrame>
       </div>
@@ -334,6 +332,7 @@ export default function SurveillanceModule() {
           onClose={() => setSelectedAgent(null)}
           onEdit={(agent) => setEditingAgent(agent)}
           onFire={(agent) => handleFire(agent.id)}
+          isCEO={selectedAgent.id === 'ceo'}
         />
       )}
 
@@ -357,9 +356,10 @@ interface AgentDetailSidebarProps {
   onClose: () => void;
   onEdit: (agent: Agent) => void;
   onFire: (agent: Agent) => void;
+  isCEO?: boolean;
 }
 
-function AgentDetailSidebar({ agent, onClose, onEdit, onFire }: AgentDetailSidebarProps) {
+function AgentDetailSidebar({ agent, onClose, onEdit, onFire, isCEO }: AgentDetailSidebarProps) {
   const [confirmFire, setConfirmFire] = useState(false);
 
   const confidenceColor =
@@ -373,7 +373,7 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire }: AgentDetailSideb
     <div className="w-[280px] flex-shrink-0 border-l-2 border-pixel-crt-border bg-pixel-bg flex flex-col">
       {/* Title bar */}
       <div className="retro-window-title !text-[8px] !py-2 !px-3">
-        <span>AGENT DETAIL</span>
+        <span>{isCEO ? 'CEO DETAIL' : 'AGENT DETAIL'}</span>
       </div>
 
       {/* Body */}
@@ -392,7 +392,7 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire }: AgentDetailSideb
           </div>
           <div>
             <div className="font-pixel text-[10px] tracking-wider" style={{ color: agent.color }}>
-              {agent.name}
+              {isCEO ? `CEO ${agent.name}` : agent.name}
             </div>
             <div className="font-pixel text-[7px] text-gray-400 tracking-wider mt-1">
               {agent.role}
@@ -413,7 +413,7 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire }: AgentDetailSideb
 
         {/* Current task */}
         <div>
-          <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">CURRENT TASK</div>
+          <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">{isCEO ? 'PHILOSOPHY' : 'CURRENT TASK'}</div>
           <div className="retro-inset p-2 font-pixel text-[7px] text-pixel-green leading-relaxed tracking-wider">
             {agent.currentTask}
           </div>
@@ -471,37 +471,41 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire }: AgentDetailSideb
 
         {/* Action buttons */}
         <div className="flex flex-col gap-1">
-          <button
-            className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-cyan flex items-center justify-center gap-2"
-            onClick={() => onEdit(agent)}
-          >
-            <Pencil size={10} />
-            EDIT SPRITE
-          </button>
+          {!isCEO && (
+            <>
+              <button
+                className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-cyan flex items-center justify-center gap-2"
+                onClick={() => onEdit(agent)}
+              >
+                <Pencil size={10} />
+                EDIT SPRITE
+              </button>
 
-          {!confirmFire ? (
-            <button
-              className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-pink flex items-center justify-center gap-2"
-              onClick={() => setConfirmFire(true)}
-            >
-              <Trash2 size={10} />
-              FIRE AGENT
-            </button>
-          ) : (
-            <div className="flex gap-1">
-              <button
-                className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest !border-t-red-500/50 !border-l-red-500/50 hover:!text-red-400"
-                onClick={() => onFire(agent)}
-              >
-                CONFIRM
-              </button>
-              <button
-                className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest"
-                onClick={() => setConfirmFire(false)}
-              >
-                CANCEL
-              </button>
-            </div>
+              {!confirmFire ? (
+                <button
+                  className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-pink flex items-center justify-center gap-2"
+                  onClick={() => setConfirmFire(true)}
+                >
+                  <Trash2 size={10} />
+                  FIRE AGENT
+                </button>
+              ) : (
+                <div className="flex gap-1">
+                  <button
+                    className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest !border-t-red-500/50 !border-l-red-500/50 hover:!text-red-400"
+                    onClick={() => onFire(agent)}
+                  >
+                    CONFIRM
+                  </button>
+                  <button
+                    className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest"
+                    onClick={() => setConfirmFire(false)}
+                  >
+                    CANCEL
+                  </button>
+                </div>
+              )}
+            </>
           )}
 
           <button

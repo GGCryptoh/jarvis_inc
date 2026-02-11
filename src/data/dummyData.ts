@@ -1,27 +1,10 @@
 import { Agent, DashboardStat, Mission, AuditEntry, VaultEntry, FinancialEntry } from '../types';
-
-// Desk positions (percentage based for responsive layout)
-export const DESK_POSITIONS = [
-  { x: 12, y: 18 }, { x: 30, y: 18 }, { x: 48, y: 18 },
-  { x: 12, y: 48 }, { x: 30, y: 48 }, { x: 48, y: 48 },
-];
-
-export const MEETING_POSITIONS = [
-  { x: 30, y: 62 }, { x: 38, y: 57 }, { x: 42, y: 65 },
-  { x: 38, y: 73 }, { x: 30, y: 73 }, { x: 26, y: 65 },
-];
-
-export const WATER_COOLER_POSITIONS = [
-  { x: 75, y: 18 }, { x: 80, y: 24 }, { x: 72, y: 28 },
-  { x: 78, y: 32 }, { x: 74, y: 36 }, { x: 82, y: 20 },
-];
-
-export const ALL_HANDS_POSITIONS = [
-  { x: 28, y: 38 }, { x: 38, y: 32 }, { x: 48, y: 38 },
-  { x: 28, y: 52 }, { x: 38, y: 56 }, { x: 48, y: 52 },
-];
+import { generateDeskPositions } from '../lib/positionGenerator';
 
 export const ENTRANCE_POSITION = { x: 50, y: 92 };
+
+// Generate initial desk positions for the default 6 agents
+const INITIAL_DESKS = generateDeskPositions(7); // 6 agents + 1 spare
 
 export const initialAgents: Agent[] = [
   {
@@ -31,8 +14,8 @@ export const initialAgents: Agent[] = [
     color: '#ff6b9d',
     skinTone: '#ffcc99',
     status: 'working',
-    position: DESK_POSITIONS[0],
-    targetPosition: DESK_POSITIONS[0],
+    position: INITIAL_DESKS[0],
+    targetPosition: INITIAL_DESKS[0],
     currentTask: 'Scraping competitor_analysis.pdf',
     confidence: 88,
     costSoFar: 0.14,
@@ -45,8 +28,8 @@ export const initialAgents: Agent[] = [
     color: '#50fa7b',
     skinTone: '#e8b88a',
     status: 'working',
-    position: DESK_POSITIONS[1],
-    targetPosition: DESK_POSITIONS[1],
+    position: INITIAL_DESKS[1],
+    targetPosition: INITIAL_DESKS[1],
     currentTask: 'Building auth microservice',
     confidence: 92,
     costSoFar: 0.38,
@@ -59,8 +42,8 @@ export const initialAgents: Agent[] = [
     color: '#bd93f9',
     skinTone: '#ffcc99',
     status: 'working',
-    position: DESK_POSITIONS[2],
-    targetPosition: DESK_POSITIONS[2],
+    position: INITIAL_DESKS[2],
+    targetPosition: INITIAL_DESKS[2],
     currentTask: 'Scanning dependencies for CVEs',
     confidence: 95,
     costSoFar: 0.07,
@@ -73,8 +56,8 @@ export const initialAgents: Agent[] = [
     color: '#ffb86c',
     skinTone: '#c8956c',
     status: 'working',
-    position: DESK_POSITIONS[3],
-    targetPosition: DESK_POSITIONS[3],
+    position: INITIAL_DESKS[3],
+    targetPosition: INITIAL_DESKS[3],
     currentTask: 'Processing Q4 revenue data',
     confidence: 76,
     costSoFar: 0.22,
@@ -87,8 +70,8 @@ export const initialAgents: Agent[] = [
     color: '#8be9fd',
     skinTone: '#ffcc99',
     status: 'working',
-    position: DESK_POSITIONS[4],
-    targetPosition: DESK_POSITIONS[4],
+    position: INITIAL_DESKS[4],
+    targetPosition: INITIAL_DESKS[4],
     currentTask: 'Drafting blog post: AI Trends 2026',
     confidence: 84,
     costSoFar: 0.11,
@@ -101,8 +84,8 @@ export const initialAgents: Agent[] = [
     color: '#f1fa8c',
     skinTone: '#e8b88a',
     status: 'working',
-    position: DESK_POSITIONS[5],
-    targetPosition: DESK_POSITIONS[5],
+    position: INITIAL_DESKS[5],
+    targetPosition: INITIAL_DESKS[5],
     currentTask: 'Deploying staging environment',
     confidence: 91,
     costSoFar: 0.05,

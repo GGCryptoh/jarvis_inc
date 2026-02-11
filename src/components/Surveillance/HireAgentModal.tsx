@@ -53,20 +53,25 @@ const ROLE_PRESETS = [
 ];
 
 const MODEL_OPTIONS = [
-  'Claude 3.5',
-  'Claude 4',
-  'GPT-4o',
-  'GPT-4o mini',
-  'Gemini Pro',
-  'Llama 3',
-  'Mistral Large',
+  'Claude Opus 4.6',
+  'Claude Opus 4.5',
+  'Claude Sonnet 4.5',
+  'Claude Haiku 4.5',
+  'GPT-5.2',
+  'o3-pro',
+  'o4-mini',
+  'Gemini 3 Pro',
+  'Gemini 2.5 Flash',
+  'DeepSeek R1',
+  'Llama 3.3',
+  'Grok 4',
 ];
 
 export default function HireAgentModal({ open, onClose, onSubmit, editAgent }: HireAgentModalProps) {
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [customRole, setCustomRole] = useState('');
-  const [model, setModel] = useState('Claude 3.5');
+  const [model, setModel] = useState('Claude Opus 4.6');
   const [color, setColor] = useState('#ff6b9d');
   const [skinTone, setSkinTone] = useState('#ffcc99');
   const [showCustomRole, setShowCustomRole] = useState(false);

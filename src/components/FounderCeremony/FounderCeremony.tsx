@@ -27,17 +27,17 @@ const BOOT_LINES = [
   { text: '> No founder detected.', delay: 4800 },
 ];
 
-const SCAN_LINES = [
-  { text: '╔══════════════════════════════════════╗', delay: 0 },
-  { text: '║  FOUNDER REGISTRATION REQUIRED       ║', delay: 200 },
-  { text: '║  Please identify yourself to proceed ║', delay: 400 },
-  { text: '╚══════════════════════════════════════╝', delay: 600 },
+const SCAN_BLOCK = [
+  '╔══════════════════════════════════════╗',
+  '║  FOUNDER REGISTRATION REQUIRED       ║',
+  '║  Please identify yourself to proceed ║',
+  '╚══════════════════════════════════════╝',
 ];
 
 export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
   const [phase, setPhase] = useState<Phase>('boot');
   const [visibleLines, setVisibleLines] = useState<string[]>([]);
-  const [scanLines, setScanLines] = useState<string[]>([]);
+  const [showScanBlock, setShowScanBlock] = useState(false);
   const [founderName, setFounderName] = useState('');
   const [orgName, setOrgName] = useState('');
   const [activationProgress, setActivationProgress] = useState(0);
@@ -55,7 +55,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [visibleLines, scanLines]);
+  }, [visibleLines, showScanBlock]);
 
   // Phase: boot — reveal lines one by one
   useEffect(() => {
@@ -73,25 +73,18 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
     return () => timers.forEach(clearTimeout);
   }, [phase]);
 
-  // Phase: scan — show registration box
+  // Phase: scan — show registration box as a single block
   useEffect(() => {
     if (phase !== 'scan') return;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    SCAN_LINES.forEach(({ text, delay }) => {
-      timers.push(
-        setTimeout(() => {
-          setScanLines((prev) => [...prev, text]);
-        }, delay),
-      );
-    });
-    timers.push(setTimeout(() => setPhase('welcome'), 1800));
-    return () => timers.forEach(clearTimeout);
+    const t1 = setTimeout(() => setShowScanBlock(true), 200);
+    const t2 = setTimeout(() => setPhase('welcome'), 3800);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [phase]);
 
-  // Phase: welcome → form after delay
+  // Phase: welcome → form after delay (extra time to read the text)
   useEffect(() => {
     if (phase !== 'welcome') return;
-    const t = setTimeout(() => setPhase('form'), 2000);
+    const t = setTimeout(() => setPhase('form'), 7500);
     return () => clearTimeout(t);
   }, [phase]);
 
@@ -158,7 +151,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
         {(phase === 'boot' || phase === 'scan') && (
           <div
             ref={terminalRef}
-            className="font-mono text-sm leading-relaxed text-pixel-green max-h-[70vh] overflow-y-auto"
+            className="font-mono text-lg leading-relaxed text-pixel-green max-h-[70vh] overflow-y-auto"
             style={{ textShadow: '0 0 6px rgba(0,255,136,0.4)' }}
           >
             {visibleLines.map((line, i) => (
@@ -166,14 +159,11 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                 {line}
               </div>
             ))}
-            {phase === 'scan' && (
-              <div className="mt-4">
-                {scanLines.map((line, i) => (
-                  <div key={i} className="text-pixel-yellow">
-                    {line}
-                  </div>
-                ))}
-              </div>
+            {phase === 'scan' && showScanBlock && (
+              <pre
+                className="mt-4 text-pixel-yellow animate-[fadeIn_0.4s_ease-out] leading-snug"
+                style={{ fontFamily: '"Courier New", Courier, monospace', fontSize: 'inherit' }}
+              >{SCAN_BLOCK.join('\n')}</pre>
             )}
             <span className={`inline-block w-2 h-4 bg-pixel-green ${showCursor ? 'opacity-100' : 'opacity-0'}`} />
           </div>
@@ -183,12 +173,12 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
         {phase === 'welcome' && (
           <div className="text-center animate-[fadeIn_1s_ease-out]">
             <h1
-              className="font-pixel text-2xl text-pixel-green tracking-wider mb-4"
+              className="font-pixel text-4xl text-pixel-green tracking-wider mb-6"
               style={{ textShadow: '0 0 20px rgba(0,255,136,0.3), 0 0 40px rgba(0,255,136,0.1)' }}
             >
               WELCOME, FOUNDER.
             </h1>
-            <p className="font-pixel text-[9px] text-pixel-green/60 tracking-wider leading-relaxed">
+            <p className="font-pixel text-sm text-pixel-green/60 tracking-wider leading-relaxed">
               You are about to activate your autonomous AI workforce.
               <br />
               This system requires a human commander.
@@ -202,7 +192,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
         {phase === 'form' && (
           <div className="animate-[fadeIn_0.6s_ease-out]">
             <h1
-              className="font-pixel text-xl text-pixel-green tracking-wider mb-8 text-center"
+              className="font-pixel text-3xl text-pixel-green tracking-wider mb-8 text-center"
               style={{ textShadow: '0 0 20px rgba(0,255,136,0.3)' }}
             >
               FOUNDER REGISTRATION
@@ -211,11 +201,11 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
             <div className="space-y-6 max-w-md mx-auto">
               {/* Founder name */}
               <div>
-                <label className="block font-pixel text-[8px] text-pixel-green/70 tracking-widest mb-2">
+                <label className="block font-pixel text-xs text-pixel-green/70 tracking-widest mb-2">
                   YOUR CALLSIGN
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-pixel text-[10px] text-pixel-green/40">{'>'}</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-pixel text-sm text-pixel-green/40">{'>'}</span>
                   <input
                     type="text"
                     value={founderName}
@@ -223,7 +213,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                     placeholder="Enter your name"
                     maxLength={30}
                     autoFocus
-                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-[11px] tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
+                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
                     style={{ textShadow: '0 0 4px rgba(0,255,136,0.3)' }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -237,11 +227,11 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
 
               {/* Organization name */}
               <div>
-                <label className="block font-pixel text-[8px] text-pixel-green/70 tracking-widest mb-2">
+                <label className="block font-pixel text-xs text-pixel-green/70 tracking-widest mb-2">
                   ORGANIZATION CODENAME
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-pixel text-[10px] text-pixel-green/40">{'>'}</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-pixel text-sm text-pixel-green/40">{'>'}</span>
                   <input
                     id="org-input"
                     type="text"
@@ -249,7 +239,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                     onChange={(e) => setOrgName(e.target.value)}
                     placeholder="Enter org name"
                     maxLength={40}
-                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-[11px] tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
+                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
                     style={{ textShadow: '0 0 4px rgba(0,255,136,0.3)' }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleActivate();
@@ -262,7 +252,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
               <button
                 onClick={handleActivate}
                 disabled={!founderName.trim() || !orgName.trim()}
-                className={`w-full font-pixel text-[10px] tracking-[0.3em] py-4 rounded-sm border-2 transition-all duration-300 ${
+                className={`w-full font-pixel text-sm tracking-[0.3em] py-4 rounded-sm border-2 transition-all duration-300 ${
                   founderName.trim() && orgName.trim()
                     ? 'bg-pixel-green/10 border-pixel-green text-pixel-green hover:bg-pixel-green/20 hover:shadow-[0_0_30px_rgba(0,255,136,0.2)] cursor-pointer'
                     : 'bg-transparent border-pixel-green/20 text-pixel-green/30 cursor-not-allowed'
@@ -271,7 +261,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                 ▶ ACTIVATE JARVIS
               </button>
 
-              <p className="font-pixel text-[7px] text-pixel-green/30 text-center tracking-wider leading-relaxed">
+              <p className="font-pixel text-[10px] text-pixel-green/30 text-center tracking-wider leading-relaxed">
                 By activating, you accept full command responsibility
                 <br />
                 for all autonomous agent operations.
@@ -284,7 +274,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
         {phase === 'activating' && (
           <div className="text-center animate-[fadeIn_0.3s_ease-out]">
             <h2
-              className="font-pixel text-sm text-pixel-green tracking-[0.3em] mb-6"
+              className="font-pixel text-xl text-pixel-green tracking-[0.3em] mb-6"
               style={{ textShadow: '0 0 10px rgba(0,255,136,0.4)' }}
             >
               ACTIVATING SYSTEMS
@@ -301,7 +291,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                   }}
                 />
               </div>
-              <div className="font-pixel text-[9px] text-pixel-green/60 tracking-wider mt-2">
+              <div className="font-pixel text-sm text-pixel-green/60 tracking-wider mt-2">
                 {activationProgress < 30
                   ? 'Provisioning agent fleet...'
                   : activationProgress < 60
@@ -312,7 +302,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
               </div>
             </div>
 
-            <div className="font-pixel text-[10px] text-pixel-green/80 tracking-wider">
+            <div className="font-pixel text-base text-pixel-green/80 tracking-wider">
               {activationProgress}%
             </div>
           </div>
@@ -322,12 +312,12 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
         {phase === 'done' && (
           <div className="text-center animate-[fadeIn_0.4s_ease-out]">
             <div
-              className="font-pixel text-lg text-pixel-green tracking-[0.3em] mb-4"
+              className="font-pixel text-3xl text-pixel-green tracking-[0.3em] mb-4"
               style={{ textShadow: '0 0 30px rgba(0,255,136,0.5), 0 0 60px rgba(0,255,136,0.2)' }}
             >
               SYSTEMS ONLINE
             </div>
-            <div className="font-pixel text-[9px] text-pixel-green/60 tracking-wider">
+            <div className="font-pixel text-sm text-pixel-green/60 tracking-wider">
               Welcome aboard, {founderName}. Entering command center...
             </div>
           </div>

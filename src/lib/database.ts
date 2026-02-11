@@ -56,6 +56,17 @@ export async function initDatabase(): Promise<Database> {
       severity  TEXT NOT NULL DEFAULT 'info'
     );
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS ceo (
+      id              TEXT PRIMARY KEY DEFAULT 'ceo',
+      name            TEXT NOT NULL,
+      model           TEXT NOT NULL,
+      philosophy      TEXT NOT NULL,
+      risk_tolerance  TEXT NOT NULL DEFAULT 'moderate',
+      status          TEXT NOT NULL DEFAULT 'nominal',
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 
   await persist();
   return db;
@@ -160,6 +171,61 @@ export function seedAgentsIfEmpty(agents: AgentRow[]): void {
 /** Delete an agent by ID. */
 export function deleteAgent(id: string): void {
   getDB().run('DELETE FROM agents WHERE id = ?', [id]);
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// CEO helpers
+// ---------------------------------------------------------------------------
+
+export interface CEORow {
+  id: string;
+  name: string;
+  model: string;
+  philosophy: string;
+  risk_tolerance: string;
+  status: string;
+}
+
+/** Returns true when a CEO record exists. */
+export function isCEOInitialized(): boolean {
+  const stmt = getDB().prepare('SELECT id FROM ceo LIMIT 1');
+  const exists = stmt.step();
+  stmt.free();
+  return exists;
+}
+
+/** Load the CEO record (null if none). */
+export function loadCEO(): CEORow | null {
+  const stmt = getDB().prepare('SELECT id, name, model, philosophy, risk_tolerance, status FROM ceo LIMIT 1');
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as unknown as CEORow;
+    stmt.free();
+    return row;
+  }
+  stmt.free();
+  return null;
+}
+
+/** Insert or update the CEO. */
+export function saveCEO(ceo: Omit<CEORow, 'id'>): void {
+  getDB().run(
+    `INSERT INTO ceo (id, name, model, philosophy, risk_tolerance, status)
+     VALUES ('ceo', ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       model = excluded.model,
+       philosophy = excluded.philosophy,
+       risk_tolerance = excluded.risk_tolerance,
+       status = excluded.status`,
+    [ceo.name, ceo.model, ceo.philosophy, ceo.risk_tolerance, ceo.status],
+  );
+  persist();
+}
+
+/** Update only the CEO status field. */
+export function updateCEOStatus(status: string): void {
+  getDB().run("UPDATE ceo SET status = ? WHERE id = 'ceo'", [status]);
   persist();
 }
 
