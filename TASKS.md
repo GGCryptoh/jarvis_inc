@@ -352,4 +352,5 @@
 | Ceremonies | `AI/Ceremonies.md` | All ceremony state machines |
 | Surveillance | `AI/Surveillance.md` | Pixel office, sprites, floors, animations |
 | Skills Repo Plan | `AI/PLAN-SKILLS_REPO.md` | Skills repo creation plan |
+| **SQLite Removal** | `AI/PLAN-SQLite_Removal.md` | **Full migration: sql.js → Supabase, Founder setup wizard, auth, realtime** |
 | **Mission Control** | `AI/IDEAS-MissionControl.md` | **Verification, scoring, accept/reject, redo rounds, deliverables** |
