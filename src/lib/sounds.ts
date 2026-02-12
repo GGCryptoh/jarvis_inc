@@ -56,3 +56,115 @@ export function playSuccessJingle(): void {
     // Silently fail if Web Audio API isn't available
   }
 }
+
+/**
+ * Cheeky military march jingle — Cannon Fodder / Amiga inspired.
+ * Bouncy square-wave melody over a marching bass with noise snare hits.
+ * ~3 seconds, pure Web Audio API synthesis.
+ */
+export function playWarMarch(): void {
+  try {
+    const ctx = new AudioContext();
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = 0.16;
+    masterGain.connect(ctx.destination);
+    const now = ctx.currentTime;
+
+    const BPM = 140;
+    const beat = 60 / BPM; // ~0.428s per beat
+    const eighth = beat / 2;
+
+    // ── Helper: play a tone ──
+    function tone(
+      freq: number, start: number, dur: number,
+      type: OscillatorType, vol = 0.5
+    ) {
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, now + start);
+      env.gain.linearRampToValueAtTime(vol, now + start + 0.01);
+      env.gain.setValueAtTime(vol, now + start + dur - 0.02);
+      env.gain.linearRampToValueAtTime(0, now + start + dur);
+      osc.connect(env);
+      env.connect(masterGain);
+      osc.start(now + start);
+      osc.stop(now + start + dur + 0.01);
+    }
+
+    // ── Helper: noise hit (snare) ──
+    function snare(start: number, dur = 0.06) {
+      const bufSize = ctx.sampleRate * dur;
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize);
+      }
+      const src = ctx.createBufferSource();
+      const env = ctx.createGain();
+      src.buffer = buf;
+      env.gain.setValueAtTime(0.4, now + start);
+      env.gain.linearRampToValueAtTime(0, now + start + dur);
+      src.connect(env);
+      env.connect(masterGain);
+      src.start(now + start);
+    }
+
+    // ── Marching bass (triangle wave, root + fifth) ──
+    const bassNotes = [
+      // Bar 1: C-G-C-G
+      { freq: 130.81, start: 0 },            // C3
+      { freq: 196.00, start: beat },          // G3
+      { freq: 130.81, start: beat * 2 },      // C3
+      { freq: 196.00, start: beat * 3 },      // G3
+      // Bar 2: F-C-G-G
+      { freq: 174.61, start: beat * 4 },      // F3
+      { freq: 130.81, start: beat * 5 },      // C3
+      { freq: 196.00, start: beat * 6 },      // G3
+      { freq: 196.00, start: beat * 7 },      // G3
+    ];
+    for (const n of bassNotes) {
+      tone(n.freq, n.start, beat * 0.8, 'triangle', 0.45);
+    }
+
+    // ── Snare on beats 2 & 4 (march feel) ──
+    for (let bar = 0; bar < 2; bar++) {
+      const offset = bar * beat * 4;
+      snare(offset + beat);
+      snare(offset + beat * 3);
+    }
+
+    // ── Melody: cheeky bouncy lead (square wave) ──
+    //    Inspired by that cocky Sensible Software energy
+    const melody = [
+      // Bar 1: "da-da da-da DA da-da-da"
+      { freq: 523.25, start: 0,                    dur: eighth * 0.8 },  // C5
+      { freq: 523.25, start: eighth,               dur: eighth * 0.8 },  // C5
+      { freq: 659.25, start: eighth * 2,           dur: eighth * 0.8 },  // E5
+      { freq: 659.25, start: eighth * 3,           dur: eighth * 0.8 },  // E5
+      { freq: 783.99, start: beat * 2,             dur: beat * 0.8 },    // G5 (accent)
+      { freq: 659.25, start: beat * 3,             dur: eighth * 0.8 },  // E5
+      { freq: 587.33, start: beat * 3 + eighth,    dur: eighth * 0.8 },  // D5
+      // Bar 2: "da da-DA da — da-da-DA-DA!"
+      { freq: 523.25, start: beat * 4,             dur: eighth * 0.8 },  // C5
+      { freq: 587.33, start: beat * 4 + eighth,    dur: eighth * 0.8 },  // D5
+      { freq: 659.25, start: beat * 5,             dur: beat * 0.8 },    // E5 (accent)
+      { freq: 523.25, start: beat * 6,             dur: eighth * 0.8 },  // C5
+      { freq: 783.99, start: beat * 6 + eighth,    dur: eighth * 0.8 },  // G5
+      { freq: 880.00, start: beat * 7,             dur: eighth * 0.8 },  // A5
+      { freq: 1046.5, start: beat * 7 + eighth,    dur: beat * 0.9 },    // C6 (final!)
+    ];
+    for (const n of melody) {
+      tone(n.freq, n.start, n.dur, 'square', 0.5);
+    }
+
+    // ── High sparkle on the final note ──
+    tone(2093.0, beat * 7 + eighth + 0.05, 0.15, 'square', 0.2);
+
+    const totalDur = beat * 8 + 500;
+    setTimeout(() => ctx.close(), totalDur);
+  } catch {
+    // Silently fail if Web Audio API isn't available
+  }
+}

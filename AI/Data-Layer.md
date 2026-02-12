@@ -3,6 +3,12 @@
 > Committed project documentation. Defines the database schema, persistence model,
 > dual-mode architecture (sql.js demo vs Supabase full), and migration path.
 
+### Implementation Status (2026-02-12)
+- **Shipped**: sql.js singleton (`src/lib/database.ts`, ~870 lines), IndexedDB persistence, **10 tables** (settings, agents, ceo, missions, audit_log, vault, approvals, skills, conversations, chat_messages)
+- **Shipped**: Postgres migrations in `docker/supabase/migrations/` (001 schema + 002 RLS)
+- **Not yet built**: DataService interface, SqliteDataService wrapper, SupabaseDataService, DataContext + useData() hook, dual-mode boot screen
+- **Note**: Doc below references 8 tables; actual schema now has 10 (conversations + chat_messages added for chat persistence)
+
 ---
 
 ## Overview

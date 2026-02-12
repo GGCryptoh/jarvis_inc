@@ -4,6 +4,12 @@
 > as an autonomous agent that proactively manages the workforce, executes skills,
 > and communicates with the founder.
 
+### Implementation Status (2026-02-12)
+- **Shipped**: CEO ceremony, 8 archetypes, personality-aware system prompts, LLM streaming, scripted fallback (`ceoResponder.ts`)
+- **Not yet built**: Scheduler, decision engine, agent factory, task execution pipeline, proactive chat loop
+- **Files referenced but not yet created**: `ceoScheduler.ts`, `ceoDecisionEngine.ts`, `ceoExecutor.ts`, `ceoPersonality.ts`, `agentFactory.ts`
+- **Prerequisite for**: Phase 2 (CEO Autonomy) in TASKS.md
+
 ---
 
 ## Overview

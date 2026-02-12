@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { getFounderInfo, saveCEO, saveVaultEntry, saveMission, logAudit } from '../../lib/database';
+import { getFounderInfo, saveCEO, saveVaultEntry, updateVaultEntry, getVaultEntryByService, saveMission, logAudit, saveApproval, loadApprovals } from '../../lib/database';
 import { MODEL_OPTIONS, getServiceForModel, SERVICE_KEY_HINTS, validateApiKeyFormat } from '../../lib/models';
 import { Check, X as XIcon, AlertTriangle } from 'lucide-react';
 
@@ -188,20 +188,48 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
     if (!keyValidation.valid && keyLongEnough) return;
     if (!keyLongEnough) return;
     persistCEO();
-    saveVaultEntry({
-      id: `vault-${Date.now()}`,
-      name: `${service} API Key`,
-      type: 'api_key',
-      service,
-      key_value: apiKey.trim(),
-    });
-    logAudit(null, 'KEY_ADDED', `Added ${service} API key during CEO ceremony`, 'info');
+    // Check if a vault entry already exists for this service — update instead of duplicating
+    const existing = getVaultEntryByService(service);
+    if (existing) {
+      updateVaultEntry(existing.id, { key_value: apiKey.trim() });
+      logAudit(null, 'KEY_UPDATED', `Updated ${service} API key during CEO ceremony`, 'info');
+    } else {
+      saveVaultEntry({
+        id: `vault-${Date.now()}`,
+        name: `${service} API Key`,
+        type: 'api_key',
+        service,
+        key_value: apiKey.trim(),
+      });
+      logAudit(null, 'KEY_ADDED', `Added ${service} API key during CEO ceremony`, 'info');
+    }
     setPhase('activating');
   }
 
   function handleSkipApiKey() {
     persistCEO();
-    logAudit(null, 'KEY_SKIPPED', `Skipped API key for ${service} during CEO ceremony`, 'warning');
+    // Check if key already exists in vault — no need for approval if so
+    const existingKey = getVaultEntryByService(service);
+    if (!existingKey) {
+      // Only create approval if one doesn't already exist for this service
+      const pendingApprovals = loadApprovals();
+      const hasExisting = pendingApprovals.some(a => {
+        if (a.type !== 'api_key_request') return false;
+        try { return JSON.parse(a.metadata ?? '{}').service === service; } catch { return false; }
+      });
+      if (!hasExisting) {
+        saveApproval({
+          id: `approval-ceo-key-${Date.now()}`,
+          type: 'api_key_request',
+          title: `API Key Required: ${service}`,
+          description: `CEO ${ceoName.trim().toUpperCase()} needs a ${service} API key to operate with ${model}. Skipped during ceremony.`,
+          status: 'pending',
+          metadata: JSON.stringify({ service, model, source: 'ceo_ceremony_skip' }),
+        });
+        window.dispatchEvent(new Event('approvals-changed'));
+        logAudit(null, 'KEY_SKIPPED', `Skipped API key for ${service} during CEO ceremony — approval created`, 'warning');
+      }
+    }
     setPhase('activating');
   }
 
@@ -225,7 +253,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
         style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%)' }}
       />
 
-      <div className="relative z-20 w-full max-w-3xl px-8">
+      <div className="relative z-20 w-full max-w-4xl px-8">
         {/* Terminal phase: intro */}
         {phase === 'intro' && (
           <div
@@ -246,7 +274,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
         {phase === 'reveal' && (
           <div className="text-center animate-[fadeIn_1s_ease-out]">
             <h1
-              className="font-pixel text-4xl tracking-wider mb-6"
+              className="font-pixel text-4xl tracking-wider mb-6 whitespace-nowrap"
               style={{ color: gold, textShadow: `0 0 20px ${gold}4d, 0 0 40px ${gold}1a` }}
             >
               DESIGNATE YOUR AI CEO
@@ -518,13 +546,33 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
                         {i + 1}
                       </span>
                       <span className="font-pixel text-[9px] tracking-wider pt-0.5" style={{ color: `${gold}cc` }}>
-                        {step}
+                        {step.includes(hints.url) ? (
+                          <>
+                            {step.split(hints.url)[0]}
+                            <a
+                              href={`https://${hints.url}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:underline"
+                              style={{ color: '#8be9fd' }}
+                            >
+                              {hints.url}
+                            </a>
+                            {step.split(hints.url)[1]}
+                          </>
+                        ) : step}
                       </span>
                     </div>
                   ))}
-                  <div className="font-pixel text-[8px] tracking-wider mt-2" style={{ color: '#8be9fd' }}>
-                    {hints.url}
-                  </div>
+                  <a
+                    href={`https://${hints.url}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block font-pixel text-[8px] tracking-wider mt-2 hover:underline"
+                    style={{ color: '#8be9fd' }}
+                  >
+                    {hints.url} {'\u2197'}
+                  </a>
                 </div>
               )}
 

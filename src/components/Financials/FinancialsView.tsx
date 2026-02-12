@@ -379,7 +379,7 @@ export default function FinancialsView() {
               ].join(' ')}
             >
               {/* Month */}
-              <span className="text-sm font-medium text-jarvis-text">{entry.month} 2026</span>
+              <span className="text-sm font-medium text-jarvis-text">{entry.month}</span>
 
               {/* Budget */}
               <span className="text-sm font-mono text-jarvis-muted text-right">

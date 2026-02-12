@@ -13,6 +13,7 @@ import FinancialsView from './components/Financials/FinancialsView'
 import ChatView from './components/Chat/ChatView'
 import ApprovalsView from './components/Approvals/ApprovalsView'
 import SkillsView from './components/Skills/SkillsView'
+import SoundTestView from './components/SoundTest/SoundTestView'
 import FounderCeremony from './components/FounderCeremony/FounderCeremony'
 import CEOCeremony from './components/CEOCeremony/CEOCeremony'
 
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/audit" element={<AuditView />} />
         <Route path="/financials" element={<FinancialsView />} />
         <Route path="/sample-surveillance" element={<SurveillanceModule />} />
+        <Route path="/soundtest" element={<SoundTestView />} />
       </Route>
     </Routes>
   )

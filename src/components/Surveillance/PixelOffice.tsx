@@ -10,7 +10,6 @@ interface PixelOfficeProps {
   onAgentClick: (agent: Agent) => void;
   sceneMode: SceneMode;
   ceo: Agent | null;
-  doorOpen?: boolean | null;
   roomTier: RoomTier;
   /** Floor planner mode — click on office floor to set desk position */
   floorPlannerActive?: boolean;
@@ -24,7 +23,6 @@ export default function PixelOffice({
   onAgentClick,
   sceneMode,
   ceo,
-  doorOpen = null,
   roomTier,
   floorPlannerActive = false,
   onFloorClick,
@@ -86,35 +84,6 @@ export default function PixelOffice({
             backgroundSize: '5% 5%',
           }}
         />
-      )}
-
-      {/* ---- Door Animation Overlay ---- */}
-      {/* The door is baked into the image, but we overlay animated panels for open/close */}
-      {doorOpen !== null && (
-        <div
-          className="absolute z-[2]"
-          style={{
-            // Door position varies by tier — right side for tiers 1-3, bottom for tier 4
-            ...(roomTier <= 3
-              ? { right: '8%', top: '58%', width: '60px', height: '80px' }
-              : { left: '50%', bottom: '2%', width: '80px', height: '60px', transform: 'translateX(-50%)' }),
-          }}
-        >
-          <div className="w-full h-full overflow-hidden">
-            <div className="flex h-full">
-              <div
-                className={`flex-1 bg-gray-500/80 m-[2px] ${
-                  doorOpen === true ? 'door-open-left' : doorOpen === false ? 'door-close-left' : ''
-                }`}
-              />
-              <div
-                className={`flex-1 bg-gray-500/80 m-[2px] ${
-                  doorOpen === true ? 'door-open-right' : doorOpen === false ? 'door-close-right' : ''
-                }`}
-              />
-            </div>
-          </div>
-        </div>
       )}
 
       {/* ---- Holographic Mission Board (top-right) ---- */}

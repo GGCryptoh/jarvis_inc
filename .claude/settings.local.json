@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git clone:*)",
+      "Bash(dir:*)",
+      "WebSearch",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build)",
+      "Bash(npx vite build:*)",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(ls:*)",
+      "Bash(git config:*)",
+      "Bash(find:*)"
+    ]
+  }
+}

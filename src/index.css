@@ -307,7 +307,7 @@
   /* Agent name tag */
   .agent-nametag {
     font-family: 'Press Start 2P', monospace;
-    font-size: 6px;
+    font-size: 8px;
     text-align: center;
     white-space: nowrap;
     text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
@@ -316,13 +316,14 @@
 
   /* Agent status indicator dot */
   .agent-status-dot {
-    width: 4px;
-    height: 4px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     position: absolute;
-    top: -2px;
-    right: -2px;
+    top: 6px;
+    left: -9px;
     border: 1px solid rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 4px currentColor;
   }
 
   /* Agent thought bubble */
@@ -633,44 +634,6 @@
   0%   { opacity: 1; transform: translateY(0) scale(1); }
   50%  { opacity: 1; transform: translateY(-12px) scale(1.3); }
   100% { opacity: 0; transform: translateY(-24px) scale(0.5); }
-}
-
-/* ---------- Door Animation Keyframes ---------- */
-
-@keyframes door-panel-open-left {
-  0%   { transform: translateX(0); }
-  100% { transform: translateX(-105%); }
-}
-
-@keyframes door-panel-open-right {
-  0%   { transform: translateX(0); }
-  100% { transform: translateX(105%); }
-}
-
-@keyframes door-panel-close-left {
-  0%   { transform: translateX(-105%); }
-  100% { transform: translateX(0); }
-}
-
-@keyframes door-panel-close-right {
-  0%   { transform: translateX(105%); }
-  100% { transform: translateX(0); }
-}
-
-.door-open-left {
-  animation: door-panel-open-left 0.5s ease-in-out forwards;
-}
-
-.door-open-right {
-  animation: door-panel-open-right 0.5s ease-in-out forwards;
-}
-
-.door-close-left {
-  animation: door-panel-close-left 0.4s ease-in-out forwards;
-}
-
-.door-close-right {
-  animation: door-panel-close-right 0.4s ease-in-out forwards;
 }
 
 /* ---------- Celebrate Animation ---------- */

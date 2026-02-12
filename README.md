@@ -2,18 +2,13 @@
 
 A hybrid dual-tone dashboard for commanding an autonomous AI workforce. Corporate-cold command center meets retro pixel art surveillance.
 
-![Stack](https://img.shields.io/badge/React_18-TypeScript-blue) ![Stack](https://img.shields.io/badge/Vite_6-Tailwind_CSS_3-purple) ![Stack](https://img.shields.io/badge/SQLite-sql.js_(WASM)-green) ![Stack](https://img.shields.io/badge/No_Backend-Client--Side_Only-orange)
+![Stack](https://img.shields.io/badge/React_18-TypeScript-blue) ![Stack](https://img.shields.io/badge/Vite_6-Tailwind_CSS_3-purple) ![Stack](https://img.shields.io/badge/SQLite-sql.js_(WASM)-green) ![Supabase](https://img.shields.io/badge/Supabase-Self--Hosted-darkgreen) ![Caddy](https://img.shields.io/badge/Caddy-Reverse_Proxy-blue)
 
 ---
 
-## Quick Start
+## Quick Start (Demo Mode)
 
-### Prerequisites
-
-- **Node.js** >= 18
-- **npm** >= 9
-
-### Clone & Run
+Demo mode runs entirely in-browser — no backend, no Docker, no Supabase. Data persists in IndexedDB.
 
 ```bash
 git clone https://github.com/GGCryptoh/jarvis_inc.git
@@ -22,32 +17,182 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:5173](http://localhost:5173).
 
 ### Production Build
 
 ```bash
 npm run build        # TypeScript check + Vite build → dist/
-npm run preview      # Preview the production build locally
+npm run preview      # Preview production build locally
+```
+
+### Docker (Frontend Only)
+
+```bash
+docker build -t jarvis-inc .
+docker run -p 3000:80 jarvis-inc
+```
+
+Open [http://localhost:3000](http://localhost:3000). Multi-stage build: `node:20-alpine` → `nginx:alpine`.
+
+---
+
+## Full Stack Setup (Supabase + Caddy + Passkeys)
+
+For persistent server-side data, auth, real-time updates, and CEO autonomous scheduling.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Caddy (reverse proxy)                                  │
+│  ├── jarvis.local          → Jarvis frontend            │
+│  ├── api.jarvis.local      → Supabase API (Kong)        │
+│  └── studio.jarvis.local   → Supabase Studio (auth'd)   │
+├─────────────────────────────────────────────────────────┤
+│  Jarvis Frontend (React SPA)                            │
+│  ├── Demo mode: sql.js + IndexedDB (browser-local)      │
+│  └── Full mode: Supabase client (Postgres + Realtime)   │
+├─────────────────────────────────────────────────────────┤
+│  Supabase Self-Hosted                                   │
+│  ├── Postgres 15 (data)                                 │
+│  ├── GoTrue (auth + passkeys/WebAuthn)                  │
+│  ├── PostgREST (REST API)                               │
+│  ├── Realtime (WebSocket subscriptions)                 │
+│  ├── Kong (API gateway)                                 │
+│  ├── Studio (DB admin UI, basic-auth protected)         │
+│  └── pg_meta (Studio metadata)                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Prerequisites
+
+- **Node.js** >= 18 (for the setup script)
+- **Docker** & Docker Compose v2
+- A machine with **2GB+ RAM** (Supabase runs ~8 containers)
+- (Optional) A domain name pointed at your server for Let's Encrypt HTTPS
+
+### Step 1: Run the Setup Script
+
+The interactive setup script generates all secrets, configures `.env`, starts Docker, and verifies services.
+
+```bash
+npm run setup
+```
+
+It will walk you through:
+1. **Domain** — `jarvis.local` for LAN, or your real domain for internet
+2. **SSL mode** — Self-signed (default), Let's Encrypt, or off
+3. **Postgres password** — hidden input
+4. **Studio credentials** — username + password for the admin UI
+5. **Auto-generates**: JWT secret, Supabase anon/service keys, Realtime secret
+6. **Writes** `docker/.env` with all values
+7. **Starts** `docker compose up -d`
+8. **Health-checks** each service (Jarvis, API, Auth, Studio)
+
+> **Future**: This will also be available as a one-liner curl install:
+> `curl -fsSL https://raw.githubusercontent.com/GGCryptoh/jarvis_inc/main/docker/setup.mjs | node`
+
+### Step 2: Add Hosts Entries (LAN only)
+
+If using `jarvis.local` (or any non-public domain), add to your hosts file:
+
+**Windows** (`C:\Windows\System32\drivers\etc\hosts`):
+```
+127.0.0.1  jarvis.local
+127.0.0.1  api.jarvis.local
+127.0.0.1  studio.jarvis.local
+```
+
+**macOS / Linux** (`/etc/hosts`):
+```
+127.0.0.1  jarvis.local
+127.0.0.1  api.jarvis.local
+127.0.0.1  studio.jarvis.local
+```
+
+### Step 3: Verify
+
+```bash
+npm run setup:check
+```
+
+This runs health checks against all services. You should see:
+
+```
+  ✓ Jarvis Frontend — online
+  ✓ Supabase API (Kong) — online
+  ✓ Supabase Auth (GoTrue) — online
+  ✓ Supabase Studio — online
+```
+
+| Service | URL |
+|---------|-----|
+| Jarvis Dashboard | `https://jarvis.local` |
+| Supabase API | `https://api.jarvis.local` |
+| Supabase Studio | `https://studio.jarvis.local` (basic auth) |
+
+### Manual Setup (alternative)
+
+If you prefer to configure manually instead of using the script:
+
+```bash
+cd docker
+cp .env.example .env
+# Edit .env — see .env.example for all values and generation instructions
+docker compose up -d
+```
+
+### SSL Options
+
+| Mode | `.env` Setting | Use Case |
+|------|---------------|----------|
+| **Self-signed** (default) | `CADDY_TLS=internal` | LAN / local dev. Browser will warn — accept the cert. |
+| **Let's Encrypt** | `CADDY_TLS=` (empty) | Internet-facing. Port 80 must be reachable for HTTP challenge. |
+| **No SSL** | `CADDY_TLS=off` | Behind another proxy, or trusted LAN only. |
+
+For Let's Encrypt with HTTP verification:
+1. Point your domain's DNS A record to your server IP
+2. Ensure port 80 is open (Caddy needs it for the ACME HTTP-01 challenge)
+3. Set `CADDY_TLS=` (empty string) in `.env`
+4. Set `DOMAIN=yourdomain.com`
+5. `docker compose up -d` — Caddy provisions certs automatically
+
+### Passkey Auth (WebAuthn)
+
+Passkeys are enabled by default via Supabase GoTrue. Requirements:
+- HTTPS (self-signed OK for dev, Let's Encrypt for production)
+- A consistent `DOMAIN` (the WebAuthn RP ID)
+
+Users can register with email + password, then enroll a passkey for passwordless login.
+
+### Studio Protection
+
+Supabase Studio (the admin UI) is protected by Caddy basic auth. Only users with the `STUDIO_USER` / `STUDIO_PASS_HASH` credentials can access `studio.${DOMAIN}`.
+
+To restrict Studio to specific IPs instead (or in addition):
+
+```caddyfile
+# In docker/Caddyfile, add to the studio block:
+studio.{$DOMAIN} {
+    @blocked not remote_ip 192.168.1.0/24 10.0.0.0/8
+    respond @blocked 403
+    basicauth { ... }
+    reverse_proxy supabase-studio:3000
+}
 ```
 
 ---
 
 ## First Run Experience
 
-On first launch, you'll go through a cinematic onboarding sequence:
+1. **Founder Ceremony** — CRT terminal boot sequence. Enter callsign + org name.
+2. **CEO Ceremony** — Designate AI CEO: callsign, LLM model (14 options / 6 providers), personality archetype (8 options), philosophy, risk tolerance. Optionally provide an API key.
+3. **Dashboard** — Land on main dashboard with live stats from DB.
+4. **Surveillance** — First visit triggers **CEO Walk-in Ceremony**: sprite walks in, celebrates with retro jingle, takes their desk.
+5. **Chat Onboarding** — CEO asks about your mission, recommends skills, runs a test interaction. LLM streaming when API key is vaulted.
 
-1. **Founder Ceremony** — A CRT-themed terminal boot sequence registers you as the system commander. Enter your callsign and organization name. Your name is saved as-typed; displayed UPPERCASED during ceremonies.
-
-2. **CEO Ceremony** — Designate your AI CEO: choose a callsign, select an LLM model (14 options across 6 providers), set a management philosophy (4 presets or custom), and pick a risk tolerance level (conservative / moderate / aggressive). Optionally provide an API key for the CEO's model.
-
-3. **Dashboard** — You land on the main dashboard. Navigate using the left rail.
-
-4. **Surveillance** — First visit to the Surveillance page triggers the **CEO Walk-in Ceremony**: the office door opens, the CEO sprite walks in, celebrates with a retro jingle, then walks to their desk. A floating notification invites you to a CEO meeting.
-
-5. **Chat Onboarding** — Click APPROVE on the meeting notification to enter the Chat page. The CEO asks about your primary mission, recommends skills based on keywords, creates a skill-enable approval, and runs a simulated test to demonstrate the flow.
-
-After onboarding, all pages are accessible and data persists across browser sessions via IndexedDB.
+Data persists across browser sessions (IndexedDB in demo mode, Postgres in full mode).
 
 ---
 
@@ -57,147 +202,95 @@ After onboarding, all pages are accessible and data persists across browser sess
 
 | Feature | Description |
 |---------|-------------|
-| **Founder Ceremony** | Terminal boot → callsign + org name form → activation animation |
-| **CEO Ceremony** | CEO designation form (model, philosophy, risk tolerance) → progress bar → activation |
-| **CEO Walk-in Ceremony** | Door animation → walk to center → celebrate dance → jingle → walk to desk |
-| **Agent Hire Ceremony** | Same door/walk/celebrate/desk flow for new agents |
-| **Chat Onboarding** | Scripted CEO conversation: mission capture → skill recommendation → approval card → test interaction |
-| **Skills Page** | 18 skills across 4 categories, org-wide toggles, model dropdowns, filter (All/Enabled/Disabled), search bar |
-| **Approvals Page** | Pending queue + history tab, handles `skill_enable` and `api_key_request` types, badge counter |
-| **Vault Page** | Full CRUD for API keys, 14 models → 6 services mapping, dependency warnings on delete |
-| **Surveillance** | Pixel office with animated sprites, 4 floor tiers (auto-upgrade), floor planner mode, scene modes |
-| **Agent Management** | Hire (with live sprite preview), edit (name/role/color/skin/model), fire (with confirmation) |
-| **Sprite Animations** | 7 states: idle, walking, working, celebrating, meeting, break, arriving |
-| **Floor Tiers** | 4 pre-made pixel art backgrounds that auto-swap as agent count grows |
-| **Floor Planner** | Click-to-place agent desks, grid overlay, positions saved to DB |
-| **Sound System** | Web Audio API retro jingle (no audio files) |
-| **Reset DB** | 3-option dialog: Reset Database / Fire CEO / Shutter Business |
+| **Founder Ceremony** | Terminal boot → callsign + org form → activation |
+| **CEO Ceremony** | 8 personality archetypes, model/philosophy/risk selection, API key validation |
+| **CEO Walk-in** | Sprite walk → celebrate → jingle → desk |
+| **Agent Hire Ceremony** | Same walk/celebrate/desk flow for new agents |
+| **Chat System** | Onboarding + persistent conversations, sidebar, archive/delete |
+| **LLM Streaming** | Real API calls to Anthropic, OpenAI, Google, DeepSeek, xAI with token-by-token streaming |
+| **CEO Personality** | System prompt assembled from archetype + philosophy + risk tolerance + org context |
+| **Dashboard** | Live stats from DB: agent count, missions, budget. Editable primary mission. |
+| **Missions Kanban** | 4-column board from DB with recurring mission support |
+| **Skills Page** | 18 skills / 4 categories, toggles, model selectors, filter + search |
+| **Approvals** | Pending queue + history, `skill_enable` + `api_key_request` types, cross-component sync |
+| **Vault** | API key CRUD, 14 models → 6 services, dependency warnings, setup hints |
+| **Surveillance** | Pixel office, 4 floor tiers (auto-upgrade), floor planner mode, 7 animation states |
+| **Agent Management** | Hire (live sprite preview), edit, fire with confirmation |
+| **Financials** | Budget editing with CRT-themed UI, bar chart + table |
+| **Sound System** | Web Audio API synthesized jingles (no audio files). Test at [`/soundtest`](http://localhost:5173/soundtest) — keyboard: Space (play/pause), Esc (stop), N/P (next/prev) |
+| **Reset DB** | Fire CEO / Shutter Business / Full Reset |
 
-### Placeholder (UI exists, not connected to real data)
+### Partial (UI exists, wiring needed)
 
-| Page | Status |
-|------|--------|
-| Dashboard | Hardcoded stats, agent cards, mission table |
-| Missions | Static 4-column Kanban board, no CRUD |
-| Audit | Dummy log with severity filter, export button non-functional |
-| Financials | Static bar chart + data table |
+| Feature | Status |
+|---------|--------|
+| Audit Log | Dummy log with filter — needs real event recording |
+| CEO Pip | Shows name + color — needs real heartbeat state |
 
-### Planned (documented, not implemented)
+### Planned
 
-- CEO autonomous agent (scheduler, decision engine, proactive chat)
-- Agent task execution engine (LLM calls with tool use)
-- Supabase backend (Postgres, Auth, Realtime, Edge Functions)
-- Real budget tracking and cost attribution
-- Gallery, System Stats, Channels pages
+| Phase | Features |
+|-------|----------|
+| **Supabase** | Dual-mode boot, auth with passkeys, Postgres backend, Realtime |
+| **CEO Autonomy** | Scheduler, decision engine, proactive chat, agent factory |
+| **Agent Runtime** | Task execution with LLM, mid-task approvals, cost tracking |
+| **Governance** | Permissions, budget enforcement, kill switch, extended approvals |
+| **Modules** | Gallery, System Stats, Channels/Telegram |
 
 ---
 
 ## Navigation
 
-| Tab | Route | Icon | Status |
-|-----|-------|------|--------|
-| Dashboard | `/dashboard` | BarChart3 | Placeholder |
-| Chat | `/chat` | MessageSquare | **Functional** — CEO onboarding + future AI chat |
-| Approvals | `/approvals` | ClipboardCheck | **Functional** — Pending queue with badge |
-| Missions | `/missions` | Target | Placeholder |
-| Surveillance | `/surveillance` | Cctv | **Functional** — Pixel office, agents, ceremonies |
-| Skills | `/skills` | Blocks | **Functional** — 18 skills with toggles + filter/search |
-| The Vault | `/vault` | Shield | **Functional** — API key management |
-| Audit | `/audit` | ScrollText | Placeholder |
-| Financials | `/financials` | DollarSign | Placeholder |
-| Sample | `/sample-surveillance` | FlaskConical | Demo mode (no DB) |
-
-**Also in the nav rail:**
-- **CEO Status Pip** — Shows CEO name initial + status color (green/yellow/red)
-- **Approval Badge** — Pending count on the Approvals tab (refreshed every 5s)
-- **Reset DB** — Red icon at bottom, opens double-confirm dialog
-
----
-
-## Architecture
-
-### Dual-Tone Hybrid UI
-
-| Layer | Purpose | Aesthetic |
-|-------|---------|-----------|
-| **Serious Shell** | Dashboard, Missions, Vault, Audit, Financials | Deep dark mode, Inter font, Slate/Emerald palette, clean data tables |
-| **Pixel Surveillance** | Pixel Office with live AI agent sprites | CRT scanlines, Press Start 2P font, Amiga-style beveled windows, vibrant 32-bit palette |
-
-### Database
-
-Client-side **SQLite** via [sql.js](https://github.com/sql-js/sql.js/) (WASM). All data persists in IndexedDB. No backend required.
-
-**8 tables:** `settings`, `agents`, `ceo`, `missions`, `audit_log`, `vault`, `approvals`, `skills`
-
-### Skills System
-
-18 skills across 4 categories:
-
-| Category | Skills |
-|----------|--------|
-| **Communication** | Read Email, Write Email, Send Slack, Schedule Meeting |
-| **Research** | Research Web, Read X/Tweets, Research Reddit, Deep Search, Browse Web, Web Scraping |
-| **Creation** | Create Images, Generate Video, Write Document, Generate Code |
-| **Analysis** | Analyze Data, Analyze Image, Summarize Document, Translate Text |
-
-Skills are toggled org-wide by the founder. The CEO will assign specific skills per agent (future).
-
-### Surveillance Floor Tiers
-
-| Tier | Agents | Background |
-|------|--------|------------|
-| 1 (Startup) | 0-1 | CEO desk + window + plants + door |
-| 2 | 2-3 | 4 desks + expanded office |
-| 3 | 4-6 | 7 desks + whiteboard |
-| 4 | 7+ | Multi-room: CEO office, open floor, conference room |
-
-Floor backgrounds auto-swap as you hire more agents.
+| Tab | Route | Status |
+|-----|-------|--------|
+| Dashboard | `/dashboard` | **Live** — real DB stats |
+| Chat | `/chat` | **Live** — LLM streaming + history |
+| Approvals | `/approvals` | **Live** — pending queue + badge |
+| Missions | `/missions` | **Live** — Kanban from DB (CRUD planned) |
+| Surveillance | `/surveillance` | **Live** — pixel office + ceremonies |
+| Skills | `/skills` | **Live** — 18 skills with toggles |
+| The Vault | `/vault` | **Live** — API key management |
+| Audit | `/audit` | Placeholder |
+| Financials | `/financials` | **Live** — editable budget |
+| Sample | `/sample-surveillance` | Demo mode (no DB) |
+| Sound Test | `/soundtest` | Jingle player with keyboard controls |
 
 ---
 
 ## Tech Stack
 
-- **React 18** + **TypeScript** + **Vite 6**
-- **Tailwind CSS 3** — Dual palette (`jarvis-*` serious + `pixel-*` retro)
-- **React Router 6** — Client-side SPA routing
-- **Lucide React** — Icon library
-- **sql.js** — SQLite compiled to WASM, persisted to IndexedDB
-- **Web Audio API** — Retro success jingle (no external audio files)
-- **No backend** — Fully client-side, zero external dependencies
-
----
-
-## Docker
-
-### Build & Run
-
-```bash
-docker build -t jarvis-inc .
-docker run -p 3000:80 jarvis-inc
-```
-
-Open [http://localhost:3000](http://localhost:3000).
-
-The Dockerfile is a multi-stage build: `node:20-alpine` (build) → `nginx:alpine` (serve). nginx handles SPA routing via `try_files`.
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18 + TypeScript + Vite 6 |
+| Styling | Tailwind CSS 3 (dual palette: `jarvis-*` + `pixel-*`) |
+| Routing | React Router 6 |
+| Icons | Lucide React |
+| Demo DB | sql.js (SQLite → WASM) + IndexedDB |
+| Full DB | Supabase self-hosted (Postgres 15) |
+| Auth | Supabase GoTrue (email + passkeys/WebAuthn) |
+| Realtime | Supabase Realtime (WebSocket) |
+| Reverse Proxy | Caddy 2 (auto HTTPS) |
+| LLM Providers | Anthropic, OpenAI, Google, DeepSeek, xAI |
+| Audio | Web Audio API (retro jingle) |
 
 ---
 
 ## Design Documents
 
-Architecture and design decisions are documented in `/AI/`:
+Architecture docs in `/AI/`:
 
 | Document | Contents |
 |----------|----------|
-| `AI/CEO-Agent-System.md` | Scheduler options (A-E), decision engine, agent factory, skill assignment, task execution |
-| `AI/CEO-Designate.md` | CEO personality archetypes, risk tolerance thresholds, philosophy → prompt mapping |
-| `AI/CEO/CEO-Prompts.md` | Every prompt template: CEO system/user, agent system/task, JSON schemas, chat patterns |
-| `AI/CEO-Communication-Loop.md` | Proactive CEO behavior, triggers, action cards, notification system |
-| `AI/Chat-Onboarding-Flow.md` | Scripted onboarding conversation state machine |
-| `AI/Approval-System.md` | Approval types, lifecycle, cross-component sync |
-| `AI/Skills-Architecture.md` | 18 skills, categories, connection types, skill-agent assignment model |
-| `AI/Data-Layer.md` | DB schema (8 tables), dual-mode plan (sql.js vs Supabase) |
-| `AI/Ceremonies.md` | All ceremony state machines (Founder, CEO, Walk-in, Hire) |
-| `AI/Surveillance.md` | Pixel office, sprite system, floor tiers, position math |
+| `CEO-Agent-System.md` | Scheduler, decision engine, agent factory, task execution |
+| `CEO-Designate.md` | 8 personality archetypes, prompt assembly |
+| `CEO/CEO-Prompts.md` | All prompt templates: CEO, agent, chat |
+| `CEO-Communication-Loop.md` | Proactive CEO behavior, triggers, action cards |
+| `Chat-Onboarding-Flow.md` | Scripted onboarding state machine |
+| `Approval-System.md` | Types, lifecycle, cross-component sync |
+| `Skills-Architecture.md` | 18 skills, categories, agent assignment model |
+| `Data-Layer.md` | Schema, dual-mode plan (sql.js vs Supabase) |
+| `Ceremonies.md` | All ceremony state machines |
+| `Surveillance.md` | Pixel office, sprites, floors, animations |
 
 ---
 
@@ -207,49 +300,59 @@ Architecture and design decisions are documented in `/AI/`:
 jarvis_inc/
 ├── index.html                    # Vite entry + Google Fonts + favicon
 ├── package.json                  # React 18, Vite 6, Tailwind 3, sql.js
-├── vite.config.ts                # React plugin
+├── vite.config.ts                # React plugin + LLM API proxy
 ├── tailwind.config.js            # Dual palette (jarvis-* + pixel-*)
-├── Dockerfile                    # Multi-stage: node:20-alpine → nginx:alpine
-├── TASKS.md                      # Gap analysis: PRD vs implementation
-├── PRD.txt                       # Product requirements document
+├── Dockerfile                    # Frontend only: node:20-alpine → nginx:alpine
 ├── CLAUDE.md                     # AI assistant project guide
-├── AI/                           # Architecture & design documents (10 files)
-├── seed_skills_repo/             # Skill JSON files for GitHub skills repo
+├── TASKS.md                      # Phased roadmap & gap analysis
+├── docker/
+│   ├── docker-compose.yml        # Full stack: Supabase + Caddy + Jarvis
+│   ├── Caddyfile                 # Reverse proxy config (3 routes)
+│   ├── .env.example              # All environment variables
+│   └── supabase/
+│       ├── kong.yml              # API gateway routes
+│       └── migrations/           # Postgres schema + RLS
+├── AI/                           # Architecture & design docs (10 files)
+├── seed_skills_repo/             # 18 skill JSON files + schema + manifest
 ├── public/
 │   ├── sql-wasm.wasm             # sql.js WebAssembly binary
-│   ├── favicon.png               # App favicon
+│   ├── favicon.png
 │   └── floors/                   # Pixel art floor backgrounds (4 tiers)
 └── src/
-    ├── main.tsx                  # React entry (BrowserRouter)
+    ├── main.tsx                  # React entry
     ├── App.tsx                   # DB gate → Ceremonies | AppLayout
-    ├── index.css                 # Tailwind + CRT/retro/sprite/door CSS
+    ├── index.css                 # Tailwind + CRT/retro/sprite CSS
     ├── lib/
-    │   ├── database.ts           # SQLite singleton, 8-table schema, CRUD
-    │   ├── models.ts             # 14 models, model→service mapping
-    │   ├── sounds.ts             # Web Audio API success jingle
-    │   ├── positionGenerator.ts  # Desk/meeting/break position math
-    │   └── skillRecommender.ts   # Keyword → skill matching
+    │   ├── database.ts           # SQLite singleton, 10-table schema, CRUD
+    │   ├── models.ts             # 14 models, model→service map, API model IDs
+    │   ├── sounds.ts             # Web Audio API jingle
+    │   ├── ceoResponder.ts       # Scripted CEO fallback responses
+    │   ├── skillRecommender.ts   # Keyword → skill matching
+    │   ├── positionGenerator.ts  # Desk/meeting position math
+    │   └── llm/
+    │       ├── types.ts          # LLMMessage, StreamCallbacks, LLMProvider
+    │       ├── chatService.ts    # CEO prompt builder + stream orchestrator
+    │       └── providers/        # Anthropic, OpenAI, Google streaming
     ├── hooks/
-    │   └── useDatabase.ts        # Boot hook: ready/initialized/ceoInitialized
+    │   └── useDatabase.ts        # Boot hook
     ├── types/
-    │   └── index.ts              # Agent, CEO, Mission, Position, AgentStatus
+    │   └── index.ts              # Agent, CEO, Mission types
     ├── data/
     │   ├── dummyData.ts          # Mock data for placeholder pages
-    │   └── skillDefinitions.ts   # 18 skill definitions (hardcoded)
+    │   └── skillDefinitions.ts   # 18 skill definitions
     └── components/
         ├── FounderCeremony/      # Terminal boot → form → activation
-        ├── CEOCeremony/          # CEO designation → API key → progress → done
+        ├── CEOCeremony/          # CEO designation + archetype + API key
         ├── Layout/               # AppLayout, NavigationRail, ResetDBDialog
-        ├── Surveillance/         # SurveillanceView, PixelOffice, AgentSprite,
-        │                         # CEOSprite, HireAgentModal, SurveillanceModule
-        ├── Chat/                 # CEO onboarding conversation
+        ├── Surveillance/         # PixelOffice, AgentSprite, CEOSprite, etc.
+        ├── Chat/                 # ChatView, ChatThread, ChatSidebar, OnboardingFlow
         ├── Approvals/            # Pending queue + history
-        ├── Skills/               # 18-skill grid with filter/search
-        ├── Dashboard/            # Stats cards + ops table (placeholder)
-        ├── Missions/             # Kanban board (placeholder)
+        ├── Skills/               # 18-skill grid
+        ├── Dashboard/            # Stats + ops table + fleet
+        ├── Missions/             # Kanban board
         ├── Vault/                # API key management
-        ├── Audit/                # Event log (placeholder)
-        └── Financials/           # Budget charts (placeholder)
+        ├── Audit/                # Event log
+        └── Financials/           # Budget charts
 ```
 
 ---

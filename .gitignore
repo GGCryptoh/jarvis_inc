@@ -48,8 +48,10 @@ pnpm-debug.log*
 coverage
 .nyc_output
 
-# Docker (local overrides)
+# Docker (local overrides & secrets)
 docker-compose.override.yml
+docker/.env
+docker/supabase/volumes/
 
 # SQLite (if ever used on disk)
 *.sqlite
@@ -60,3 +62,4 @@ docker-compose.override.yml
 .cache
 .turbo
 .parcel-cache
+nul

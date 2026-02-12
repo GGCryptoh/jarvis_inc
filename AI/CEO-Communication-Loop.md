@@ -4,6 +4,11 @@
 > initiates conversations with the founder, and drives mission execution through
 > an ongoing cycle of evaluation, communication, and follow-up.
 
+### Implementation Status (2026-02-12)
+- **Shipped**: Chat persistence (`conversations` + `chat_messages` tables), sidebar, onboarding state machine, LLM streaming with 5 providers, scripted fallback
+- **Not yet built**: Proactive evaluation loop (heartbeat), CEO-initiated conversations, background processing, action cards in chat
+- **Prerequisite**: CEO scheduler (Phase 2) — this doc describes the loop that runs inside the scheduler tick
+
 ---
 
 ## Overview

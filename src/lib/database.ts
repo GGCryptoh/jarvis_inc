@@ -101,6 +101,28 @@ export async function initDatabase(): Promise<Database> {
     );
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id         TEXT PRIMARY KEY,
+      title      TEXT NOT NULL,
+      type       TEXT NOT NULL DEFAULT 'general',
+      status     TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      sender          TEXT NOT NULL,
+      text            TEXT NOT NULL,
+      metadata        TEXT DEFAULT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   // Migrations — add columns to existing tables (idempotent)
   try { db.run('ALTER TABLE agents ADD COLUMN desk_x REAL DEFAULT NULL'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE agents ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
@@ -622,12 +644,151 @@ export function updateSkillModel(id: string, model: string | null): void {
 }
 
 // ---------------------------------------------------------------------------
+// Conversations CRUD
+// ---------------------------------------------------------------------------
+
+export interface ConversationRow {
+  id: string;
+  title: string;
+  type: string;       // 'onboarding' | 'general'
+  status: string;     // 'active' | 'archived'
+  created_at: string;
+  updated_at: string;
+}
+
+export function loadConversations(): ConversationRow[] {
+  const results: ConversationRow[] = [];
+  const stmt = getDB().prepare('SELECT id, title, type, status, created_at, updated_at FROM conversations ORDER BY updated_at DESC');
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as ConversationRow);
+  }
+  stmt.free();
+  return results;
+}
+
+export function getConversation(id: string): ConversationRow | null {
+  const stmt = getDB().prepare('SELECT id, title, type, status, created_at, updated_at FROM conversations WHERE id = ?');
+  stmt.bind([id]);
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as unknown as ConversationRow;
+    stmt.free();
+    return row;
+  }
+  stmt.free();
+  return null;
+}
+
+export function saveConversation(conv: Omit<ConversationRow, 'created_at' | 'updated_at'>): void {
+  getDB().run(
+    `INSERT INTO conversations (id, title, type, status)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       type = excluded.type,
+       status = excluded.status,
+       updated_at = datetime('now')`,
+    [conv.id, conv.title, conv.type, conv.status],
+  );
+  persist();
+}
+
+export function updateConversation(id: string, fields: Partial<Pick<ConversationRow, 'title' | 'status'>>): void {
+  const sets: string[] = [];
+  const vals: string[] = [];
+  if (fields.title !== undefined) { sets.push('title = ?'); vals.push(fields.title); }
+  if (fields.status !== undefined) { sets.push('status = ?'); vals.push(fields.status); }
+  if (sets.length === 0) return;
+  sets.push("updated_at = datetime('now')");
+  getDB().run(`UPDATE conversations SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+  persist();
+}
+
+export function deleteConversation(id: string): void {
+  getDB().run('DELETE FROM chat_messages WHERE conversation_id = ?', [id]);
+  getDB().run('DELETE FROM conversations WHERE id = ?', [id]);
+  persist();
+}
+
+export function getOnboardingConversation(): ConversationRow | null {
+  const stmt = getDB().prepare("SELECT id, title, type, status, created_at, updated_at FROM conversations WHERE type = 'onboarding' LIMIT 1");
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as unknown as ConversationRow;
+    stmt.free();
+    return row;
+  }
+  stmt.free();
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Chat Messages CRUD
+// ---------------------------------------------------------------------------
+
+export interface ChatMessageRow {
+  id: string;
+  conversation_id: string;
+  sender: string;    // 'ceo' | 'user' | 'system'
+  text: string;
+  metadata: string | null;
+  created_at: string;
+}
+
+export function loadChatMessages(conversationId: string): ChatMessageRow[] {
+  const results: ChatMessageRow[] = [];
+  const stmt = getDB().prepare('SELECT id, conversation_id, sender, text, metadata, created_at FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC');
+  stmt.bind([conversationId]);
+  while (stmt.step()) {
+    results.push(stmt.getAsObject() as unknown as ChatMessageRow);
+  }
+  stmt.free();
+  return results;
+}
+
+export function saveChatMessage(msg: Omit<ChatMessageRow, 'created_at'>): void {
+  getDB().run(
+    'INSERT INTO chat_messages (id, conversation_id, sender, text, metadata) VALUES (?, ?, ?, ?, ?)',
+    [msg.id, msg.conversation_id, msg.sender, msg.text, msg.metadata],
+  );
+  // Touch the conversation's updated_at
+  getDB().run("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?", [msg.conversation_id]);
+  persist();
+}
+
+export function deleteChatMessages(conversationId: string): void {
+  getDB().run('DELETE FROM chat_messages WHERE conversation_id = ?', [conversationId]);
+  persist();
+}
+
+export function countChatMessages(conversationId: string): number {
+  const stmt = getDB().prepare('SELECT COUNT(*) as cnt FROM chat_messages WHERE conversation_id = ?');
+  stmt.bind([conversationId]);
+  stmt.step();
+  const row = stmt.getAsObject() as { cnt: number };
+  stmt.free();
+  return row.cnt;
+}
+
+export function getLastChatMessage(conversationId: string): ChatMessageRow | null {
+  const stmt = getDB().prepare('SELECT id, conversation_id, sender, text, metadata, created_at FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1');
+  stmt.bind([conversationId]);
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as unknown as ChatMessageRow;
+    stmt.free();
+    return row;
+  }
+  stmt.free();
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Fire CEO (preserves agents, vault, missions, etc.)
 // ---------------------------------------------------------------------------
 
 export function fireCEO(): void {
   getDB().run('DELETE FROM ceo');
   getDB().run("DELETE FROM settings WHERE key IN ('ceo_walked_in', 'ceo_meeting_done')");
+  getDB().run('DELETE FROM chat_messages');
+  getDB().run('DELETE FROM conversations');
   persist();
 }
 
@@ -636,7 +797,7 @@ export function fireCEO(): void {
 // ---------------------------------------------------------------------------
 
 export function exportDatabaseAsJSON(): Record<string, unknown[]> {
-  const tables = ['settings', 'agents', 'ceo', 'missions', 'audit_log', 'vault', 'approvals', 'skills'];
+  const tables = ['settings', 'agents', 'ceo', 'missions', 'audit_log', 'vault', 'approvals', 'skills', 'conversations', 'chat_messages'];
   const data: Record<string, unknown[]> = {};
   for (const table of tables) {
     const results: unknown[] = [];

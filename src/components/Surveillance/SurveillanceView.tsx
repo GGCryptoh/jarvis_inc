@@ -70,8 +70,7 @@ export default function SurveillanceView() {
   // Room tier — computed from agent count
   const roomTier = getRoomTier(agents.length);
 
-  // ---- Door + ceremony state ----
-  const [doorOpen, setDoorOpen] = useState<boolean | null>(null);
+  // ---- Ceremony state ----
   const [ceoStage, setCeoStage] = useState<CeremonyStage>(null);
   const ceoStageRef = useRef<CeremonyStage>(null);
 
@@ -113,7 +112,6 @@ export default function SurveillanceView() {
       const walkedIn = getSetting('ceo_walked_in');
       if (!walkedIn) {
         setCeoStage('entering');
-        setDoorOpen(true);
         setCeoAgent({
           id: 'ceo',
           name: ceoRow.name,
@@ -152,10 +150,24 @@ export default function SurveillanceView() {
 
   // ---- Load missions for priorities board ----
   useEffect(() => {
+    const meetingDone = getSetting('ceo_meeting_done');
+
     const refreshPriorities = () => {
+      if (!meetingDone) {
+        // Before onboarding: show contextual first-time priorities
+        setPriorities([
+          'Meet the Founder',
+          'Set Company Goals',
+          'Enable first skill',
+        ]);
+        return;
+      }
       const all = loadMissions();
       const active = all.filter(m => m.status !== 'done').slice(0, 3);
-      setPriorities(active.map(m => m.title));
+      setPriorities(active.map(m => {
+        // Truncate long titles for the small holographic board
+        return m.title.length > 40 ? m.title.slice(0, 37) + '...' : m.title;
+      }));
     };
     refreshPriorities();
     const interval = setInterval(refreshPriorities, 10000);
@@ -165,7 +177,6 @@ export default function SurveillanceView() {
   // ---- CEO ceremony stage effects ----
   useEffect(() => {
     if (ceoStage === 'celebrating') {
-      setDoorOpen(false); // close door
       playSuccessJingle();
       const timer = setTimeout(() => {
         setCeoStage('walking_to_desk');
@@ -193,7 +204,6 @@ export default function SurveillanceView() {
     if (!hireCeremony) return;
 
     if (hireCeremony.stage === 'celebrating') {
-      setDoorOpen(false); // close door
       playSuccessJingle();
       const timer = setTimeout(() => {
         const deskPos = hireCeremony.deskPos;
@@ -247,7 +257,6 @@ export default function SurveillanceView() {
     const deskPos = tierPresets[agents.length] ?? fallbackDesks[agents.length] ?? { x: 40, y: 60 };
 
     // Start hire ceremony — agent walks from entrance to center stage
-    setDoorOpen(true);
     setHireCeremony({ agentId: id, stage: 'entering', deskPos });
 
     const newAgent: Agent = {
@@ -499,7 +508,6 @@ export default function SurveillanceView() {
             onAgentClick={handleAgentClickForPlanner}
             sceneMode="working"
             ceo={ceoAgent}
-            doorOpen={doorOpen}
             roomTier={roomTier}
             priorities={priorities}
             floorPlannerActive={floorPlannerActive}

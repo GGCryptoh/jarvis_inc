@@ -364,7 +364,6 @@ export default function SurveillanceModule() {
             onAgentClick={setSelectedAgent}
             sceneMode={sceneMode}
             ceo={ceoAgent}
-            doorOpen={null}
             roomTier={roomTier}
           />
         </CRTFrame>

@@ -127,10 +127,10 @@ export const auditLog: AuditEntry[] = [
 ];
 
 export const financials: FinancialEntry[] = [
-  { month: 'Sep', budget: 500, actual: 420, category: 'API Costs' },
-  { month: 'Oct', budget: 500, actual: 485, category: 'API Costs' },
-  { month: 'Nov', budget: 600, actual: 560, category: 'API Costs' },
-  { month: 'Dec', budget: 600, actual: 620, category: 'API Costs' },
-  { month: 'Jan', budget: 750, actual: 680, category: 'API Costs' },
-  { month: 'Feb', budget: 750, actual: 310, category: 'API Costs' },
+  { month: "Sep '25", budget: 500, actual: 420, category: 'API Costs' },
+  { month: "Oct '25", budget: 500, actual: 485, category: 'API Costs' },
+  { month: "Nov '25", budget: 600, actual: 560, category: 'API Costs' },
+  { month: "Dec '25", budget: 600, actual: 620, category: 'API Costs' },
+  { month: "Jan '26", budget: 750, actual: 680, category: 'API Costs' },
+  { month: "Feb '26", budget: 750, actual: 310, category: 'API Costs' },
 ];

@@ -55,6 +55,21 @@ export const SERVICE_KEY_HINTS: Record<string, { url: string; steps: string[] }>
   },
 };
 
+export const MODEL_API_IDS: Record<string, string> = {
+  'Claude Opus 4.6':    'claude-opus-4-6-20250929',
+  'Claude Opus 4.5':    'claude-opus-4-5-20250414',
+  'Claude Sonnet 4.5':  'claude-sonnet-4-5-20250929',
+  'Claude Haiku 4.5':   'claude-haiku-4-5-20251001',
+  'GPT-5.2':            'gpt-5.2',
+  'o3-pro':             'o3-pro',
+  'o4-mini':            'o4-mini',
+  'Gemini 3 Pro':       'gemini-3.0-pro',
+  'Gemini 2.5 Flash':   'gemini-2.5-flash',
+  'DeepSeek R1':        'deepseek-reasoner',
+  'Llama 3.3':          'llama-3.3-70b',
+  'Grok 4':             'grok-4',
+};
+
 export function getServiceForModel(model: string): string {
   return MODEL_SERVICE_MAP[model] ?? 'Unknown';
 }

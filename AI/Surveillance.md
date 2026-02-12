@@ -3,6 +3,11 @@
 > Committed project documentation. Captures the visual identity, technical architecture,
 > and future vision for the `/surveillance` pixel office module.
 
+### Implementation Status (2026-02-12)
+- **Shipped**: All 8 components (SurveillanceView, SurveillanceModule, PixelOffice, AgentSprite, CEOSprite, CRTFrame, SurveillanceControls, HireAgentModal)
+- **Shipped**: 4 floor tiers, 7 animation states, CEO walk-in + agent hire ceremonies, floor planner mode
+- **Note**: Door animation has been **removed** (TASKS.md line 142). Ceremonies now run without door visuals. References to door animation below are historical.
+
 ---
 
 ## Visual Identity

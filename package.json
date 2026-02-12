@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup": "node docker/setup.mjs",
+    "setup:check": "node docker/setup.mjs --check"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",

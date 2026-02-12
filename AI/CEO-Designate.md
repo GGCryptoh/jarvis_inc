@@ -4,6 +4,12 @@
 > (risk tolerance, management philosophy, and personality archetype) shapes
 > the CEO agent's system prompt, decision thresholds, and communication style.
 
+### Implementation Status (2026-02-12)
+- **Shipped**: All 3 axes implemented in CEO Ceremony — risk tolerance, management philosophy, **and** 8 personality archetypes (Wharton MBA, Wall St Shark, MIT Engineer, SV Founder, Beach Bum, Commander, Creative Dir, Professor)
+- **Shipped**: Archetype selection UI with persona descriptions, DB persistence in `ceo` table (`archetype` column)
+- **Shipped**: Combined system prompt assembly (archetype + philosophy + risk → CEO personality)
+- **Not yet wired**: Risk tolerance thresholds into actual decision engine (awaits Phase 2 scheduler)
+
 ---
 
 ## Overview
@@ -12,7 +18,7 @@ The CEO is not a one-size-fits-all agent. During the CEO Ceremony, the founder c
 
 1. **Risk Tolerance** — Controls decision thresholds (hiring, budgets, approvals)
 2. **Management Philosophy** — Controls operational priorities (speed vs quality vs data vs innovation)
-3. **Personality Archetype** (future) — Controls communication style and persona
+3. **Personality Archetype** — Controls communication style and persona
 
 These values are stored in the `ceo` table and injected into the CEO's system prompt on every evaluation tick.
 
