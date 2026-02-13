@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react'
-import { DollarSign, TrendingDown, TrendingUp, Minus, Pencil, X } from 'lucide-react'
+import { DollarSign, TrendingDown, TrendingUp, Minus, Pencil, X, BarChart3 } from 'lucide-react'
 import { getSetting, setSetting, logAudit } from '../../lib/database'
-import { financials } from '../../data/dummyData'
+import { getMonthlyUsage, getCurrentMonthSpend } from '../../lib/llmUsage'
 
 function formatCurrency(value: number): string {
-  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 0 })}`
+  if (value === 0) return '$0.00'
+  if (Math.abs(value) < 1) return `$${value.toFixed(4)}`
+  if (Math.abs(value) < 100) return `$${value.toFixed(2)}`
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 // ---------------------------------------------------------------------------
@@ -177,11 +180,29 @@ function BudgetEditDialog({
 export default function FinancialsView() {
   const [monthlyBudget, setMonthlyBudget] = useState(100); // default $100/mo
   const [showBudgetEdit, setShowBudgetEdit] = useState(false);
+  const [monthlyData, setMonthlyData] = useState<{ month: string; llmCost: number; channelCost: number }[]>([]);
+  const [currentSpend, setCurrentSpend] = useState<{ llm: number; channel: number; total: number }>({ llm: 0, channel: 0, total: 0 });
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getSetting('monthly_budget').then(saved => {
-      if (saved) setMonthlyBudget(parseFloat(saved));
-    });
+    async function load() {
+      setLoading(true);
+      try {
+        const [budgetSaved, monthly, spend] = await Promise.all([
+          getSetting('monthly_budget'),
+          getMonthlyUsage(),
+          getCurrentMonthSpend(),
+        ]);
+        if (budgetSaved) setMonthlyBudget(parseFloat(budgetSaved));
+        setMonthlyData(monthly);
+        setCurrentSpend(spend);
+      } catch {
+        // Supabase may not be configured — leave defaults
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
   }, []);
 
   async function handleBudgetSave(value: number) {
@@ -192,28 +213,50 @@ export default function FinancialsView() {
     await logAudit(null, 'BUDGET', `Monthly budget changed from $${oldBudget} to $${value}`, 'info');
   }
 
-  const totalBudget = monthlyBudget * 12; // annual from monthly
-  const totalSpent = financials.reduce((sum, f) => sum + f.actual, 0)
-  const remaining = totalBudget - totalSpent
-  const burnRate = totalSpent > 0 && financials.length > 0
-    ? Math.round(totalSpent / financials.length)
-    : 0
-  const maxValue = Math.max(...financials.map((f) => Math.max(monthlyBudget, f.actual)))
+  const totalSpent = currentSpend.total;
+  const remaining = monthlyBudget - totalSpent;
+
+  // Burn rate: total spent / days elapsed this month * days remaining
+  const now = new Date();
+  const daysElapsed = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysRemaining = daysInMonth - daysElapsed;
+  const dailyRate = daysElapsed > 0 ? totalSpent / daysElapsed : 0;
+  const projectedMonthTotal = dailyRate * daysInMonth;
+  const burnRate = dailyRate * daysRemaining;
+
+  const hasData = monthlyData.length > 0;
+
+  // Chart calculations
+  const chartData = monthlyData.map(m => ({
+    ...m,
+    total: m.llmCost + m.channelCost,
+  }));
+  const maxValue = hasData
+    ? Math.max(...chartData.map(m => Math.max(monthlyBudget, m.total)))
+    : monthlyBudget;
+
+  // Format month label: "2025-02" → "Feb 2025"
+  function formatMonth(ym: string): string {
+    const [year, month] = ym.split('-');
+    const date = new Date(Number(year), Number(month) - 1);
+    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  }
 
   const stats = [
     {
       label: 'Monthly Budget',
       value: formatCurrency(monthlyBudget),
-      sublabel: `${formatCurrency(totalBudget)} / year`,
+      sublabel: `${formatCurrency(monthlyBudget * 12)} / year`,
       icon: DollarSign,
       color: 'text-jarvis-text',
       borderColor: 'border-white/[0.08]',
       editable: true,
     },
     {
-      label: 'Total Spent',
+      label: 'Spent This Month',
       value: formatCurrency(totalSpent),
-      sublabel: `${financials.length} months tracked`,
+      sublabel: `LLM: ${formatCurrency(currentSpend.llm)} | Channels: ${formatCurrency(currentSpend.channel)}`,
       icon: TrendingUp,
       color: 'text-emerald-400',
       borderColor: 'border-emerald-500/20',
@@ -230,14 +273,16 @@ export default function FinancialsView() {
     },
     {
       label: 'Burn Rate',
-      value: `${formatCurrency(burnRate)}/mo`,
-      sublabel: burnRate > monthlyBudget ? 'Exceeds budget' : 'Within budget',
+      value: `${formatCurrency(projectedMonthTotal)}/mo`,
+      sublabel: projectedMonthTotal > monthlyBudget
+        ? `Projected to exceed by ${formatCurrency(projectedMonthTotal - monthlyBudget)}`
+        : `${formatCurrency(burnRate)} projected remaining spend`,
       icon: Minus,
       color: 'text-amber-400',
       borderColor: 'border-amber-500/20',
       editable: false,
     },
-  ]
+  ];
 
   return (
     <div className="min-h-screen bg-jarvis-bg p-6">
@@ -253,14 +298,14 @@ export default function FinancialsView() {
           </div>
         </div>
         <div className="text-xs text-jarvis-muted font-mono">
-          FY 2025-2026
+          {now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} &mdash; Day {daysElapsed} of {daysInMonth}
         </div>
       </div>
 
       {/* Stats Row */}
       <div className="grid grid-cols-4 gap-4 mb-8">
         {stats.map((stat) => {
-          const Icon = stat.icon
+          const Icon = stat.icon;
           return (
             <div
               key={stat.label}
@@ -286,7 +331,7 @@ export default function FinancialsView() {
                 <div className="text-[10px] text-zinc-600 mt-1">{stat.sublabel}</div>
               )}
             </div>
-          )
+          );
         })}
       </div>
 
@@ -308,44 +353,55 @@ export default function FinancialsView() {
           </div>
         </div>
 
-        {/* Chart Area */}
-        <div className="flex items-end gap-6 h-56 px-2">
-          {financials.map((entry) => {
-            const budgetHeight = maxValue > 0 ? (monthlyBudget / maxValue) * 100 : 0
-            const actualHeight = maxValue > 0 ? (entry.actual / maxValue) * 100 : 0
-            const isOverBudget = entry.actual > monthlyBudget
+        {loading ? (
+          <div className="flex items-center justify-center h-56 text-jarvis-muted text-sm">
+            Loading usage data...
+          </div>
+        ) : !hasData ? (
+          <div className="flex flex-col items-center justify-center h-56 text-jarvis-muted">
+            <BarChart3 size={32} className="mb-3 opacity-30" />
+            <p className="text-sm">No usage data yet</p>
+            <p className="text-xs mt-1 opacity-60">Cost data will appear here once agents start executing tasks</p>
+          </div>
+        ) : (
+          <div className="flex items-end gap-6 h-56 px-2">
+            {chartData.map((entry) => {
+              const budgetHeight = maxValue > 0 ? (monthlyBudget / maxValue) * 100 : 0;
+              const actualHeight = maxValue > 0 ? (entry.total / maxValue) * 100 : 0;
+              const isOverBudget = entry.total > monthlyBudget;
 
-            return (
-              <div key={entry.month} className="flex-1 flex flex-col items-center gap-2">
-                {/* Bar Group */}
-                <div className="flex items-end gap-1.5 w-full justify-center h-48">
-                  {/* Budget Bar (outlined) */}
-                  <div className="relative flex-1 max-w-[28px] flex flex-col justify-end">
-                    <div
-                      className="w-full border-2 border-zinc-500 rounded-t-sm bg-transparent transition-all duration-500"
-                      style={{ height: `${budgetHeight}%` }}
-                      title={`Budget: ${formatCurrency(monthlyBudget)}`}
-                    />
+              return (
+                <div key={entry.month} className="flex-1 flex flex-col items-center gap-2">
+                  {/* Bar Group */}
+                  <div className="flex items-end gap-1.5 w-full justify-center h-48">
+                    {/* Budget Bar (outlined) */}
+                    <div className="relative flex-1 max-w-[28px] flex flex-col justify-end">
+                      <div
+                        className="w-full border-2 border-zinc-500 rounded-t-sm bg-transparent transition-all duration-500"
+                        style={{ height: `${budgetHeight}%` }}
+                        title={`Budget: ${formatCurrency(monthlyBudget)}`}
+                      />
+                    </div>
+                    {/* Actual Bar (filled) */}
+                    <div className="relative flex-1 max-w-[28px] flex flex-col justify-end">
+                      <div
+                        className={[
+                          'w-full rounded-t-sm transition-all duration-500',
+                          isOverBudget ? 'bg-red-500/80' : 'bg-emerald-500/80',
+                        ].join(' ')}
+                        style={{ height: `${actualHeight}%` }}
+                        title={`Actual: ${formatCurrency(entry.total)} (LLM: ${formatCurrency(entry.llmCost)}, Channels: ${formatCurrency(entry.channelCost)})`}
+                      />
+                    </div>
                   </div>
-                  {/* Actual Bar (filled) */}
-                  <div className="relative flex-1 max-w-[28px] flex flex-col justify-end">
-                    <div
-                      className={[
-                        'w-full rounded-t-sm transition-all duration-500',
-                        isOverBudget ? 'bg-red-500/80' : 'bg-emerald-500/80',
-                      ].join(' ')}
-                      style={{ height: `${actualHeight}%` }}
-                      title={`Actual: ${formatCurrency(entry.actual)}`}
-                    />
-                  </div>
+
+                  {/* X-axis Label */}
+                  <span className="text-xs font-medium text-jarvis-muted mt-1">{formatMonth(entry.month)}</span>
                 </div>
-
-                {/* X-axis Label */}
-                <span className="text-xs font-medium text-jarvis-muted mt-1">{entry.month}</span>
-              </div>
-            )
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Data Table */}
@@ -357,91 +413,118 @@ export default function FinancialsView() {
         </div>
 
         {/* Table Header */}
-        <div className="grid grid-cols-[1fr_120px_120px_120px_140px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.015]">
+        <div className="grid grid-cols-[1fr_110px_110px_110px_110px_140px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.015]">
           <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Month</span>
+          <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">LLM Cost</span>
+          <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Channel Cost</span>
+          <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Total</span>
           <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Budget</span>
-          <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Actual</span>
           <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Variance</span>
-          <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Status</span>
         </div>
 
-        {/* Table Rows */}
-        {financials.map((entry, idx) => {
-          const variance = monthlyBudget - entry.actual
-          const isOverBudget = variance < 0
-          const variancePercent = monthlyBudget > 0
-            ? ((entry.actual - monthlyBudget) / monthlyBudget * 100).toFixed(1)
-            : '0.0'
-
-          return (
-            <div
-              key={entry.month}
-              className={[
-                'grid grid-cols-[1fr_120px_120px_120px_140px] gap-4 px-6 py-3.5 border-b border-white/[0.04] items-center transition-colors hover:bg-white/[0.03]',
-                idx % 2 === 1 ? 'bg-white/[0.015]' : '',
-              ].join(' ')}
-            >
-              {/* Month */}
-              <span className="text-sm font-medium text-jarvis-text">{entry.month}</span>
-
-              {/* Budget */}
-              <span className="text-sm font-mono text-jarvis-muted text-right">
-                {formatCurrency(monthlyBudget)}
-              </span>
-
-              {/* Actual */}
-              <span className={`text-sm font-mono text-right ${isOverBudget ? 'text-red-400' : 'text-emerald-400'}`}>
-                {formatCurrency(entry.actual)}
-              </span>
-
-              {/* Variance */}
-              <span className={`text-sm font-mono text-right ${isOverBudget ? 'text-red-400' : 'text-emerald-400'}`}>
-                {isOverBudget ? '-' : '+'}{formatCurrency(Math.abs(variance))}
-              </span>
-
-              {/* Status */}
-              <div className="flex items-center justify-end gap-2">
-                {isOverBudget ? (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-md">
-                    <TrendingUp size={11} />
-                    Over {Math.abs(Number(variancePercent))}%
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md">
-                    <TrendingDown size={11} />
-                    Under {Math.abs(Number(variancePercent))}%
-                  </span>
-                )}
-              </div>
-            </div>
-          )
-        })}
-
-        {/* Totals Row */}
-        <div className="grid grid-cols-[1fr_120px_120px_120px_140px] gap-4 px-6 py-4 bg-white/[0.03] border-t border-white/[0.08]">
-          <span className="text-sm font-bold text-jarvis-text uppercase tracking-wider">Total</span>
-          <span className="text-sm font-mono font-bold text-jarvis-text text-right">
-            {formatCurrency(totalBudget)}
-          </span>
-          <span className={`text-sm font-mono font-bold text-right ${totalSpent > totalBudget ? 'text-red-400' : 'text-emerald-400'}`}>
-            {formatCurrency(totalSpent)}
-          </span>
-          <span className={`text-sm font-mono font-bold text-right ${remaining < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-            {remaining >= 0 ? '+' : '-'}{formatCurrency(Math.abs(remaining))}
-          </span>
-          <div className="flex justify-end">
-            <span className={`inline-block px-2.5 py-1 text-[11px] font-bold rounded-md ${remaining >= 0 ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-red-400 bg-red-500/10 border border-red-500/20'}`}>
-              {remaining >= 0 ? 'UNDER BUDGET' : 'OVER BUDGET'}
-            </span>
+        {!hasData && !loading ? (
+          <div className="px-6 py-8 text-center text-sm text-jarvis-muted">
+            No usage data yet. Costs will appear once agents begin executing tasks.
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Table Rows */}
+            {chartData.map((entry, idx) => {
+              const variance = monthlyBudget - entry.total;
+              const isOverBudget = variance < 0;
+              const variancePercent = monthlyBudget > 0
+                ? ((entry.total - monthlyBudget) / monthlyBudget * 100).toFixed(1)
+                : '0.0';
+
+              return (
+                <div
+                  key={entry.month}
+                  className={[
+                    'grid grid-cols-[1fr_110px_110px_110px_110px_140px] gap-4 px-6 py-3.5 border-b border-white/[0.04] items-center transition-colors hover:bg-white/[0.03]',
+                    idx % 2 === 1 ? 'bg-white/[0.015]' : '',
+                  ].join(' ')}
+                >
+                  {/* Month */}
+                  <span className="text-sm font-medium text-jarvis-text">{formatMonth(entry.month)}</span>
+
+                  {/* LLM Cost */}
+                  <span className="text-sm font-mono text-jarvis-muted text-right">
+                    {formatCurrency(entry.llmCost)}
+                  </span>
+
+                  {/* Channel Cost */}
+                  <span className="text-sm font-mono text-jarvis-muted text-right">
+                    {formatCurrency(entry.channelCost)}
+                  </span>
+
+                  {/* Total */}
+                  <span className={`text-sm font-mono text-right ${isOverBudget ? 'text-red-400' : 'text-emerald-400'}`}>
+                    {formatCurrency(entry.total)}
+                  </span>
+
+                  {/* Budget */}
+                  <span className="text-sm font-mono text-jarvis-muted text-right">
+                    {formatCurrency(monthlyBudget)}
+                  </span>
+
+                  {/* Variance */}
+                  <div className="flex items-center justify-end gap-2">
+                    {isOverBudget ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-md">
+                        <TrendingUp size={11} />
+                        Over {Math.abs(Number(variancePercent))}%
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md">
+                        <TrendingDown size={11} />
+                        Under {Math.abs(Number(variancePercent))}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Totals Row */}
+            {chartData.length > 0 && (() => {
+              const totalLlm = chartData.reduce((s, r) => s + r.llmCost, 0);
+              const totalChannel = chartData.reduce((s, r) => s + r.channelCost, 0);
+              const grandTotal = totalLlm + totalChannel;
+              const totalBudget = monthlyBudget * chartData.length;
+              const totalVariance = totalBudget - grandTotal;
+
+              return (
+                <div className="grid grid-cols-[1fr_110px_110px_110px_110px_140px] gap-4 px-6 py-4 bg-white/[0.03] border-t border-white/[0.08]">
+                  <span className="text-sm font-bold text-jarvis-text uppercase tracking-wider">Total</span>
+                  <span className="text-sm font-mono font-bold text-jarvis-text text-right">
+                    {formatCurrency(totalLlm)}
+                  </span>
+                  <span className="text-sm font-mono font-bold text-jarvis-text text-right">
+                    {formatCurrency(totalChannel)}
+                  </span>
+                  <span className={`text-sm font-mono font-bold text-right ${grandTotal > totalBudget ? 'text-red-400' : 'text-emerald-400'}`}>
+                    {formatCurrency(grandTotal)}
+                  </span>
+                  <span className="text-sm font-mono font-bold text-jarvis-text text-right">
+                    {formatCurrency(totalBudget)}
+                  </span>
+                  <div className="flex justify-end">
+                    <span className={`inline-block px-2.5 py-1 text-[11px] font-bold rounded-md ${totalVariance >= 0 ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-red-400 bg-red-500/10 border border-red-500/20'}`}>
+                      {totalVariance >= 0 ? 'UNDER BUDGET' : 'OVER BUDGET'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+          </>
+        )}
       </div>
 
       {/* Footer */}
       <div className="mt-4 flex items-center gap-2 px-2">
         <DollarSign size={12} className="text-jarvis-muted" />
         <span className="text-xs text-jarvis-muted">
-          All figures in USD. Monthly budget of {formatCurrency(monthlyBudget)} applies uniformly. Burn rate calculated as trailing average.
+          All figures in USD. Monthly budget of {formatCurrency(monthlyBudget)} applies uniformly. Burn rate projected from {daysElapsed} days of data.
         </span>
       </div>
 
@@ -454,5 +537,5 @@ export default function FinancialsView() {
         />
       )}
     </div>
-  )
+  );
 }
