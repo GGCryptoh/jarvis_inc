@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { ScrollText, Download, Info, AlertTriangle, AlertOctagon } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { ScrollText, Download, Info, AlertTriangle, AlertOctagon, MessageSquare } from 'lucide-react'
 import { loadAuditLog, type AuditLogRow } from '../../lib/database'
 
 type SeverityFilter = 'all' | 'info' | 'warning' | 'error'
@@ -34,7 +35,21 @@ function formatTimestamp(ts: string): string {
   } catch { return ts }
 }
 
+/** Parse a conversation ID from a CEO_CHAT detail string like "... [conv:abc123]" */
+function parseConversationId(details: string | null): string | null {
+  if (!details) return null
+  const match = details.match(/\[conv:([^\]]+)\]/)
+  return match?.[1] || null
+}
+
+/** Strip the [conv:...] tag from the detail string for display */
+function stripConvTag(details: string | null): string {
+  if (!details) return '—'
+  return details.replace(/\s*\[conv:[^\]]*\]/, '').trim() || '—'
+}
+
 export default function AuditView() {
+  const navigate = useNavigate()
   const [entries, setEntries] = useState<AuditLogRow[]>([])
   const [activeFilter, setActiveFilter] = useState<SeverityFilter>('all')
 
@@ -156,8 +171,19 @@ export default function AuditView() {
                   {entry.action}
                 </span>
               </div>
-              <span className="text-sm text-jarvis-muted truncate cursor-default" title={entry.details ?? ''}>
-                {entry.details ?? '—'}
+              <span className="text-sm text-jarvis-muted truncate cursor-default flex items-center" title={entry.details ?? ''}>
+                {entry.action === 'CEO_CHAT' && parseConversationId(entry.details)
+                  ? <>
+                      {stripConvTag(entry.details)}
+                      <button
+                        onClick={() => navigate(`/chat?conversation=${parseConversationId(entry.details)}`)}
+                        className="inline-flex items-center gap-1 ml-2 px-2 py-0.5 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded hover:bg-emerald-500/20 transition-colors flex-shrink-0"
+                      >
+                        <MessageSquare size={10} /> VIEW CHAT
+                      </button>
+                    </>
+                  : (entry.details ?? '—')
+                }
               </span>
               <div className="flex justify-center">
                 {severityIcons[entry.severity] ?? severityIcons.info}

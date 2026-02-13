@@ -170,6 +170,18 @@ export default function CEOSprite({ agent, onClick, archetype, riskTolerance }: 
           />
         </div>
 
+        {/* Typing hands - visible when working (seated at desk) */}
+        {agent.status === 'working' && (
+          <div className="typing-hands flex justify-center -mt-[2px]">
+            <div className="flex gap-[10px]">
+              {/* Left hand */}
+              <div className="w-[8px] h-[6px] rounded-[1px]" style={{ backgroundColor: agent.skinTone }} />
+              {/* Right hand */}
+              <div className="w-[8px] h-[6px] rounded-[1px]" style={{ backgroundColor: agent.skinTone }} />
+            </div>
+          </div>
+        )}
+
         {/* Legs */}
         <div className="flex justify-center gap-[5px]">
           <div className={`w-[11px] h-[14px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob' : ''}`} />

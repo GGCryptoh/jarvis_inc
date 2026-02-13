@@ -680,4 +680,33 @@
   animation: llm-reveal-slide 0.4s ease-out, llm-reveal-glow 1.5s ease-in-out infinite;
 }
 
+/* Typing hands animation - Police Quest style */
+@keyframes typing-hands {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  15% {
+    transform: translateY(-1px) translateX(-1px);
+  }
+  30% {
+    transform: translateY(0) translateX(0);
+  }
+  45% {
+    transform: translateY(-1px) translateX(1px);
+  }
+  60% {
+    transform: translateY(0) translateX(0);
+  }
+  75% {
+    transform: translateY(-0.5px) translateX(-0.5px);
+  }
+  90% {
+    transform: translateY(0) translateX(0.5px);
+  }
+}
+
+.typing-hands {
+  animation: typing-hands 0.4s steps(4) infinite;
+}
+
 /* Pixel font loaded via index.html <link> tag */

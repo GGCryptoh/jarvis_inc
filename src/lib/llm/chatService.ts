@@ -110,7 +110,7 @@ export async function streamCEOResponse(
       logAudit(
         ceo.name,
         'CEO_CHAT',
-        `LLM response via ${availability.displayModel} (${inputTokens + outputTokens} tokens)`,
+        `LLM response via ${availability.displayModel} (${inputTokens + outputTokens} tokens) [conv:${conversationHistory[0]?.conversation_id ?? ''}]`,
         'info',
       ).catch(() => {});
 
