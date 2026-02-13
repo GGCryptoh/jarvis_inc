@@ -1,14 +1,17 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Shield, Lock, Plus, Pencil, Trash2, X, AlertTriangle } from 'lucide-react';
+import { Shield, Lock, Plus, Pencil, Trash2, X, AlertTriangle, Mail, Send, MessageCircle, Phone, Bell } from 'lucide-react';
 import {
   loadVaultEntries,
   saveVaultEntry,
   updateVaultEntry,
   deleteVaultEntry,
   getEntitiesUsingService,
+  loadChannels,
+  saveChannel,
+  deleteChannel,
   logAudit,
 } from '../../lib/database';
-import type { VaultRow } from '../../lib/database';
+import type { VaultRow, ChannelRow } from '../../lib/database';
 import { SERVICE_KEY_HINTS } from '../../lib/models';
 
 const TYPE_OPTIONS = ['api_key', 'credential', 'token', 'secret'] as const;
@@ -32,16 +35,39 @@ function maskKey(key: string): string {
   return key.slice(0, 10) + '\u2022\u2022\u2022\u2022';
 }
 
+const CHANNEL_TYPES = [
+  { type: 'email', label: 'Email', icon: Mail, defaultCost: 0.001 },
+  { type: 'telegram', label: 'Telegram', icon: Send, defaultCost: 0.0 },
+  { type: 'sms', label: 'SMS', icon: MessageCircle, defaultCost: 0.01 },
+  { type: 'voice', label: 'Voice', icon: Phone, defaultCost: 0.05 },
+] as const;
+
+const channelIconMap: Record<string, typeof Mail> = {
+  email: Mail,
+  telegram: Send,
+  sms: MessageCircle,
+  voice: Phone,
+};
+
 export default function VaultView() {
   const [entries, setEntries] = useState<VaultRow[]>([]);
+  const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<VaultRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<VaultRow | null>(null);
   const [deleteEntities, setDeleteEntities] = useState<{ type: 'ceo' | 'agent'; name: string; model: string }[]>([]);
+  const [channelModalOpen, setChannelModalOpen] = useState(false);
+  const [channelFormType, setChannelFormType] = useState('email');
+  const [channelFormCost, setChannelFormCost] = useState('0.001');
+  const [deleteChannelTarget, setDeleteChannelTarget] = useState<ChannelRow | null>(null);
 
-  useEffect(() => { loadVaultEntries().then(setEntries) }, []);
+  useEffect(() => {
+    loadVaultEntries().then(setEntries);
+    loadChannels().then(setChannels);
+  }, []);
 
   const refresh = useCallback(() => { loadVaultEntries().then(setEntries) }, []);
+  const refreshChannels = useCallback(() => { loadChannels().then(setChannels) }, []);
 
   // Modal state
   const [formName, setFormName] = useState('');
@@ -101,6 +127,35 @@ export default function VaultView() {
     refresh();
   }
 
+  function openAddChannel() {
+    setChannelFormType('email');
+    setChannelFormCost('0.001');
+    setChannelModalOpen(true);
+  }
+
+  async function handleSaveChannel() {
+    const cost = parseFloat(channelFormCost);
+    if (isNaN(cost) || cost < 0) return;
+    await saveChannel({
+      id: `ch-${channelFormType}-${Date.now()}`,
+      type: channelFormType,
+      enabled: false,
+      config: {},
+      cost_per_unit: cost,
+    });
+    await logAudit(null, 'CHANNEL_ADDED', `Added ${channelFormType} notification channel`, 'info');
+    setChannelModalOpen(false);
+    refreshChannels();
+  }
+
+  async function handleDeleteChannelConfirm() {
+    if (!deleteChannelTarget) return;
+    await logAudit(null, 'CHANNEL_DELETED', `Deleted ${deleteChannelTarget.type} notification channel`, 'warning');
+    await deleteChannel(deleteChannelTarget.id);
+    setDeleteChannelTarget(null);
+    refreshChannels();
+  }
+
   const serviceOptions = Object.keys(SERVICE_KEY_HINTS);
 
   return (
@@ -129,7 +184,7 @@ export default function VaultView() {
       </div>
 
       {/* Summary Bar */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-4 gap-4 mb-6">
         {(['api_key', 'credential', 'token'] as const).map(type => {
           const count = entries.filter(e => e.type === type).length;
           const colors = type === 'api_key'
@@ -148,6 +203,13 @@ export default function VaultView() {
             </div>
           );
         })}
+        <div className="bg-jarvis-surface border border-cyan-500/15 rounded-lg px-5 py-4">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-cyan-500" />
+            <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">Channels</span>
+          </div>
+          <span className="text-3xl font-bold text-cyan-400">{channels.length}</span>
+        </div>
       </div>
 
       {/* Vault Table */}
@@ -195,7 +257,7 @@ export default function VaultView() {
               </span>
 
               <span className="text-sm font-mono text-jarvis-muted">
-                {entry.created_at?.slice(0, 10) ?? '—'}
+                {entry.created_at?.slice(0, 10) ?? '---'}
               </span>
 
               <div className="flex justify-end gap-1">
@@ -216,6 +278,83 @@ export default function VaultView() {
           ))}
         </div>
       )}
+
+      {/* Notification Channels Section */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Bell size={20} className="text-cyan-400" />
+            <h2 className="text-lg font-bold text-jarvis-text tracking-wide">NOTIFICATION CHANNELS</h2>
+          </div>
+          <button
+            onClick={openAddChannel}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-cyan-400 bg-cyan-500/10 border border-cyan-500/25 rounded-lg hover:bg-cyan-500/20 transition-colors"
+          >
+            <Plus size={16} />
+            ADD CHANNEL
+          </button>
+        </div>
+
+        {channels.length === 0 ? (
+          <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-12 text-center">
+            <Bell size={32} className="text-jarvis-muted mx-auto mb-4 opacity-40" />
+            <p className="text-jarvis-muted text-sm mb-1">No notification channels configured</p>
+            <p className="text-jarvis-muted/60 text-xs">Add channels for Email, Telegram, SMS, or Voice notifications.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {channels.map(channel => {
+              const IconComponent = channelIconMap[channel.type] ?? Bell;
+              const channelMeta = CHANNEL_TYPES.find(ct => ct.type === channel.type);
+              const label = channelMeta?.label ?? channel.type.charAt(0).toUpperCase() + channel.type.slice(1);
+              return (
+                <div
+                  key={channel.id}
+                  className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-5 flex flex-col gap-3 hover:border-white/[0.1] transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                        <IconComponent size={18} className="text-cyan-400" />
+                      </div>
+                      <span className="text-sm font-semibold text-jarvis-text uppercase tracking-wide">{label}</span>
+                    </div>
+                    <span className="inline-block px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 uppercase tracking-wider">
+                      Coming Soon
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 mt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-jarvis-muted">Cost per unit</span>
+                      <span className="text-xs font-mono text-jarvis-text">${channel.cost_per_unit.toFixed(4)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-jarvis-muted">Status</span>
+                      <span className="text-xs font-medium text-zinc-500">Disabled</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 mt-auto pt-2">
+                    <button
+                      disabled
+                      className="flex-1 px-3 py-1.5 text-xs font-medium text-jarvis-muted bg-white/[0.03] border border-white/[0.06] rounded-md cursor-not-allowed opacity-50"
+                    >
+                      Configure
+                    </button>
+                    <button
+                      onClick={() => setDeleteChannelTarget(channel)}
+                      className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Footer */}
       <div className="mt-4 flex items-center gap-2 px-2">
@@ -376,6 +515,122 @@ export default function VaultView() {
                   className="px-5 py-2 text-sm font-medium text-red-400 bg-red-500/10 border border-red-500/25 rounded-lg hover:bg-red-500/20 transition-colors"
                 >
                   {deleteEntities.length > 0 ? 'DELETE ANYWAY' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Channel Modal */}
+      {channelModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setChannelModalOpen(false)} />
+          <div className="relative z-10 bg-jarvis-surface border border-white/[0.08] rounded-xl w-full max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
+              <h2 className="text-lg font-semibold text-jarvis-text">Add Notification Channel</h2>
+              <button onClick={() => setChannelModalOpen(false)} className="text-jarvis-muted hover:text-jarvis-text transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-2">Channel Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {CHANNEL_TYPES.map(ct => {
+                    const Icon = ct.icon;
+                    const selected = channelFormType === ct.type;
+                    return (
+                      <button
+                        key={ct.type}
+                        onClick={() => {
+                          setChannelFormType(ct.type);
+                          setChannelFormCost(ct.defaultCost.toString());
+                        }}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors ${
+                          selected
+                            ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
+                            : 'border-white/[0.08] text-jarvis-muted hover:text-jarvis-text hover:border-white/[0.15]'
+                        }`}
+                      >
+                        <Icon size={18} />
+                        <span className="text-sm font-medium">{ct.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-1.5">Cost Per Unit ($)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={channelFormCost}
+                  onChange={e => setChannelFormCost(e.target.value)}
+                  className="w-full bg-jarvis-bg border border-white/[0.08] text-jarvis-text text-sm font-mono px-3 py-2.5 rounded-lg focus:outline-none focus:border-cyan-500/50 transition-colors placeholder:text-zinc-600"
+                />
+              </div>
+
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                <p className="text-xs text-amber-400">
+                  Notification adapters are not yet implemented. Channels will be saved as placeholders for future use.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-white/[0.06]">
+              <button
+                onClick={() => setChannelModalOpen(false)}
+                className="px-4 py-2 text-sm text-jarvis-muted hover:text-jarvis-text transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveChannel}
+                className="px-5 py-2 text-sm font-medium text-cyan-400 bg-cyan-500/10 border border-cyan-500/25 rounded-lg hover:bg-cyan-500/20 transition-colors"
+              >
+                Add Channel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Channel Confirmation Modal */}
+      {deleteChannelTarget && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeleteChannelTarget(null)} />
+          <div className="relative z-10 bg-jarvis-surface border border-red-500/20 rounded-xl w-full max-w-md mx-4 shadow-2xl">
+            <div className="px-6 py-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center">
+                  <AlertTriangle size={20} className="text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-jarvis-text">Delete Channel</h3>
+                  <p className="text-xs text-jarvis-muted capitalize">{deleteChannelTarget.type} notification channel</p>
+                </div>
+              </div>
+
+              <p className="text-sm text-jarvis-muted mb-4">
+                Are you sure you want to remove this notification channel? This action cannot be undone.
+              </p>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setDeleteChannelTarget(null)}
+                  className="px-4 py-2 text-sm text-jarvis-muted hover:text-jarvis-text transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteChannelConfirm}
+                  className="px-5 py-2 text-sm font-medium text-red-400 bg-red-500/10 border border-red-500/25 rounded-lg hover:bg-red-500/20 transition-colors"
+                >
+                  Delete
                 </button>
               </div>
             </div>
