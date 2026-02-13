@@ -267,12 +267,49 @@ export async function extractMemories(
     return [];
   }
 
-  // Save each extracted memory
+  // Load existing memories for dedup check
+  const existing = await getMemories(200);
+  const existingContentLower = existing.map(m => m.content.toLowerCase().trim());
+
+  // Save each extracted memory (skip duplicates)
   const validCategories = new Set(['fact', 'decision', 'preference', 'insight', 'reminder', 'founder_profile']);
   const saved: MemoryRow[] = [];
 
   for (const item of parsed) {
     if (!item.content || typeof item.content !== 'string') continue;
+
+    const contentLower = item.content.toLowerCase().trim();
+
+    // Skip if we already have a very similar memory (exact match or substring containment)
+    const isDuplicate = existingContentLower.some(existing =>
+      existing === contentLower ||
+      existing.includes(contentLower) ||
+      contentLower.includes(existing)
+    );
+    if (isDuplicate) {
+      // If the new one has higher importance, update the existing one
+      const existingMatch = existing.find(m =>
+        m.content.toLowerCase().trim() === contentLower ||
+        m.content.toLowerCase().trim().includes(contentLower) ||
+        contentLower.includes(m.content.toLowerCase().trim())
+      );
+      if (existingMatch) {
+        const newImportance = typeof item.importance === 'number'
+          ? Math.max(1, Math.min(10, Math.round(item.importance)))
+          : 5;
+        if (newImportance > existingMatch.importance) {
+          await saveMemory({
+            id: existingMatch.id,
+            category: existingMatch.category,
+            content: existingMatch.content,
+            source: existingMatch.source,
+            tags: existingMatch.tags,
+            importance: newImportance,
+          });
+        }
+      }
+      continue;
+    }
 
     const category = validCategories.has(item.category) ? item.category : 'fact';
     const tags = Array.isArray(item.tags) ? item.tags.filter((t): t is string => typeof t === 'string') : [];
@@ -288,6 +325,9 @@ export async function extractMemories(
       importance,
     });
     saved.push(row);
+
+    // Add to dedup list for this batch
+    existingContentLower.push(contentLower);
   }
 
   return saved;
