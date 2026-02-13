@@ -654,4 +654,30 @@
   100% { transform: translateY(0); opacity: 1; }
 }
 
+/* ── LLM: ONLINE reveal ───────────────────────────────── */
+@keyframes llm-reveal-flicker {
+  0%, 100% { opacity: 1; }
+  25% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+  75% { opacity: 0.1; }
+}
+
+@keyframes llm-reveal-slide {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes llm-reveal-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
+  50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.8), 0 0 40px rgba(16, 185, 129, 0.3); }
+}
+
+.llm-reveal-flicker {
+  animation: llm-reveal-flicker 0.15s ease-in-out;
+}
+
+.llm-reveal-badge {
+  animation: llm-reveal-slide 0.4s ease-out, llm-reveal-glow 1.5s ease-in-out infinite;
+}
+
 /* Pixel font loaded via index.html <link> tag */

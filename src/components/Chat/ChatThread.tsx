@@ -5,7 +5,9 @@ import {
   loadChatMessages, saveChatMessage, loadCEO,
 } from '../../lib/database';
 import { getCEOResponse } from '../../lib/ceoResponder';
-import { isLLMAvailable, streamCEOResponse } from '../../lib/llm/chatService';
+import { isLLMAvailable, streamCEOResponse, type LLMAvailability } from '../../lib/llm/chatService';
+import { extractMemories } from '../../lib/memory';
+import RichMessageContent from './ToolCallBlock';
 
 interface ChatThreadProps {
   conversation: ConversationRow;
@@ -16,18 +18,40 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
   const [streamingText, setStreamingText] = useState<string | null>(null);
+  const [ceoName, setCeoName] = useState('CEO');
+  const [llm, setLlm] = useState<LLMAvailability>({ available: false, service: '', model: '', displayModel: '' });
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const resumeGreetingSent = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  const ceoRow = loadCEO();
-  const ceoName = ceoRow?.name ?? 'CEO';
+  const lastExtractionCountRef = useRef<number>(0);
 
   const isArchived = conversation.status === 'archived';
 
-  // Check LLM availability
-  const llm = isLLMAvailable();
+  /** Fire-and-forget memory extraction when conversation reaches threshold */
+  const maybeExtractMemories = useCallback((allMessages: ChatMessageRow[]) => {
+    const count = allMessages.length;
+    if (count < 10) return;
+    // Only trigger every 10 messages since last extraction
+    if (count - lastExtractionCountRef.current < 10) return;
+    lastExtractionCountRef.current = count;
+    extractMemories(allMessages, conversation.id).catch(err =>
+      console.warn('Memory extraction failed:', err)
+    );
+  }, [conversation.id]);
+
+  // Load CEO name + LLM availability on mount and when conversation changes
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ceoRow = await loadCEO();
+      if (!cancelled) setCeoName(ceoRow?.name ?? 'CEO');
+
+      const availability = await isLLMAvailable();
+      if (!cancelled) setLlm(availability);
+    })();
+    return () => { cancelled = true; };
+  }, [conversation.id]);
 
   // Cleanup abort controller on unmount
   useEffect(() => {
@@ -38,41 +62,52 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
 
   // Load messages when conversation changes
   useEffect(() => {
+    let cancelled = false;
+
     // Abort any in-progress stream
     abortRef.current?.abort();
     abortRef.current = null;
     setStreamingText(null);
     setTyping(false);
 
-    const loaded = loadChatMessages(conversation.id);
-    setMessages(loaded);
+    (async () => {
+      const loaded = await loadChatMessages(conversation.id);
+      if (cancelled) return;
+      setMessages(loaded);
 
-    // If this is an active conversation with existing messages and we haven't greeted yet
-    if (!isArchived && loaded.length > 0 && resumeGreetingSent.current !== conversation.id) {
-      resumeGreetingSent.current = conversation.id;
-      // Add a context greeting from CEO
-      const greetMsg: ChatMessageRow = {
-        id: `msg-resume-${Date.now()}`,
-        conversation_id: conversation.id,
-        sender: 'ceo',
-        text: `Picking up where we left off. What do you need?`,
-        metadata: null,
-        created_at: new Date().toISOString(),
-      };
-      saveChatMessage({
-        id: greetMsg.id,
-        conversation_id: greetMsg.conversation_id,
-        sender: greetMsg.sender,
-        text: greetMsg.text,
-        metadata: null,
-      });
-      setMessages(prev => [...prev, greetMsg]);
-    }
+      // If this is an active conversation with existing messages and we haven't greeted yet,
+      // add a resume greeting — but skip if the last message is already a resume greeting
+      const lastMsg = loaded[loaded.length - 1];
+      const alreadyHasResume = lastMsg?.sender === 'ceo' && lastMsg?.id?.startsWith('msg-resume-');
+      if (!isArchived && loaded.length > 0 && !alreadyHasResume && resumeGreetingSent.current !== conversation.id) {
+        resumeGreetingSent.current = conversation.id;
+        const greetMsg: ChatMessageRow = {
+          id: `msg-resume-${Date.now()}`,
+          conversation_id: conversation.id,
+          sender: 'ceo',
+          text: `Picking up where we left off. What do you need?`,
+          metadata: null,
+          created_at: new Date().toISOString(),
+        };
+        await saveChatMessage({
+          id: greetMsg.id,
+          conversation_id: greetMsg.conversation_id,
+          sender: greetMsg.sender,
+          text: greetMsg.text,
+          metadata: null,
+        });
+        if (!cancelled) {
+          setMessages(prev => [...prev, greetMsg]);
+        }
+      }
 
-    // Focus input for active conversations
-    if (!isArchived) {
-      setTimeout(() => inputRef.current?.focus(), 200);
-    }
+      // Focus input for active conversations
+      if (!isArchived) {
+        setTimeout(() => inputRef.current?.focus(), 200);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [conversation.id, isArchived]);
 
   // Auto-scroll
@@ -93,7 +128,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
       metadata: null,
       created_at: new Date().toISOString(),
     };
-    saveChatMessage({
+    await saveChatMessage({
       id: userMsg.id,
       conversation_id: userMsg.conversation_id,
       sender: userMsg.sender,
@@ -107,12 +142,12 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
     // Try LLM streaming first
     setTyping(true);
 
-    const controller = streamCEOResponse(text, updatedMessages, {
+    const controller = await streamCEOResponse(text, updatedMessages, {
       onToken: (token) => {
         setTyping(false);
         setStreamingText(prev => (prev ?? '') + token);
       },
-      onDone: (fullText) => {
+      onDone: async (fullText) => {
         setTyping(false);
         setStreamingText(null);
         const ceoMsg: ChatMessageRow = {
@@ -120,26 +155,28 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
           conversation_id: conversation.id,
           sender: 'ceo',
           text: fullText,
-          metadata: JSON.stringify({ llm: true }),
+          metadata: { llm: true },
           created_at: new Date().toISOString(),
         };
-        saveChatMessage({
+        await saveChatMessage({
           id: ceoMsg.id,
           conversation_id: ceoMsg.conversation_id,
           sender: ceoMsg.sender,
           text: ceoMsg.text,
           metadata: ceoMsg.metadata,
         });
+        const withCeo = [...updatedMessages, ceoMsg];
         setMessages(prev => [...prev, ceoMsg]);
         abortRef.current = null;
+        maybeExtractMemories(withCeo);
       },
-      onError: (error) => {
+      onError: async (error) => {
         console.error('LLM stream error:', error);
         setTyping(false);
         setStreamingText(null);
         abortRef.current = null;
         // Fallback to scripted response on error
-        const responseText = getCEOResponse(text);
+        const responseText = await getCEOResponse(text);
         const ceoMsg: ChatMessageRow = {
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           conversation_id: conversation.id,
@@ -148,14 +185,16 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
           metadata: null,
           created_at: new Date().toISOString(),
         };
-        saveChatMessage({
+        await saveChatMessage({
           id: ceoMsg.id,
           conversation_id: ceoMsg.conversation_id,
           sender: ceoMsg.sender,
           text: ceoMsg.text,
           metadata: null,
         });
+        const withCeo = [...updatedMessages, ceoMsg];
         setMessages(prev => [...prev, ceoMsg]);
+        maybeExtractMemories(withCeo);
       },
     });
 
@@ -165,9 +204,9 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
     } else {
       // No LLM available — fallback to scripted response
       const delay = 800 + Math.random() * 1200;
-      setTimeout(() => {
+      setTimeout(async () => {
         setTyping(false);
-        const responseText = getCEOResponse(text);
+        const responseText = await getCEOResponse(text);
         const ceoMsg: ChatMessageRow = {
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           conversation_id: conversation.id,
@@ -176,17 +215,19 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
           metadata: null,
           created_at: new Date().toISOString(),
         };
-        saveChatMessage({
+        await saveChatMessage({
           id: ceoMsg.id,
           conversation_id: ceoMsg.conversation_id,
           sender: ceoMsg.sender,
           text: ceoMsg.text,
           metadata: null,
         });
+        const withCeo = [...updatedMessages, ceoMsg];
         setMessages(prev => [...prev, ceoMsg]);
+        maybeExtractMemories(withCeo);
       }, delay);
     }
-  }, [input, conversation.id, isArchived, messages]);
+  }, [input, conversation.id, isArchived, messages, maybeExtractMemories]);
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
@@ -246,7 +287,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
                 'font-pixel text-[10px] tracking-wider leading-relaxed whitespace-pre-line',
                 msg.sender === 'user' ? 'text-emerald-200' : 'text-zinc-300',
               ].join(' ')}>
-                {msg.text}
+                {msg.sender === 'ceo' ? <RichMessageContent text={msg.text} /> : msg.text}
               </div>
             </div>
           </div>
@@ -260,7 +301,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
                 CEO {ceoName}
               </div>
               <div className="font-pixel text-[10px] tracking-wider leading-relaxed whitespace-pre-line text-zinc-300">
-                {streamingText}
+                <RichMessageContent text={streamingText} />
                 <span className="inline-block w-1.5 h-3 bg-yellow-300/60 animate-pulse ml-0.5 align-middle" />
               </div>
             </div>

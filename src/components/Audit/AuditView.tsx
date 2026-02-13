@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ScrollText, Download, Info, AlertTriangle, AlertOctagon } from 'lucide-react'
 import { loadAuditLog, type AuditLogRow } from '../../lib/database'
 
@@ -26,7 +26,8 @@ const filterButtons: { label: string; value: SeverityFilter; activeClass: string
 function formatTimestamp(ts: string): string {
   if (!ts) return '—'
   try {
-    const d = new Date(ts + 'Z') // SQLite datetime is UTC
+    const d = new Date(ts) // Supabase TIMESTAMPTZ returns ISO 8601 with tz
+    if (isNaN(d.getTime())) return ts
     return d.toLocaleString('en-US', {
       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
     })
@@ -34,8 +35,10 @@ function formatTimestamp(ts: string): string {
 }
 
 export default function AuditView() {
-  const [entries] = useState(() => loadAuditLog(500))
+  const [entries, setEntries] = useState<AuditLogRow[]>([])
   const [activeFilter, setActiveFilter] = useState<SeverityFilter>('all')
+
+  useEffect(() => { loadAuditLog(500).then(setEntries) }, [])
 
   const filteredLog = activeFilter === 'all'
     ? entries

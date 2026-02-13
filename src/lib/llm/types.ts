@@ -5,7 +5,7 @@ export interface LLMMessage {
 
 export interface StreamCallbacks {
   onToken: (token: string) => void;
-  onDone: (fullText: string) => void;
+  onDone: (fullText: string, usage?: { inputTokens: number; outputTokens: number }) => void;
   onError: (error: Error) => void;
 }
 

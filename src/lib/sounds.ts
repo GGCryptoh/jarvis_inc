@@ -168,3 +168,49 @@ export function playWarMarch(): void {
     // Silently fail if Web Audio API isn't available
   }
 }
+
+/** Short "system connected" chime — 3 ascending notes, digital feel, ~0.5s */
+export function playOnlineJingle() {
+  try {
+    const ctx = new AudioContext();
+    const master = ctx.createGain();
+    master.gain.value = 0.20;
+    master.connect(ctx.destination);
+
+    // 3-note ascending chime: F5 → A5 → C6 (bright, digital)
+    const notes = [
+      { freq: 698, start: 0, dur: 0.12 },
+      { freq: 880, start: 0.10, dur: 0.12 },
+      { freq: 1047, start: 0.20, dur: 0.25 },
+    ];
+
+    for (const n of notes) {
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = n.freq;
+      env.gain.setValueAtTime(0, ctx.currentTime + n.start);
+      env.gain.linearRampToValueAtTime(0.6, ctx.currentTime + n.start + 0.02);
+      env.gain.linearRampToValueAtTime(0, ctx.currentTime + n.start + n.dur);
+      osc.connect(env);
+      env.connect(master);
+      osc.start(ctx.currentTime + n.start);
+      osc.stop(ctx.currentTime + n.start + n.dur + 0.05);
+    }
+
+    // High sparkle on final note
+    const sparkle = ctx.createOscillator();
+    const sEnv = ctx.createGain();
+    sparkle.type = 'triangle';
+    sparkle.frequency.value = 2093; // C7
+    sEnv.gain.setValueAtTime(0, ctx.currentTime + 0.22);
+    sEnv.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.24);
+    sEnv.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.45);
+    sparkle.connect(sEnv);
+    sEnv.connect(master);
+    sparkle.start(ctx.currentTime + 0.22);
+    sparkle.stop(ctx.currentTime + 0.50);
+
+    setTimeout(() => ctx.close(), 600);
+  } catch { /* silent fail */ }
+}

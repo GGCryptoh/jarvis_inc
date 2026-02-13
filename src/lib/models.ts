@@ -56,8 +56,8 @@ export const SERVICE_KEY_HINTS: Record<string, { url: string; steps: string[] }>
 };
 
 export const MODEL_API_IDS: Record<string, string> = {
-  'Claude Opus 4.6':    'claude-opus-4-6-20250929',
-  'Claude Opus 4.5':    'claude-opus-4-5-20250414',
+  'Claude Opus 4.6':    'claude-opus-4-6',
+  'Claude Opus 4.5':    'claude-opus-4-5-20251101',
   'Claude Sonnet 4.5':  'claude-sonnet-4-5-20250929',
   'Claude Haiku 4.5':   'claude-haiku-4-5-20251001',
   'GPT-5.2':            'gpt-5.2',
@@ -69,6 +69,28 @@ export const MODEL_API_IDS: Record<string, string> = {
   'Llama 3.3':          'llama-3.3-70b',
   'Grok 4':             'grok-4',
 };
+
+/** Cost per 1M tokens in USD: [input, output] */
+export const MODEL_COSTS: Record<string, [number, number]> = {
+  'Claude Opus 4.6':    [5, 25],
+  'Claude Opus 4.5':    [5, 25],
+  'Claude Sonnet 4.5':  [3, 15],
+  'Claude Haiku 4.5':   [0.80, 4],
+  'GPT-5.2':            [10, 30],
+  'o3-pro':             [20, 80],
+  'o4-mini':            [1.10, 4.40],
+  'Gemini 3 Pro':       [1.25, 5],
+  'Gemini 2.5 Flash':   [0.15, 0.60],
+  'DeepSeek R1':        [0.55, 2.19],
+  'Llama 3.3':          [0.60, 0.60],
+  'Grok 4':             [3, 15],
+};
+
+/** Estimate USD cost for a given model and token counts */
+export function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
+  const rates = MODEL_COSTS[model] ?? [0, 0];
+  return (inputTokens / 1_000_000 * rates[0]) + (outputTokens / 1_000_000 * rates[1]);
+}
 
 export function getServiceForModel(model: string): string {
   return MODEL_SERVICE_MAP[model] ?? 'Unknown';

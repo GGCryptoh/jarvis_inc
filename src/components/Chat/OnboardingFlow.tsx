@@ -6,11 +6,13 @@ import {
   saveSkill, loadSkills, loadApprovals, saveApproval, updateApprovalStatus,
   getVaultEntryByService, saveConversation, saveChatMessage, loadMissions,
 } from '../../lib/database';
-import { getServiceForModel } from '../../lib/models';
+import { getServiceForModel, MODEL_OPTIONS, MODEL_SERVICE_MAP } from '../../lib/models';
+import { playOnlineJingle } from '../../lib/sounds';
 import { skills as skillDefinitions, type SkillDefinition } from '../../data/skillDefinitions';
 import { recommendSkills } from '../../lib/skillRecommender';
 import { streamCEOResponse } from '../../lib/llm/chatService';
 import ResearchOfferCard from './ResearchOfferCard';
+import RichMessageContent from './ToolCallBlock';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,24 +57,10 @@ function getRequiredService(skill: SkillDefinition, model: string | null): strin
   return null;
 }
 
-function hasApiKey(service: string): boolean {
-  return getVaultEntryByService(service) !== null;
+async function hasApiKey(service: string): Promise<boolean> {
+  return (await getVaultEntryByService(service)) !== null;
 }
 
-function generateTestResponse(query: string): string {
-  const q = query.length > 60 ? query.slice(0, 60) + '...' : query;
-  return [
-    `Research results for "${q}":`,
-    '',
-    'Scanned 14 web sources in 2.8 seconds.',
-    '',
-    '1. Multiple credible sources confirm strong activity in this area.',
-    '2. Recent developments in the last 30 days show growing momentum.',
-    '3. Three primary angles worth deeper investigation were identified.',
-    '',
-    'I\'d recommend assigning a dedicated research agent for a full deep-dive once the team is assembled.',
-  ].join('\n');
-}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -91,8 +79,9 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [step, setStep] = useState<ConvoStep>('welcome');
+  const [step, setStepRaw] = useState<ConvoStep>('welcome');
   const [typing, setTyping] = useState(false);
+  const restoredRef = useRef(false);
   const [needsApprovalNav, setNeedsApprovalNav] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -105,26 +94,142 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const skillApprovedRef = useRef(false);
   const stepRef = useRef<ConvoStep>('welcome');
 
+  // Wrap setStep to persist to DB
+  const setStep = useCallback((s: ConvoStep) => {
+    setStepRaw(s);
+    stepRef.current = s;
+    setSetting('onboarding_step', s).catch(() => {});
+  }, []);
+
   useEffect(() => { stepRef.current = step; }, [step]);
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-  const ceoRow = useRef(loadCEO());
-  const founderInfo = useRef(getFounderInfo());
-  const ceoName = ceoRow.current?.name ?? 'CEO';
-  const founderName = founderInfo.current?.founderName ?? 'Founder';
-  const orgName = founderInfo.current?.orgName ?? 'the organization';
+  // Persist messages to DB whenever they change
+  useEffect(() => {
+    messagesRef.current = messages;
+    if (messages.length > 0) {
+      setSetting('onboarding_messages', JSON.stringify(messages)).catch(() => {});
+    }
+  }, [messages]);
 
-  // LLM enabled check
-  const [llmEnabled] = useState(() => {
-    const skills = loadSkills();
-    const skillEnabled = skills.some(s => s.id === FIRST_SKILL_ID && s.enabled);
-    if (!skillEnabled) return false;
-    const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID);
-    if (!firstSkill) return false;
-    const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
-    const service = getRequiredService(firstSkill, model);
-    return service ? hasApiKey(service) : false;
-  });
+  // Async-loaded identity data
+  const [ceoName, setCeoName] = useState('CEO');
+  const [founderName, setFounderName] = useState('Founder');
+  const [orgName, setOrgName] = useState('the organization');
+  const [llmEnabled, setLlmEnabled] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [modelOptions, setModelOptions] = useState<{ name: string; service: string; hasKey: boolean }[]>([]);
+  const [revealPhase, setRevealPhase] = useState<'hidden' | 'flicker' | 'typing' | 'done'>('hidden');
+  const [revealText, setRevealText] = useState('');
+
+  // Load identity data asynchronously
+  useEffect(() => {
+    const load = async () => {
+      const [ceoData, founderInfo, skills] = await Promise.all([
+        loadCEO(),
+        getFounderInfo(),
+        loadSkills(),
+      ]);
+
+      setCeoName(ceoData?.name ?? 'CEO');
+      setFounderName(founderInfo?.founderName ?? 'Founder');
+      setOrgName(founderInfo?.orgName ?? 'the organization');
+
+      // LLM enabled check
+      const skillEnabled = skills.some(s => s.id === FIRST_SKILL_ID && s.enabled);
+      if (skillEnabled) {
+        const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID);
+        if (firstSkill) {
+          const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
+          const service = getRequiredService(firstSkill, model);
+          if (service) {
+            const keyExists = await hasApiKey(service);
+            setLlmEnabled(keyExists);
+          }
+        }
+      }
+
+      // Build model options with key indicators
+      const vaultServices = new Set<string>();
+      for (const service of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'xAI']) {
+        const entry = await getVaultEntryByService(service);
+        if (entry) vaultServices.add(service);
+      }
+      const options = MODEL_OPTIONS.map(name => ({
+        name,
+        service: MODEL_SERVICE_MAP[name] ?? 'Unknown',
+        hasKey: vaultServices.has(MODEL_SERVICE_MAP[name] ?? ''),
+      }));
+      setModelOptions(options);
+      // Default to CEO's model or first available
+      const ceoModel = ceoData?.model ?? 'Claude Opus 4.6';
+      setSelectedModel(ceoModel);
+
+      // ── Restore saved onboarding state (survives route navigation) ──
+      const savedStep = await getSetting('onboarding_step');
+      const savedMsgs = await getSetting('onboarding_messages');
+
+      if (savedStep && savedStep !== 'welcome' && savedMsgs) {
+        try {
+          const parsed: ChatMessage[] = JSON.parse(savedMsgs);
+          // Re-hydrate approval card icons (React components can't be JSON-serialized)
+          for (const msg of parsed) {
+            if (msg.approvalCard) {
+              const def = skillDefinitions.find(s => s.name === msg.approvalCard!.skillName);
+              if (def) msg.approvalCard.skillIcon = def.icon;
+            }
+          }
+
+          // Snap transient steps to nearest stable state
+          let restoredStep = savedStep as ConvoStep;
+          if (restoredStep === 'acknowledging') restoredStep = 'waiting_skill_approve';
+          if (restoredStep === 'testing_skill') restoredStep = 'waiting_test_input';
+          if (restoredStep === 'offering_research') restoredStep = 'waiting_research_decision';
+          if (restoredStep === 'asking_more_info') restoredStep = 'waiting_more_info';
+          if (restoredStep === 'research_acknowledged') restoredStep = 'done';
+
+          setMessages(parsed);
+          setStepRaw(restoredStep);
+          stepRef.current = restoredStep;
+          onboardingRan.current = true;
+          restoredRef.current = true;
+
+          // Restore flags based on how far we progressed
+          const pastApproval = ['waiting_test_input', 'testing_skill', 'offering_research',
+            'waiting_research_decision', 'asking_more_info', 'waiting_more_info',
+            'research_acknowledged', 'done'].includes(savedStep);
+          if (pastApproval) skillApprovedRef.current = true;
+          if (pastApproval && skillEnabled) setRevealPhase('done');
+
+          // Restore mission text from first user message
+          const firstUserMsg = parsed.find(m => m.sender === 'user');
+          if (firstUserMsg) missionTextRef.current = firstUserMsg.text;
+
+          // Restore approval ID if still at approval step
+          if (restoredStep === 'waiting_skill_approve') {
+            const approvals = await loadApprovals();
+            const sa = approvals.find(a => {
+              try {
+                const meta = typeof a.metadata === 'string' ? JSON.parse(a.metadata) : (a.metadata ?? {});
+                return a.type === 'skill_enable' && meta.skillId === FIRST_SKILL_ID;
+              } catch { return false; }
+            });
+            if (sa) approvalIdRef.current = sa.id;
+          }
+
+          // Focus input for interactive states
+          if (['waiting_input', 'waiting_test_input', 'waiting_more_info'].includes(restoredStep)) {
+            setTimeout(() => inputRef.current?.focus(), 200);
+          }
+        } catch {
+          // Corrupted saved state — fall through to fresh start
+        }
+      }
+
+      setDataLoaded(true);
+    };
+    load();
+  }, []);
 
   // Cleanup abort on unmount
   useEffect(() => {
@@ -158,11 +263,32 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     });
   }, [addCeoMessage]);
 
+  // Cinematic LLM: ONLINE reveal sequence
+  const triggerLLMReveal = useCallback(async () => {
+    // Phase 1: CRT flicker
+    setRevealPhase('flicker');
+    await new Promise(r => setTimeout(r, 150));
+
+    // Phase 2: Typewriter effect
+    setRevealPhase('typing');
+    playOnlineJingle();
+    const text = 'LLM: ONLINE';
+    for (let i = 0; i <= text.length; i++) {
+      setRevealText(text.slice(0, i));
+      await new Promise(r => setTimeout(r, 40));
+    }
+
+    // Phase 3: Done — badge stays with glow
+    await new Promise(r => setTimeout(r, 200));
+    setRevealPhase('done');
+    setLlmEnabled(true);
+  }, []);
+
   // Handle skill approved from Approvals page (external)
   const advanceAfterApproval = useCallback(async () => {
     const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID)!;
     const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
-    saveSkill(firstSkill.id, true, model);
+    await saveSkill(firstSkill.id, true, model);
 
     await typeWithDelay(
       `I see you've approved ${firstSkill.name} from the Approvals page — nice work!`,
@@ -180,20 +306,54 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   useEffect(() => {
     function handleApprovalsChanged() {
       if (stepRef.current === 'waiting_skill_approve' && approvalIdRef.current && !skillApprovedRef.current) {
-        const pending = loadApprovals();
-        const stillPending = pending.some(a => a.id === approvalIdRef.current);
-        if (!stillPending) {
-          skillApprovedRef.current = true;
-          advanceAfterApproval();
-        }
+        loadApprovals().then(pending => {
+          const stillPending = pending.some(a => a.id === approvalIdRef.current);
+          if (!stillPending) {
+            skillApprovedRef.current = true;
+            advanceAfterApproval();
+          }
+        });
       }
     }
     window.addEventListener('approvals-changed', handleApprovalsChanged);
     return () => window.removeEventListener('approvals-changed', handleApprovalsChanged);
   }, [advanceAfterApproval]);
 
-  // Onboarding conversation flow
+  // Listen for vault changes — delayed reveal when API key is added after approval
   useEffect(() => {
+    if (!needsApprovalNav || revealPhase !== 'hidden') return;
+
+    const checkVault = async () => {
+      const service = MODEL_SERVICE_MAP[selectedModel] ?? '';
+      if (!service) return;
+      const entry = await getVaultEntryByService(service);
+      if (entry) {
+        // Key was added! Trigger the reveal
+        setNeedsApprovalNav(false);
+        await triggerLLMReveal();
+        await typeWithDelay(
+          'Systems connected. I can see the network now. Want to take it for a spin?',
+          2000,
+        );
+        setStep('waiting_test_input');
+        stepRef.current = 'waiting_test_input';
+        setTimeout(() => inputRef.current?.focus(), 100);
+      }
+    };
+
+    const handler = () => { checkVault(); };
+    window.addEventListener('approvals-changed', handler);
+    // Also poll every 3s in case the event is missed
+    const interval = setInterval(checkVault, 3000);
+    return () => {
+      window.removeEventListener('approvals-changed', handler);
+      clearInterval(interval);
+    };
+  }, [needsApprovalNav, selectedModel, revealPhase, triggerLLMReveal, typeWithDelay]);
+
+  // Onboarding conversation flow — wait for data to load
+  useEffect(() => {
+    if (!dataLoaded) return;
     if (onboardingRan.current) return;
     onboardingRan.current = true;
 
@@ -212,7 +372,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [dataLoaded]);
 
   // Transition to market research offer
   const offerMarketResearch = useCallback(async () => {
@@ -226,14 +386,14 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   }, [typeWithDelay]);
 
   // Create post-onboarding missions
-  const createPostOnboardingMissions = useCallback((cName: string, oName: string, researchAccepted: boolean, researchContext: string) => {
-    const existing = loadMissions();
+  const createPostOnboardingMissions = useCallback(async (cName: string, oName: string, researchAccepted: boolean, researchContext: string) => {
+    const existing = await loadMissions();
     const existingTitles = new Set(existing.map(m => m.title));
 
     // Market Research Brief
     const researchTitle = `Market Research: ${oName} competitive landscape`;
     if (!existingTitles.has(researchTitle)) {
-      saveMission({
+      await saveMission({
         id: `mission-research-${Date.now()}`,
         title: researchTitle + (researchContext ? ` — Focus: ${researchContext}` : ''),
         status: researchAccepted ? 'in_progress' : 'backlog',
@@ -246,7 +406,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     // Skill Review Reminder (recurring)
     const skillReviewTitle = `Review agent skills and capabilities for ${oName}`;
     if (!existingTitles.has(skillReviewTitle)) {
-      saveMission({
+      await saveMission({
         id: `mission-skill-review-${Date.now()}`,
         title: skillReviewTitle,
         status: 'backlog',
@@ -260,7 +420,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     // CEO Weekly Review (recurring)
     const weeklyTitle = `Weekly review: missions, chat history, capability gaps`;
     if (!existingTitles.has(weeklyTitle)) {
-      saveMission({
+      await saveMission({
         id: `mission-weekly-review-${Date.now() + 1}`,
         title: weeklyTitle,
         status: 'backlog',
@@ -274,7 +434,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     // Skills marketplace refresh reminder (recurring)
     const marketplaceTitle = `Refresh skills from Marketplace and review new capabilities`;
     if (!existingTitles.has(marketplaceTitle)) {
-      saveMission({
+      await saveMission({
         id: `mission-marketplace-${Date.now() + 2}`,
         title: marketplaceTitle,
         status: 'backlog',
@@ -289,10 +449,13 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   // Finalize meeting — save settings + persist onboarding conversation to DB
   // NOTE: Does NOT call onComplete() — the "done" step shows nav buttons,
   // and onComplete is called when the user clicks one of them.
-  const finalizeMeeting = useCallback((missionText: string, researchAccepted: boolean, researchContext: string) => {
-    setSetting('ceo_meeting_done', 'true');
-    setSetting('primary_mission', missionText);
-    saveMission({
+  const finalizeMeeting = useCallback(async (missionText: string, researchAccepted: boolean, researchContext: string) => {
+    await setSetting('ceo_meeting_done', 'true');
+    await setSetting('primary_mission', missionText);
+    // Clear persisted onboarding state (no longer needed after completion)
+    await setSetting('onboarding_step', '');
+    await setSetting('onboarding_messages', '');
+    await saveMission({
       id: `mission-${Date.now()}`,
       title: missionText,
       status: 'in_progress',
@@ -303,20 +466,20 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
     // Persist onboarding conversation to DB
     const convId = `conv-onboarding-${Date.now()}`;
-    saveConversation({ id: convId, title: `Welcome to ${orgName}`, type: 'onboarding', status: 'archived' });
+    await saveConversation({ id: convId, title: `Welcome to ${orgName}`, type: 'onboarding', status: 'archived' });
     // Save all messages using ref for latest snapshot
     for (const msg of messagesRef.current) {
-      saveChatMessage({
+      await saveChatMessage({
         id: msg.id,
         conversation_id: convId,
         sender: msg.sender,
         text: msg.text,
-        metadata: msg.approvalCard ? JSON.stringify({ approvalCard: true }) : msg.researchOffer ? JSON.stringify({ researchOffer: true }) : null,
+        metadata: msg.approvalCard ? { approvalCard: true } : msg.researchOffer ? { researchOffer: true } : null,
       });
     }
 
     // Create post-onboarding missions
-    createPostOnboardingMissions(ceoName, orgName, researchAccepted, researchContext);
+    await createPostOnboardingMissions(ceoName, orgName, researchAccepted, researchContext);
   }, [ceoName, orgName, createPostOnboardingMissions]);
 
   // Handle user sending a message
@@ -342,7 +505,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         .filter((s): s is SkillDefinition => s !== undefined);
 
       // Check if the first skill is already enabled
-      const existingSkills = loadSkills();
+      const existingSkills = await loadSkills();
       const alreadyEnabled = existingSkills.some(s => s.id === FIRST_SKILL_ID && s.enabled);
 
       if (alreadyEnabled) {
@@ -372,10 +535,10 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       }
 
       // Check for existing pending approval for this skill
-      const pendingApprovals = loadApprovals();
+      const pendingApprovals = await loadApprovals();
       const existingApproval = pendingApprovals.find(a => {
         try {
-          const meta = JSON.parse(a.metadata ?? '{}');
+          const meta = typeof a.metadata === 'string' ? JSON.parse(a.metadata) : (a.metadata ?? {});
           return a.type === 'skill_enable' && meta.skillId === FIRST_SKILL_ID;
         } catch { return false; }
       });
@@ -386,13 +549,13 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         approvalId = existingApproval.id;
       } else {
         approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        saveApproval({
+        await saveApproval({
           id: approvalId,
           type: 'skill_enable',
           title: `Enable Skill: ${firstSkill.name}`,
           description: `CEO ${ceoName} recommends enabling "${firstSkill.name}" — ${firstSkill.description}`,
           status: 'pending',
-          metadata: JSON.stringify({ skillId: firstSkill.id, skillName: firstSkill.name, model }),
+          metadata: { skillId: firstSkill.id, skillName: firstSkill.name, model },
         });
         window.dispatchEvent(new Event('approvals-changed'));
       }
@@ -418,7 +581,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       setStep('testing_skill');
 
       // Try real LLM streaming for the skill test
-      const controller = streamCEOResponse(text, [], {
+      const controller = await streamCEOResponse(text, [], {
         onToken: (token) => {
           setTyping(false);
           setStreamingText(prev => (prev ?? '') + token);
@@ -429,12 +592,12 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           addCeoMessage(fullText);
           offerMarketResearch();
         },
-        onError: () => {
-          // Fallback to scripted response on error
+        onError: (error) => {
           setStreamingText(null);
           setTyping(false);
-          addCeoMessage(generateTestResponse(text));
-          offerMarketResearch();
+          addCeoMessage(`Connection interrupted: ${error.message}\n\nCheck your API key in The Vault and try again.`);
+          setStep('waiting_test_input'); // Allow retry
+          setTimeout(() => inputRef.current?.focus(), 100);
         },
       });
 
@@ -442,9 +605,8 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         abortRef.current = controller;
         setTyping(true);
       } else {
-        // No LLM — use scripted response
-        await typeWithDelay(generateTestResponse(text), 3500);
-        await offerMarketResearch();
+        addCeoMessage('LLM connection lost. Head to The Vault to check your API key, then come back and try again.');
+        setStep('waiting_test_input');
       }
       return; // early return — async flow is handled by callbacks or typeWithDelay
 
@@ -464,15 +626,15 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       );
 
       await typeWithDelay(
-        `I'm ready to lead ${orgName}. Let's head to Surveillance and start building the team.`,
+        `I'm ready to lead ${orgName}. Let's head to Surveillance — or stay and chat with me.`,
         2000,
       );
 
       setStep('research_acknowledged');
-      finalizeMeeting(missionTextRef.current, true, researchContextRef.current);
+      await finalizeMeeting(missionTextRef.current, true, researchContextRef.current);
       setStep('done');
     }
-  }, [input, step, typeWithDelay, orgName, ceoName, offerMarketResearch, finalizeMeeting]);
+  }, [input, step, typeWithDelay, orgName, ceoName, offerMarketResearch, finalizeMeeting, addCeoMessage]);
 
   // Handle APPROVE click in chat
   const handleApproveSkill = useCallback(async () => {
@@ -480,59 +642,55 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     skillApprovedRef.current = true;
 
     const firstSkill = skillDefinitions.find(s => s.id === FIRST_SKILL_ID)!;
-    const model = firstSkill.serviceType === 'llm' ? firstSkill.defaultModel ?? null : null;
+    const model = selectedModel || firstSkill.defaultModel || null;
 
-    saveSkill(firstSkill.id, true, model);
+    await saveSkill(firstSkill.id, true, model);
 
     if (approvalIdRef.current) {
-      updateApprovalStatus(approvalIdRef.current, 'approved');
+      await updateApprovalStatus(approvalIdRef.current, 'approved');
     }
 
-    const service = getRequiredService(firstSkill, model);
-    const keyMissing = service ? !hasApiKey(service) : false;
+    const service = model ? (MODEL_SERVICE_MAP[model] ?? null) : null;
+    const keyMissing = service ? !(await getVaultEntryByService(service)) : true;
 
     if (keyMissing && service) {
-      saveApproval({
+      await saveApproval({
         id: `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         type: 'api_key_request',
         title: `API Key Required: ${service}`,
         description: `Skill "${firstSkill.name}" requires a ${service} API key to function.`,
         status: 'pending',
-        metadata: JSON.stringify({ service, skillId: firstSkill.id, model }),
+        metadata: { service, skillId: firstSkill.id, model },
       });
       setNeedsApprovalNav(true);
-    }
+      window.dispatchEvent(new Event('approvals-changed'));
 
-    window.dispatchEvent(new Event('approvals-changed'));
-
-    if (keyMissing) {
       await typeWithDelay(
-        `${firstSkill.name} is now enabled! I've also requested the ${service} API key — you can provide it in Approvals anytime.`,
-        1800,
+        `${firstSkill.name} is now enabled! I've requested the ${service} API key — head to The Vault to add it, and I'll come online.`,
+        2000,
       );
+      // Don't advance to test yet — wait for key via vault listener
     } else {
+      window.dispatchEvent(new Event('approvals-changed'));
+
+      // Key exists — trigger cinematic reveal!
+      await triggerLLMReveal();
       await typeWithDelay(
-        `${firstSkill.name} is now enabled and connected. We're ready to go!`,
-        1800,
+        `Systems connected. I can see the network now. Want to take it for a spin?`,
+        2000,
       );
+      setStep('waiting_test_input');
+      setTimeout(() => inputRef.current?.focus(), 100);
     }
+  }, [step, selectedModel, typeWithDelay, triggerLLMReveal]);
 
-    await typeWithDelay(
-      `Want to take it for a spin? Ask me to research anything and I'll show you what it can do.`,
-      2000,
-    );
-
-    setStep('waiting_test_input');
-    setTimeout(() => inputRef.current?.focus(), 100);
-  }, [step, typeWithDelay]);
-
-  // Handle LATER click in chat (skip skill → still offer research)
+  // Handle LATER click in chat (skip skill -> still offer research)
   const handleSkipSkill = useCallback(async () => {
     if (step !== 'waiting_skill_approve') return;
     skillApprovedRef.current = true;
 
     if (approvalIdRef.current) {
-      updateApprovalStatus(approvalIdRef.current, 'dismissed');
+      await updateApprovalStatus(approvalIdRef.current, 'dismissed');
     }
     window.dispatchEvent(new Event('approvals-changed'));
 
@@ -574,12 +732,12 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     );
 
     await typeWithDelay(
-      `I'm ready to lead ${orgName}. Let's head to Surveillance and start building the team.`,
+      `I'm ready to lead ${orgName}. Let's head to Surveillance — or stay and chat with me.`,
       2000,
     );
 
     setStep('research_acknowledged');
-    finalizeMeeting(missionTextRef.current, true, '');
+    await finalizeMeeting(missionTextRef.current, true, '');
     setStep('done');
   }, [step, typeWithDelay, orgName, finalizeMeeting]);
 
@@ -598,19 +756,27 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     );
 
     await typeWithDelay(
-      `I'm ready to lead ${orgName}. Let's head to Surveillance and start building the team.`,
+      `I'm ready to lead ${orgName}. Let's head to Surveillance — or stay and chat with me.`,
       2000,
     );
 
     setStep('research_acknowledged');
-    finalizeMeeting(missionTextRef.current, false, '');
+    await finalizeMeeting(missionTextRef.current, false, '');
     setStep('done');
   }, [step, typeWithDelay, orgName, finalizeMeeting]);
 
   const inputEnabled = step === 'waiting_input' || step === 'waiting_test_input' || step === 'waiting_more_info';
 
+  // Don't render until data is loaded
+  if (!dataLoaded) {
+    return null;
+  }
+
   return (
-    <div className="flex-1 flex flex-col h-full">
+    <div className="flex-1 flex flex-col h-full relative">
+      {revealPhase === 'flicker' && (
+        <div className="absolute inset-0 llm-reveal-flicker bg-black/30 z-50 pointer-events-none" />
+      )}
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-zinc-800">
         <div className="w-8 h-8 rounded-full bg-yellow-400/20 border border-yellow-400/40 flex items-center justify-center">
@@ -624,11 +790,19 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
             {typing ? 'TYPING...' : 'ONLINE'}
           </div>
         </div>
-        {llmEnabled && (
+        {revealPhase !== 'hidden' && (
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 ${revealPhase === 'typing' || revealPhase === 'done' ? 'llm-reveal-badge' : ''}`}>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-pixel text-[10px] tracking-widest text-emerald-400">
+              {revealPhase === 'typing' ? revealText : revealPhase === 'done' ? 'LLM: ONLINE' : ''}
+            </span>
+          </div>
+        )}
+        {llmEnabled && revealPhase === 'hidden' && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="font-pixel text-[10px] tracking-widest text-emerald-400">
-              LLM: CONNECTED
+              LLM: ONLINE
             </span>
           </div>
         )}
@@ -658,7 +832,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                 'font-pixel text-[10px] tracking-wider leading-relaxed whitespace-pre-line',
                 msg.sender === 'user' ? 'text-emerald-200' : 'text-zinc-300',
               ].join(' ')}>
-                {msg.text}
+                {msg.sender === 'ceo' ? <RichMessageContent text={msg.text} /> : msg.text}
               </div>
 
               {msg.approvalCard && (
@@ -668,7 +842,10 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                   skillIcon={msg.approvalCard.skillIcon}
                   onApprove={handleApproveSkill}
                   onSkip={handleSkipSkill}
-                  disabled={step !== 'waiting_skill_approve'}
+                  disabled={skillApprovedRef.current || step !== 'waiting_skill_approve'}
+                  models={modelOptions}
+                  selectedModel={selectedModel}
+                  onModelChange={setSelectedModel}
                 />
               )}
 
@@ -691,7 +868,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                 CEO {ceoName}
               </div>
               <div className="font-pixel text-[10px] tracking-wider leading-relaxed whitespace-pre-line text-zinc-300">
-                {streamingText}
+                <RichMessageContent text={streamingText} />
                 <span className="inline-block w-1.5 h-3 bg-yellow-300/60 animate-pulse ml-0.5 align-middle" />
               </div>
             </div>
@@ -791,6 +968,9 @@ function SingleSkillApproval({
   onApprove,
   onSkip,
   disabled,
+  models,
+  selectedModel,
+  onModelChange,
 }: {
   skillName: string;
   skillDescription: string;
@@ -798,6 +978,9 @@ function SingleSkillApproval({
   onApprove: () => void;
   onSkip: () => void;
   disabled: boolean;
+  models: { name: string; service: string; hasKey: boolean }[];
+  selectedModel: string;
+  onModelChange: (model: string) => void;
 }) {
   return (
     <div className="mt-3 rounded-lg border border-yellow-400/30 bg-yellow-400/[0.04] overflow-hidden">
@@ -817,6 +1000,27 @@ function SingleSkillApproval({
             {skillDescription}
           </div>
         </div>
+      </div>
+
+      <div className="px-3 py-2 border-t border-yellow-400/10">
+        <div className="font-pixel text-[9px] tracking-widest text-zinc-500 mb-1.5">MODEL</div>
+        <select
+          value={selectedModel}
+          onChange={(e) => onModelChange(e.target.value)}
+          className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 font-pixel text-[10px] text-zinc-200 tracking-wider focus:border-emerald-500 focus:outline-none"
+          disabled={disabled}
+        >
+          {models.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.hasKey ? '\u25CF' : '\uD83D\uDD12'} {m.name} ({m.service})
+            </option>
+          ))}
+        </select>
+        {!models.find(m => m.name === selectedModel)?.hasKey && (
+          <div className="font-pixel text-[9px] tracking-wider text-amber-400/70 mt-1">
+            API key needed — you'll be prompted after approval
+          </div>
+        )}
       </div>
 
       {!disabled && (

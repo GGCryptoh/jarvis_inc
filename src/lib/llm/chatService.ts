@@ -1,15 +1,18 @@
 import type { LLMMessage, StreamCallbacks, LLMProvider } from './types';
+import { logUsage } from '../llmUsage';
 import type { ChatMessageRow } from '../database';
 import {
   loadCEO, getFounderInfo, getSetting,
   loadAgents, loadSkills, loadMissions,
-  getVaultEntryByService,
+  getVaultEntryByService, logAudit,
 } from '../database';
 import { MODEL_SERVICE_MAP, MODEL_API_IDS } from '../models';
 import { skills as skillDefinitions } from '../../data/skillDefinitions';
+import { resolveSkills } from '../skillResolver';
 import { anthropicProvider } from './providers/anthropic';
 import { openaiProvider, deepseekProvider, xaiProvider } from './providers/openai';
 import { googleProvider } from './providers/google';
+import { getMemories } from '../memory';
 
 // ---------------------------------------------------------------------------
 // Provider registry
@@ -36,16 +39,16 @@ export interface LLMAvailability {
 
 /**
  * Check whether a real LLM is available for the CEO's configured model.
- * Requires: CEO has a model → model maps to a service → vault has a key for that service.
+ * Requires: CEO has a model -> model maps to a service -> vault has a key for that service.
  */
-export function isLLMAvailable(): LLMAvailability {
-  const ceo = loadCEO();
+export async function isLLMAvailable(): Promise<LLMAvailability> {
+  const ceo = await loadCEO();
   if (!ceo) return { available: false, service: '', model: '', displayModel: '' };
 
   const service = MODEL_SERVICE_MAP[ceo.model] ?? '';
   if (!service || !PROVIDERS[service]) return { available: false, service, model: '', displayModel: ceo.model };
 
-  const vaultEntry = getVaultEntryByService(service);
+  const vaultEntry = await getVaultEntryByService(service);
   if (!vaultEntry) return { available: false, service, model: '', displayModel: ceo.model };
 
   const apiModelId = MODEL_API_IDS[ceo.model] ?? ceo.model;
@@ -56,22 +59,22 @@ export function isLLMAvailable(): LLMAvailability {
  * Stream a CEO response using a real LLM.
  * Returns an AbortController, or null if no LLM is available (caller should fallback).
  */
-export function streamCEOResponse(
+export async function streamCEOResponse(
   userText: string,
   conversationHistory: ChatMessageRow[],
   callbacks: StreamCallbacks,
-): AbortController | null {
-  const availability = isLLMAvailable();
+): Promise<AbortController | null> {
+  const availability = await isLLMAvailable();
   if (!availability.available) return null;
 
-  const ceo = loadCEO()!;
+  const ceo = (await loadCEO())!;
   const service = availability.service;
   const apiModelId = availability.model;
   const provider = PROVIDERS[service];
-  const vaultEntry = getVaultEntryByService(service)!;
+  const vaultEntry = (await getVaultEntryByService(service))!;
 
   // Build messages
-  const systemPrompt = buildCEOSystemPrompt();
+  const systemPrompt = await buildCEOSystemPrompt();
   const messages: LLMMessage[] = [
     { role: 'system', content: systemPrompt },
   ];
@@ -89,7 +92,32 @@ export function streamCEOResponse(
   // Add the current user message
   messages.push({ role: 'user', content: userText });
 
-  return provider.stream(messages, vaultEntry.key_value, apiModelId, callbacks);
+  // Wrap callbacks to log usage
+  const wrappedCallbacks: StreamCallbacks = {
+    onToken: callbacks.onToken,
+    onDone: (fullText, usage) => {
+      // Log usage (fire-and-forget)
+      const outputTokens = usage?.outputTokens ?? Math.ceil(fullText.length / 4);
+      const inputTokens = usage?.inputTokens ?? Math.ceil(systemPrompt.length / 4 + userText.length / 4);
+      logUsage({
+        provider: service,
+        model: availability.displayModel,
+        inputTokens,
+        outputTokens,
+        context: 'ceo_chat',
+      }).catch(() => {});
+      logAudit(
+        ceo.name,
+        'CEO_CHAT',
+        `LLM response via ${availability.displayModel} (${inputTokens + outputTokens} tokens)`,
+        'info',
+      ).catch(() => {});
+      callbacks.onDone(fullText, usage);
+    },
+    onError: callbacks.onError,
+  };
+
+  return provider.stream(messages, vaultEntry.key_value, apiModelId, wrappedCallbacks);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,34 +195,74 @@ const RISK_BLOCKS: Record<string, string> = {
 - Only ask the founder for truly irreversible or high-cost decisions`,
 };
 
-function buildCEOSystemPrompt(): string {
-  const ceo = loadCEO()!;
-  const founderInfo = getFounderInfo();
+async function buildCEOSystemPrompt(): Promise<string> {
+  const ceo = (await loadCEO())!;
+  const founderInfo = await getFounderInfo();
   const orgName = founderInfo?.orgName ?? 'the organization';
   const founderName = founderInfo?.founderName ?? 'Founder';
-  const primaryMission = getSetting('primary_mission') ?? 'Not yet defined';
+  const primaryMission = (await getSetting('primary_mission')) ?? 'Not yet defined';
 
-  const agents = loadAgents();
-  const enabledSkills = loadSkills().filter(s => s.enabled);
-  const missions = loadMissions();
+  const agents = await loadAgents();
+  const enabledSkills = (await loadSkills()).filter(s => s.enabled);
+  const missions = await loadMissions();
 
   // Personality block
   const personaBlock = ceo.archetype ? ARCHETYPE_PERSONAS[ceo.archetype] ?? '' : '';
   const philosophyBlock = PHILOSOPHY_BLOCKS[ceo.philosophy] ?? `Operating Philosophy: ${ceo.philosophy}`;
   const riskBlock = RISK_BLOCKS[ceo.risk_tolerance] ?? RISK_BLOCKS['moderate'];
 
+  // Organizational memory
+  const memories = await getMemories(20);
+  let memoryBlock: string;
+  if (memories.length > 0) {
+    // Sort by importance DESC, then updated_at DESC (getMemories already sorts by updated_at DESC)
+    const sorted = [...memories].sort((a, b) => {
+      const impDiff = b.importance - a.importance;
+      if (impDiff !== 0) return impDiff;
+      return b.updated_at.localeCompare(a.updated_at);
+    });
+    const topMemories = sorted.slice(0, 20);
+    const memoryLines = topMemories.map(
+      m => `- [${m.category}] ${m.content}${m.tags.length > 0 ? ` (tags: ${m.tags.join(', ')})` : ''}`
+    ).join('\n');
+    memoryBlock = `## Organizational Memory
+You have the following memories from past interactions and decisions:
+${memoryLines}`;
+  } else {
+    memoryBlock = `## Organizational Memory
+No organizational memories yet. As you interact with the founder, you'll build up institutional knowledge.`;
+  }
+
   // Agent list
   const agentList = agents.length > 0
     ? agents.map(a => `- ${a.name} (${a.role}) — Model: ${a.model}`).join('\n')
     : '- No agents hired yet';
 
-  // Enabled skills list
-  const skillList = enabledSkills.length > 0
-    ? enabledSkills.map(s => {
-        const def = skillDefinitions.find(d => d.id === s.id);
-        return `- ${s.id}: ${def?.name ?? s.id} — ${def?.description ?? 'No description'}`;
-      }).join('\n')
-    : '- No skills enabled yet';
+  // Enabled skills list — include full command definitions from resolver
+  let skillList: string;
+  try {
+    const resolved = await resolveSkills();
+    const enabledResolved = resolved.filter(s => s.enabled);
+    if (enabledResolved.length > 0) {
+      skillList = enabledResolved.map(s => {
+        const cmds = s.commands ?? [];
+        const cmdBlock = cmds.length > 0
+          ? cmds.map(c => `    - ${c.name}: ${c.description ?? ''}${c.parameters?.length ? ` (params: ${c.parameters.map(p => p.name).join(', ')})` : ''}`).join('\n')
+          : '';
+        return `- ${s.id}: ${s.name} — ${s.description ?? ''}${cmdBlock ? `\n  Commands:\n${cmdBlock}` : ''}`;
+      }).join('\n');
+    } else {
+      skillList = '- No skills enabled yet';
+    }
+  } catch {
+    // Fallback to basic list if resolver fails
+    skillList = enabledSkills.length > 0
+      ? enabledSkills.map(s => {
+          const def = skillDefinitions.find(d => d.id === s.id);
+          return `- ${s.id}: ${def?.name ?? s.id} — ${def?.description ?? 'No description'}`;
+        }).join('\n')
+      : '- No skills enabled yet';
+  }
 
   // Mission list
   const missionList = missions.length > 0
@@ -209,6 +277,8 @@ ${personaBlock}
 ${philosophyBlock}
 
 ${riskBlock}
+
+${memoryBlock}
 
 ## Your Organization
 
