@@ -59,6 +59,8 @@ export default function SurveillanceView() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
   const [ceoAgent, setCeoAgent] = useState<Agent | null>(null);
+  const [ceoArchetype, setCeoArchetype] = useState<string | null>(null);
+  const [ceoRiskTolerance, setCeoRiskTolerance] = useState<string | null>(null);
 
   // Mission priorities for holographic board
   const [priorities, setPriorities] = useState<string[]>([]);
@@ -106,6 +108,9 @@ export default function SurveillanceView() {
       // CEO walk-in on first visit
       const ceoRow = await loadCEO();
       if (ceoRow) {
+        setCeoArchetype(ceoRow.archetype ?? null);
+        setCeoRiskTolerance(ceoRow.risk_tolerance ?? null);
+
         const ceoPos = (ceoRow.desk_x != null && ceoRow.desk_y != null)
           ? { x: ceoRow.desk_x, y: ceoRow.desk_y }
           : TIER_CEO_POSITION[tier];
@@ -525,6 +530,8 @@ export default function SurveillanceView() {
             priorities={priorities}
             floorPlannerActive={floorPlannerActive}
             onFloorClick={handleFloorClick}
+            ceoArchetype={ceoArchetype}
+            ceoRiskTolerance={ceoRiskTolerance}
           />
         </CRTFrame>
       </div>

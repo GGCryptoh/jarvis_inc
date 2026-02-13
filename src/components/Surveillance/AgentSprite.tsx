@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { Agent } from '../../types';
+import { getAgentUsage } from '../../lib/llmUsage';
 
 interface AgentSpriteProps {
   agent: Agent;
@@ -50,6 +52,17 @@ export default function AgentSprite({ agent, onClick, floorPlannerActive }: Agen
   const statusColor = getStatusColor(agent.status);
   const isSeated = agent.status === 'working';
 
+  const [cost, setCost] = useState<{ totalCost: number; taskCount: number } | null>(null);
+
+  const handleMouseEnter = async () => {
+    const usage = await getAgentUsage(agent.id);
+    setCost(usage);
+  };
+
+  const handleMouseLeave = () => {
+    setCost(null);
+  };
+
   return (
     <div
       className={`agent-sprite cursor-pointer group ${floorPlannerActive ? 'ring-2 ring-pixel-cyan/40 rounded-sm' : ''}`}
@@ -59,6 +72,8 @@ export default function AgentSprite({ agent, onClick, floorPlannerActive }: Agen
         transform: `translate(-50%, -50%) translateY(${isSeated ? '22px' : '0px'})`,
       }}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       {/* Hover tooltip */}
       <div className="absolute -top-20 left-1/2 -translate-x-1/2 hidden group-hover:block z-30">
@@ -68,6 +83,12 @@ export default function AgentSprite({ agent, onClick, floorPlannerActive }: Agen
           <div className="text-pixel-green">
             {agent.confidence}% &bull; ${agent.costSoFar.toFixed(2)}
           </div>
+          {cost && (
+            <div className="border-t border-jarvis-border mt-1 pt-1 text-[9px]">
+              <div className="text-jarvis-muted">TASKS: {cost.taskCount}</div>
+              <div className="text-pixel-yellow">COST: ${cost.totalCost.toFixed(4)}</div>
+            </div>
+          )}
         </div>
         {/* Tooltip arrow */}
         <div className="w-0 h-0 mx-auto border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-jarvis-border" />

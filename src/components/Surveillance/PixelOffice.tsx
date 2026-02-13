@@ -16,6 +16,10 @@ interface PixelOfficeProps {
   onFloorClick?: (x: number, y: number) => void;
   /** Live mission priorities to display on the holographic board */
   priorities?: string[];
+  /** CEO personality archetype (e.g. 'wharton_mba', 'wall_street') */
+  ceoArchetype?: string | null;
+  /** CEO risk tolerance level */
+  ceoRiskTolerance?: string | null;
 }
 
 export default function PixelOffice({
@@ -27,6 +31,8 @@ export default function PixelOffice({
   floorPlannerActive = false,
   onFloorClick,
   priorities = [],
+  ceoArchetype,
+  ceoRiskTolerance,
 }: PixelOfficeProps) {
   const [hoverExtinguisher, setHoverExtinguisher] = useState(false);
   const floorImage = FLOOR_IMAGES[roomTier];
@@ -171,6 +177,8 @@ export default function PixelOffice({
         <CEOSprite
           agent={ceo}
           onClick={() => onAgentClick(ceo)}
+          archetype={ceoArchetype}
+          riskTolerance={ceoRiskTolerance}
         />
       )}
     </div>

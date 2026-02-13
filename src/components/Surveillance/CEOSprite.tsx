@@ -1,8 +1,12 @@
+import { useState, useEffect } from 'react';
 import type { Agent } from '../../types';
+import { getAgentUsage } from '../../lib/llmUsage';
 
 interface CEOSpriteProps {
   agent: Agent;
   onClick: () => void;
+  archetype?: string | null;
+  riskTolerance?: string | null;
 }
 
 function getAnimationClass(status: Agent['status']): string {
@@ -48,11 +52,17 @@ function getStatusColor(status: Agent['status']): string {
  * Larger CEO sprite (~2.5-3x size of regular AgentSprite).
  * Features: pixel eyes, suit lapels, tie, arms, crown, gold nametag.
  */
-export default function CEOSprite({ agent, onClick }: CEOSpriteProps) {
+export default function CEOSprite({ agent, onClick, archetype, riskTolerance }: CEOSpriteProps) {
   const animationClass = getAnimationClass(agent.status);
   const statusColor = getStatusColor(agent.status);
   const gold = '#f1fa8c';
   const isSeated = agent.status === 'working';
+
+  const [ceoCost, setCeoCost] = useState(0);
+
+  useEffect(() => {
+    getAgentUsage('ceo').then(u => setCeoCost(u.totalCost));
+  }, []);
 
   return (
     <div
@@ -69,8 +79,21 @@ export default function CEOSprite({ agent, onClick }: CEOSpriteProps) {
       <div className="absolute -top-[80px] left-1/2 -translate-x-1/2 hidden group-hover:block z-30">
         <div className="bg-jarvis-surface border border-jarvis-border rounded px-2 py-1.5 text-[10px] whitespace-nowrap shadow-lg">
           <div className="font-medium" style={{ color: gold }}>CEO {agent.name}</div>
+          {archetype && (
+            <div className="text-pixel-pink text-[9px] uppercase">{archetype.replace(/_/g, ' ')}</div>
+          )}
           <div className="text-jarvis-muted truncate max-w-[160px]">{agent.currentTask}</div>
           <div className="text-pixel-cyan text-[9px]">{agent.model}</div>
+          <div className="border-t border-jarvis-border mt-1 pt-1 text-[9px]">
+            <div className="flex items-center gap-2">
+              <span className="w-[5px] h-[5px] rounded-full inline-block" style={{ backgroundColor: statusColor }} />
+              <span className="text-jarvis-muted uppercase">{agent.status}</span>
+              {riskTolerance && (
+                <span className="text-pixel-orange">{riskTolerance}</span>
+              )}
+            </div>
+            <div className="text-pixel-yellow">COST: ${ceoCost.toFixed(2)}</div>
+          </div>
         </div>
         <div className="w-0 h-0 mx-auto border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-jarvis-border" />
       </div>
