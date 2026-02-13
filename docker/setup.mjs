@@ -226,6 +226,7 @@ async function healthCheck(domain, tls) {
     { name: 'Jarvis Frontend', url: `${proto}://${domain}/` },
     { name: 'Supabase API (Kong)', url: `http://localhost:8000/rest/v1/` },
     { name: 'Supabase Auth (GoTrue)', url: `http://localhost:8000/auth/v1/health` },
+    { name: 'Edge Functions', url: `http://localhost:8000/functions/v1/health`, optional: true },
     { name: 'Supabase Studio', url: `${proto}://studio.${domain}/` },
   ];
 
@@ -239,6 +240,8 @@ async function healthCheck(domain, tls) {
     const ok = await checkService(svc.name, svc.url, 15000);
     if (ok) {
       console.log(`\r  ${green('✓')} ${svc.name} ${dim('— online')}`);
+    } else if (svc.optional) {
+      console.log(`\r  ${dim('○')} ${svc.name} ${dim('— not reachable (optional)')}`);
     } else {
       console.log(`\r  ${red('✗')} ${svc.name} ${dim('— not reachable')}`);
       allOk = false;
@@ -276,13 +279,16 @@ async function waitForServices(domain, tls) {
   const httpServices = [
     { name: 'Kong API Gateway', url: `http://localhost:8000/rest/v1/` },
     { name: 'GoTrue Auth', url: `http://localhost:8000/auth/v1/health` },
+    { name: 'Edge Functions', url: `http://localhost:8000/functions/v1/health`, optional: true },
   ];
 
   for (const svc of httpServices) {
     process.stdout.write(`  ${dim('waiting')} ${svc.name}...`);
-    const ok = await checkService(svc.name, svc.url, 45000);
+    const ok = await checkService(svc.name, svc.url, svc.optional ? 15000 : 45000);
     if (ok) {
       console.log(`\r  ${green('✓')} ${svc.name} ${dim('— online')}`);
+    } else if (svc.optional) {
+      console.log(`\r  ${dim('○')} ${svc.name} ${dim('— skipped (optional)')}`);
     } else {
       console.log(`\r  ${red('✗')} ${svc.name} ${dim('— timed out')}`);
     }

@@ -147,6 +147,29 @@ services:
     networks:
       - jarvis-net
 
+  # ─── Supabase: Edge Functions (Deno runtime) ───────────────
+  supabase-functions:
+    image: supabase/edge-runtime:v1.70.0
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_URL: http://supabase-kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}
+      VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT:-false}"
+    volumes:
+      - ./supabase/functions:/home/deno/functions:Z
+    command:
+      - start
+      - --main-service
+      - /home/deno/functions/main
+    networks:
+      - jarvis-net
+
   # ─── Supabase: Kong (API gateway) ──────────────────────────
   supabase-kong:
     image: kong:2.8.1
@@ -168,6 +191,7 @@ services:
       - supabase-auth
       - supabase-rest
       - supabase-realtime
+      - supabase-functions
     networks:
       - jarvis-net
 

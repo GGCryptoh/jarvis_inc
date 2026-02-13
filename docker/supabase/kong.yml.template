@@ -74,3 +74,14 @@ services:
           allow:
             - admin
             - anon
+
+  # ─── Edge Functions (Deno runtime) ───────────────────────
+  - name: functions-v1
+    url: http://supabase-functions:9000/
+    routes:
+      - name: functions-v1-all
+        strip_path: true
+        paths:
+          - /functions/v1/
+    plugins:
+      - name: cors
