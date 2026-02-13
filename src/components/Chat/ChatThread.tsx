@@ -27,15 +27,19 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
   const resumeGreetingSent = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastExtractionCountRef = useRef<number>(0);
+  const messagesRef = useRef<ChatMessageRow[]>([]);
 
   const isArchived = conversation.status === 'archived';
 
-  /** Fire-and-forget memory extraction when conversation reaches threshold */
+  // Keep ref in sync with state for cleanup extraction
+  messagesRef.current = messages;
+
+  /** Fire-and-forget memory extraction — triggers every 6 messages during chat */
   const maybeExtractMemories = useCallback((allMessages: ChatMessageRow[]) => {
     const count = allMessages.length;
-    if (count < 10) return;
-    // Only trigger every 10 messages since last extraction
-    if (count - lastExtractionCountRef.current < 10) return;
+    if (count < 4) return; // Need at least 2 exchanges
+    // Trigger every 6 messages since last extraction
+    if (count - lastExtractionCountRef.current < 6) return;
     lastExtractionCountRef.current = count;
     extractMemories(allMessages, conversation.id).catch(err =>
       console.warn('Memory extraction failed:', err)
@@ -43,14 +47,17 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
   }, [conversation.id]);
 
   /** Fire-and-forget task dispatch when CEO response contains task_plan blocks */
-  const maybeDispatchTasks = useCallback((ceoText: string, model: string) => {
+  const maybeDispatchTasks = useCallback((ceoText: string, model: string, allMessages: ChatMessageRow[]) => {
     if (!hasSupabaseConfig()) return; // Only dispatch when Supabase is configured
     const missions = parseTaskPlan(ceoText);
     if (missions.length === 0) return;
-    dispatchTaskPlan(missions, model).catch(err =>
+    dispatchTaskPlan(missions, model, {
+      conversationExcerpt: allMessages,
+      conversationId: conversation.id,
+    }).catch(err =>
       console.warn('Task dispatch failed:', err)
     );
-  }, []);
+  }, [conversation.id]);
 
   // Load CEO name + LLM availability on mount and when conversation changes
   useEffect(() => {
@@ -71,6 +78,22 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
       abortRef.current?.abort();
     };
   }, []);
+
+  // Extract memories when leaving a conversation (unmount or switch)
+  // This catches short chats that never hit the 6-message threshold
+  useEffect(() => {
+    const convId = conversation.id;
+    return () => {
+      const msgs = messagesRef.current;
+      // At least 2 user messages worth extracting (user + ceo = 2 msgs minimum)
+      const userMsgCount = msgs.filter(m => m.sender === 'user').length;
+      if (userMsgCount >= 1 && msgs.length > lastExtractionCountRef.current) {
+        extractMemories(msgs, convId).catch(err =>
+          console.warn('Memory extraction on leave failed:', err)
+        );
+      }
+    };
+  }, [conversation.id]);
 
   // Load messages when conversation changes
   useEffect(() => {
@@ -181,7 +204,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
         setMessages(prev => [...prev, ceoMsg]);
         abortRef.current = null;
         maybeExtractMemories(withCeo);
-        maybeDispatchTasks(fullText, llm.model);
+        maybeDispatchTasks(fullText, llm.model, withCeo);
       },
       onError: async (error) => {
         console.error('LLM stream error:', error);

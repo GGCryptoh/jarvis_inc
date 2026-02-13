@@ -114,10 +114,13 @@ export async function streamCEOResponse(
         'info',
       ).catch(() => {});
 
-      // Detect and dispatch task plans from CEO response
+      // Detect and dispatch task plans from CEO response — include conversation context
       const missions = parseTaskPlan(fullText);
       if (missions.length > 0) {
-        dispatchTaskPlan(missions, availability.displayModel).catch(() => {});
+        dispatchTaskPlan(missions, availability.displayModel, {
+          conversationExcerpt: conversationHistory,
+          conversationId: conversationHistory[0]?.conversation_id,
+        }).catch(() => {});
       }
 
       callbacks.onDone(fullText, usage);
@@ -219,12 +222,31 @@ async function buildCEOSystemPrompt(): Promise<string> {
   const philosophyBlock = PHILOSOPHY_BLOCKS[ceo.philosophy] ?? `Operating Philosophy: ${ceo.philosophy}`;
   const riskBlock = RISK_BLOCKS[ceo.risk_tolerance] ?? RISK_BLOCKS['moderate'];
 
-  // Organizational memory
-  const memories = await getMemories(20);
+  // Organizational memory — separate founder profile from general memories
+  const memories = await getMemories(40);
+  const founderProfileMemories = memories.filter(m => m.category === 'founder_profile');
+  const orgMemories = memories.filter(m => m.category !== 'founder_profile');
+
+  // Founder soul — always included, high priority
+  let founderSoulBlock: string;
+  if (founderProfileMemories.length > 0) {
+    const profileLines = founderProfileMemories
+      .sort((a, b) => b.importance - a.importance)
+      .map(m => `- ${m.content}`)
+      .join('\n');
+    founderSoulBlock = `## Founder Profile
+You know the following about ${founderName}:
+${profileLines}
+Use this knowledge naturally in all interactions. Reference it when relevant.`;
+  } else {
+    founderSoulBlock = `## Founder Profile
+You don't know much about ${founderName} yet. Pay attention to personal details they share (location, background, preferences, style) — these are high-priority memories.`;
+  }
+
+  // General org memories
   let memoryBlock: string;
-  if (memories.length > 0) {
-    // Sort by importance DESC, then updated_at DESC (getMemories already sorts by updated_at DESC)
-    const sorted = [...memories].sort((a, b) => {
+  if (orgMemories.length > 0) {
+    const sorted = [...orgMemories].sort((a, b) => {
       const impDiff = b.importance - a.importance;
       if (impDiff !== 0) return impDiff;
       return b.updated_at.localeCompare(a.updated_at);
@@ -288,6 +310,8 @@ ${personaBlock}
 ${philosophyBlock}
 
 ${riskBlock}
+
+${founderSoulBlock}
 
 ${memoryBlock}
 

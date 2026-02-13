@@ -1,9 +1,17 @@
 import { getSupabase } from './supabase';
-import { loadCEO } from './database';
+import { loadCEO, type ChatMessageRow } from './database';
+import { getMemories, queryMemories, type MemoryRow } from './memory';
 
 export interface ParsedMission {
   title: string;
   toolCalls: { name: string; arguments: Record<string, unknown> }[];
+}
+
+export interface DispatchContext {
+  /** Recent conversation messages leading to this dispatch */
+  conversationExcerpt?: ChatMessageRow[];
+  /** Conversation ID for tracing */
+  conversationId?: string;
 }
 
 /** Parse <task_plan> or individual <tool_call> blocks from CEO response */
@@ -45,8 +53,57 @@ export function stripTaskBlocks(text: string): string {
     .trim();
 }
 
+/**
+ * Build context payload for agent task execution.
+ * CEO selects relevant memories + conversation context to include.
+ */
+async function buildTaskContext(
+  mission: ParsedMission,
+  context?: DispatchContext,
+): Promise<Record<string, unknown>> {
+  const taskContext: Record<string, unknown> = {};
+
+  // Founder profile memories — always included
+  const allMemories = await getMemories(40);
+  const founderProfile = allMemories
+    .filter(m => m.category === 'founder_profile')
+    .map(m => m.content);
+  if (founderProfile.length > 0) {
+    taskContext.founder_profile = founderProfile;
+  }
+
+  // Query relevant org memories based on mission title + tool call args
+  const searchText = [
+    mission.title,
+    ...mission.toolCalls.map(tc => Object.values(tc.arguments).join(' ')),
+  ].join(' ');
+  const relevantMemories = await queryMemories(searchText, 10);
+  const orgMemories = relevantMemories
+    .filter(m => m.category !== 'founder_profile')
+    .map(m => ({ category: m.category, content: m.content, tags: m.tags }));
+  if (orgMemories.length > 0) {
+    taskContext.relevant_memories = orgMemories;
+  }
+
+  // Conversation excerpt — last 10 messages from the chat that spawned this
+  if (context?.conversationExcerpt && context.conversationExcerpt.length > 0) {
+    const excerpt = context.conversationExcerpt.slice(-10).map(m => ({
+      sender: m.sender,
+      text: m.text.slice(0, 500), // Truncate long messages
+    }));
+    taskContext.conversation_context = excerpt;
+    taskContext.conversation_id = context.conversationId;
+  }
+
+  return taskContext;
+}
+
 /** Create missions + task_executions and dispatch to edge function */
-export async function dispatchTaskPlan(missions: ParsedMission[], model: string): Promise<string[]> {
+export async function dispatchTaskPlan(
+  missions: ParsedMission[],
+  model: string,
+  context?: DispatchContext,
+): Promise<string[]> {
   const sb = getSupabase();
   const ceo = await loadCEO();
   const missionIds: string[] = [];
@@ -54,6 +111,9 @@ export async function dispatchTaskPlan(missions: ParsedMission[], model: string)
   for (const mission of missions) {
     const missionId = `mission-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     missionIds.push(missionId);
+
+    // Build context payload with relevant memories + conversation
+    const taskContext = await buildTaskContext(mission, context);
 
     // Create mission
     await sb.from('missions').insert({
@@ -78,6 +138,7 @@ export async function dispatchTaskPlan(missions: ParsedMission[], model: string)
         params: call.arguments,
         model,
         status: 'pending',
+        context: taskContext,
       });
 
       // Fire-and-forget dispatch to edge function

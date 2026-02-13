@@ -192,25 +192,46 @@ export async function deleteMemory(id: string): Promise<void> {
 // Memory Extraction from Conversations
 // ---------------------------------------------------------------------------
 
-const EXTRACTION_PROMPT = `You are a memory extraction system. Analyze the following conversation and extract important facts, decisions, preferences, insights, and reminders that should be remembered for future interactions.
+const ARCHETYPE_FOCUS: Record<string, string> = {
+  wharton_mba: `Pay special attention to: market positioning, competitive strategy, ROI discussions, resource allocation decisions, framework references, business metrics.`,
+  wall_street: `Pay special attention to: financial targets, cost concerns, risk/reward trade-offs, portfolio allocation, revenue goals, budget constraints, opportunity costs.`,
+  mit_engineer: `Pay special attention to: technical decisions, architecture choices, optimization trade-offs, system constraints, engineering requirements, data-driven reasoning.`,
+  sv_founder: `Pay special attention to: product-market fit signals, user feedback, shipping velocity, pivot decisions, growth metrics, iteration speed, competitive landscape.`,
+  beach_bum: `Pay special attention to: work-life balance preferences, sustainable pace discussions, long-term vision over short-term urgency, team wellbeing, creative approaches.`,
+  military_cmd: `Pay special attention to: mission objectives, operational constraints, chain of command decisions, resource deployment, contingency planning, situational awareness.`,
+  creative_dir: `Pay special attention to: design preferences, aesthetic choices, quality standards, user experience priorities, brand voice, creative direction.`,
+  professor: `Pay special attention to: evidence-based decisions, analytical frameworks, uncertainty acknowledgments, research priorities, methodology choices, structured reasoning.`,
+};
+
+function buildExtractionPrompt(archetype?: string | null): string {
+  const focusBlock = archetype && ARCHETYPE_FOCUS[archetype]
+    ? `\n\n${ARCHETYPE_FOCUS[archetype]}`
+    : '';
+
+  return `You are a memory extraction system for an AI-run organization. Analyze the following conversation and extract important facts, decisions, preferences, insights, and reminders that should be remembered for future interactions.
 
 Return a JSON array of objects with these fields:
-- "category": one of "fact", "decision", "preference", "insight", "reminder"
+- "category": one of "fact", "decision", "preference", "insight", "reminder", "founder_profile"
 - "content": a clear, concise statement of the memory (one sentence)
 - "tags": array of 1-3 relevant keyword tags
 - "importance": integer 1-10 (10 = critical organizational knowledge, 1 = trivial)
 
 Focus on:
-- Decisions made by the founder or CEO
-- Stated preferences (communication style, priorities, etc.)
-- Key facts about the organization, its goals, or its constraints
-- Strategic insights discussed
-- Action items or reminders mentioned
+- **Founder personal details** (location, timezone, industry, background, communication style) → category: "founder_profile", importance: 8-10
+- **Founder stated preferences** (likes, dislikes, priorities, how they want things done) → category: "preference", importance: 7-9
+- **Decisions made** by the founder or CEO → category: "decision"
+- **Key facts** about the organization, its goals, constraints, or market → category: "fact"
+- **Strategic insights** discussed → category: "insight"
+- **Action items or reminders** mentioned → category: "reminder"
+${focusBlock}
+
+IMPORTANT: Personal details about the founder (where they live, their background, their style preferences) are HIGH importance — these shape every future interaction. "The founder lives in Philadelphia" is importance 9, not 3.
 
 Only extract genuinely important information. Do NOT extract greetings, small talk, or trivial exchanges.
 If there is nothing worth remembering, return an empty array: []
 
 Return ONLY the JSON array, no other text.`;
+}
 
 export async function extractMemories(
   messages: ChatMessageRow[],
@@ -218,13 +239,17 @@ export async function extractMemories(
 ): Promise<MemoryRow[]> {
   if (messages.length === 0) return [];
 
+  // Load CEO archetype for personality-aware extraction
+  const ceo = await loadCEO();
+  const archetype = ceo?.archetype ?? null;
+
   // Format conversation for the LLM
   const conversationText = messages
     .map(m => `[${m.sender.toUpperCase()}]: ${m.text}`)
     .join('\n');
 
   const llmMessages: LLMMessage[] = [
-    { role: 'system', content: EXTRACTION_PROMPT },
+    { role: 'system', content: buildExtractionPrompt(archetype) },
     { role: 'user', content: conversationText },
   ];
 
@@ -243,7 +268,7 @@ export async function extractMemories(
   }
 
   // Save each extracted memory
-  const validCategories = new Set(['fact', 'decision', 'preference', 'insight', 'reminder']);
+  const validCategories = new Set(['fact', 'decision', 'preference', 'insight', 'reminder', 'founder_profile']);
   const saved: MemoryRow[] = [];
 
   for (const item of parsed) {
