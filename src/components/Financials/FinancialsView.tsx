@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { DollarSign, TrendingDown, TrendingUp, Minus, Pencil, X } from 'lucide-react'
 import { getSetting, setSetting, logAudit } from '../../lib/database'
 import { financials } from '../../data/dummyData'
@@ -175,18 +175,21 @@ function BudgetEditDialog({
 // ---------------------------------------------------------------------------
 
 export default function FinancialsView() {
-  const [monthlyBudget, setMonthlyBudget] = useState(() => {
-    const saved = getSetting('monthly_budget');
-    return saved ? parseFloat(saved) : 100; // default $100/mo
-  });
+  const [monthlyBudget, setMonthlyBudget] = useState(100); // default $100/mo
   const [showBudgetEdit, setShowBudgetEdit] = useState(false);
 
-  function handleBudgetSave(value: number) {
+  useEffect(() => {
+    getSetting('monthly_budget').then(saved => {
+      if (saved) setMonthlyBudget(parseFloat(saved));
+    });
+  }, []);
+
+  async function handleBudgetSave(value: number) {
     const oldBudget = monthlyBudget;
-    setSetting('monthly_budget', String(value));
+    await setSetting('monthly_budget', String(value));
     setMonthlyBudget(value);
     setShowBudgetEdit(false);
-    logAudit(null, 'BUDGET', `Monthly budget changed from $${oldBudget} to $${value}`, 'info');
+    await logAudit(null, 'BUDGET', `Monthly budget changed from $${oldBudget} to $${value}`, 'info');
   }
 
   const totalBudget = monthlyBudget * 12; // annual from monthly

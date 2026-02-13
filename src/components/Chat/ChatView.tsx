@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   getSetting, loadCEO, getFounderInfo,
   loadConversations, saveConversation, deleteConversation, getConversation,
@@ -45,38 +45,64 @@ function randomGreeting(founderName: string): string {
 // ---------------------------------------------------------------------------
 
 export default function ChatView() {
-  const [meetingDone, setMeetingDone] = useState(() => !!getSetting('ceo_meeting_done'));
-  const [conversations, setConversations] = useState<ConversationRow[]>(() => loadConversations());
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(() => {
-    // Default to the most recent active conversation, or first one
-    const convos = loadConversations();
-    const active = convos.find(c => c.status === 'active');
-    return active?.id ?? convos[0]?.id ?? null;
-  });
+  const [meetingDone, setMeetingDone] = useState<boolean | null>(null);
+  const [conversations, setConversations] = useState<ConversationRow[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeConversation, setActiveConversation] = useState<ConversationRow | null>(null);
 
-  const ceoRow = loadCEO();
-  const founderInfo = getFounderInfo();
-  const ceoName = ceoRow?.name ?? 'CEO';
-  const founderName = founderInfo?.founderName ?? 'Founder';
+  const [ceoName, setCeoName] = useState('CEO');
+  const [founderName, setFounderName] = useState('Founder');
 
-  const refreshConversations = useCallback(() => {
-    setConversations(loadConversations());
+  // Load initial data from DB
+  useEffect(() => {
+    const load = async () => {
+      const [meetingSetting, ceoRow, founderInfo, convos] = await Promise.all([
+        getSetting('ceo_meeting_done'),
+        loadCEO(),
+        getFounderInfo(),
+        loadConversations(),
+      ]);
+
+      setMeetingDone(!!meetingSetting);
+      setCeoName(ceoRow?.name ?? 'CEO');
+      setFounderName(founderInfo?.founderName ?? 'Founder');
+      setConversations(convos);
+
+      // Default to the most recent active conversation, or first one
+      const active = convos.find(c => c.status === 'active');
+      setActiveConversationId(active?.id ?? convos[0]?.id ?? null);
+    };
+    load();
   }, []);
 
-  const handleOnboardingComplete = useCallback(() => {
+  // Load active conversation whenever activeConversationId changes
+  useEffect(() => {
+    if (!activeConversationId) {
+      setActiveConversation(null);
+      return;
+    }
+    getConversation(activeConversationId).then(setActiveConversation);
+  }, [activeConversationId]);
+
+  const refreshConversations = useCallback(async () => {
+    const convos = await loadConversations();
+    setConversations(convos);
+  }, []);
+
+  const handleOnboardingComplete = useCallback(async () => {
     setMeetingDone(true);
-    refreshConversations();
+    await refreshConversations();
     // Auto-select the first active conversation or onboarding
-    const convos = loadConversations();
+    const convos = await loadConversations();
     const active = convos.find(c => c.status === 'active');
     setActiveConversationId(active?.id ?? convos[0]?.id ?? null);
   }, [refreshConversations]);
 
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = useCallback(async () => {
     const convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const greeting = randomGreeting(founderName);
 
-    saveConversation({
+    await saveConversation({
       id: convId,
       title: greeting.length > 50 ? greeting.slice(0, 50) + '...' : greeting,
       type: 'general',
@@ -84,7 +110,7 @@ export default function ChatView() {
     });
 
     // Seed with CEO greeting
-    saveChatMessage({
+    await saveChatMessage({
       id: `msg-${Date.now()}-greet`,
       conversation_id: convId,
       sender: 'ceo',
@@ -92,15 +118,15 @@ export default function ChatView() {
       metadata: null,
     });
 
-    refreshConversations();
+    await refreshConversations();
     setActiveConversationId(convId);
   }, [founderName, refreshConversations]);
 
-  const handleDeleteConversation = useCallback((id: string) => {
-    deleteConversation(id);
-    refreshConversations();
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    await deleteConversation(id);
+    await refreshConversations();
     if (activeConversationId === id) {
-      const remaining = loadConversations();
+      const remaining = await loadConversations();
       setActiveConversationId(remaining[0]?.id ?? null);
     }
   }, [activeConversationId, refreshConversations]);
@@ -111,14 +137,17 @@ export default function ChatView() {
 
   // --- Render ---
 
+  // Still loading initial data
+  if (meetingDone === null) {
+    return null;
+  }
+
   // Pre-meeting: show onboarding flow
   if (!meetingDone) {
     return <OnboardingFlow onComplete={handleOnboardingComplete} />;
   }
 
   // Post-meeting: sidebar + thread
-  const activeConversation = activeConversationId ? getConversation(activeConversationId) : null;
-
   return (
     <div className="flex-1 flex h-full">
       <ChatSidebar

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Shield, Lock, Plus, Pencil, Trash2, X, AlertTriangle } from 'lucide-react';
 import {
   loadVaultEntries,
@@ -33,13 +33,15 @@ function maskKey(key: string): string {
 }
 
 export default function VaultView() {
-  const [entries, setEntries] = useState<VaultRow[]>(() => loadVaultEntries());
+  const [entries, setEntries] = useState<VaultRow[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<VaultRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<VaultRow | null>(null);
   const [deleteEntities, setDeleteEntities] = useState<{ type: 'ceo' | 'agent'; name: string; model: string }[]>([]);
 
-  const refresh = useCallback(() => setEntries(loadVaultEntries()), []);
+  useEffect(() => { loadVaultEntries().then(setEntries) }, []);
+
+  const refresh = useCallback(() => { loadVaultEntries().then(setEntries) }, []);
 
   // Modal state
   const [formName, setFormName] = useState('');
@@ -65,35 +67,35 @@ export default function VaultView() {
     setModalOpen(true);
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!formName.trim() || !formService.trim() || !formKey.trim()) return;
     if (editingEntry) {
-      updateVaultEntry(editingEntry.id, { name: formName.trim(), key_value: formKey.trim() });
-      logAudit(null, 'KEY_UPDATED', `Updated "${formName.trim()}" (${editingEntry.service})`, 'info');
+      await updateVaultEntry(editingEntry.id, { name: formName.trim(), key_value: formKey.trim() });
+      await logAudit(null, 'KEY_UPDATED', `Updated "${formName.trim()}" (${editingEntry.service})`, 'info');
     } else {
-      saveVaultEntry({
+      await saveVaultEntry({
         id: `vault-${Date.now()}`,
         name: formName.trim(),
         type: formType,
         service: formService.trim(),
         key_value: formKey.trim(),
       });
-      logAudit(null, 'KEY_ADDED', `Added ${formType} "${formName.trim()}" for ${formService.trim()}`, 'info');
+      await logAudit(null, 'KEY_ADDED', `Added ${formType} "${formName.trim()}" for ${formService.trim()}`, 'info');
     }
     setModalOpen(false);
     refresh();
   }
 
-  function handleDeleteClick(entry: VaultRow) {
-    const entities = getEntitiesUsingService(entry.service);
+  async function handleDeleteClick(entry: VaultRow) {
+    const entities = await getEntitiesUsingService(entry.service);
     setDeleteEntities(entities);
     setDeleteTarget(entry);
   }
 
-  function handleDeleteConfirm() {
+  async function handleDeleteConfirm() {
     if (!deleteTarget) return;
-    logAudit(null, 'KEY_DELETED', `Deleted "${deleteTarget.name}" (${deleteTarget.service})`, 'warning');
-    deleteVaultEntry(deleteTarget.id);
+    await logAudit(null, 'KEY_DELETED', `Deleted "${deleteTarget.name}" (${deleteTarget.service})`, 'warning');
+    await deleteVaultEntry(deleteTarget.id);
     setDeleteTarget(null);
     setDeleteEntities([]);
     refresh();

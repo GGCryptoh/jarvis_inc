@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Pencil, X, Target, Check, RefreshCw, Crown } from 'lucide-react'
-import { getSetting, setSetting, loadMissions, loadAgents, loadCEO, logAudit, type MissionRow, type AgentRow } from '../../lib/database'
+import { getSetting, setSetting, loadMissions, loadAgents, loadCEO, logAudit, type MissionRow, type AgentRow, type CEORow } from '../../lib/database'
 
 const priorityColor: Record<string, string> = {
   critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -79,20 +79,24 @@ function RecurringBadge({ cron }: { cron: string }) {
 // ---------------------------------------------------------------------------
 
 function MissionCard() {
-  const [mission, setMission] = useState(() => getSetting('primary_mission') ?? '');
+  const [mission, setMission] = useState('');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+
+  useEffect(() => {
+    getSetting('primary_mission').then(val => setMission(val ?? ''));
+  }, []);
 
   function openEdit() {
     setDraft(mission);
     setEditing(true);
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    setSetting('primary_mission', trimmed);
-    logAudit(null, 'MISSION_SET', `Primary mission updated: "${trimmed.slice(0, 80)}"`, 'info');
+    await setSetting('primary_mission', trimmed);
+    await logAudit(null, 'MISSION_SET', `Primary mission updated: "${trimmed.slice(0, 80)}"`, 'info');
     setMission(trimmed);
     setEditing(false);
   }
@@ -194,9 +198,20 @@ export default function DashboardView() {
     day: 'numeric',
   })
 
-  const [dbMissions] = useState(() => loadMissions())
-  const [agents] = useState(() => loadAgents())
-  const [ceo] = useState(() => loadCEO())
+  const [dbMissions, setDbMissions] = useState<MissionRow[]>([])
+  const [agents, setAgents] = useState<AgentRow[]>([])
+  const [ceo, setCeo] = useState<CEORow | null>(null)
+  const [monthlyBudget, setMonthlyBudget] = useState(100)
+
+  useEffect(() => {
+    loadMissions().then(setDbMissions)
+    loadAgents().then(setAgents)
+    loadCEO().then(setCeo)
+    getSetting('monthly_budget').then(val => {
+      if (val) setMonthlyBudget(parseFloat(val))
+    })
+  }, [])
+
   const topMissions = dbMissions.slice(0, 10)
 
   // Compute real stats from DB
@@ -204,7 +219,6 @@ export default function DashboardView() {
   const activeMissions = dbMissions.filter(m => m.status === 'in_progress').length
   const doneMissions = dbMissions.filter(m => m.status === 'done').length
   const totalMissions = dbMissions.length
-  const monthlyBudget = parseFloat(getSetting('monthly_budget') ?? '100')
 
   function formatDate(iso: string | null): string {
     if (!iso) return '—'

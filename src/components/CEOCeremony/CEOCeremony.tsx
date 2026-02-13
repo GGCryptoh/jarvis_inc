@@ -61,8 +61,14 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   const [activationProgress, setActivationProgress] = useState(0);
   const terminalRef = useRef<HTMLDivElement>(null);
 
-  const founderInfo = getFounderInfo();
-  const founderName = founderInfo?.founderName ?? 'FOUNDER';
+  // Founder info loaded asynchronously
+  const [founderName, setFounderName] = useState('FOUNDER');
+
+  useEffect(() => {
+    getFounderInfo().then(info => {
+      setFounderName(info?.founderName ?? 'FOUNDER');
+    });
+  }, []);
 
   // Blinking cursor
   useEffect(() => {
@@ -159,9 +165,9 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   const keyValidation = validateApiKeyFormat(service, apiKey);
   const keyLongEnough = apiKey.trim().length >= 10;
 
-  function persistCEO() {
+  async function persistCEO() {
     const ceoCallsign = ceoName.trim().toUpperCase();
-    saveCEO({
+    await saveCEO({
       name: ceoCallsign,
       model,
       philosophy: effectivePhilosophy.trim(),
@@ -170,8 +176,9 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
       archetype: archetype,
     });
     // Seed milestone mission
-    const fName = getFounderInfo()?.founderName ?? 'Founder';
-    saveMission({
+    const fInfo = await getFounderInfo();
+    const fName = fInfo?.founderName ?? 'Founder';
+    await saveMission({
       id: 'mission-ceo-designation',
       title: `Designate CEO ${ceoCallsign}`,
       status: 'done',
@@ -181,53 +188,56 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
       created_at: new Date().toISOString(),
       due_date: null,
     });
-    logAudit(ceoCallsign, 'CEO_HIRED', `CEO "${ceoCallsign}" designated with ${model}, archetype: ${archetype ?? 'none'}`, 'info');
+    await logAudit(ceoCallsign, 'CEO_HIRED', `CEO "${ceoCallsign}" designated with ${model}, archetype: ${archetype ?? 'none'}`, 'info');
   }
 
-  function handleHireCEO() {
+  async function handleHireCEO() {
     if (!keyValidation.valid && keyLongEnough) return;
     if (!keyLongEnough) return;
-    persistCEO();
+    await persistCEO();
     // Check if a vault entry already exists for this service — update instead of duplicating
-    const existing = getVaultEntryByService(service);
+    const existing = await getVaultEntryByService(service);
     if (existing) {
-      updateVaultEntry(existing.id, { key_value: apiKey.trim() });
-      logAudit(null, 'KEY_UPDATED', `Updated ${service} API key during CEO ceremony`, 'info');
+      await updateVaultEntry(existing.id, { key_value: apiKey.trim() });
+      await logAudit(null, 'KEY_UPDATED', `Updated ${service} API key during CEO ceremony`, 'info');
     } else {
-      saveVaultEntry({
+      await saveVaultEntry({
         id: `vault-${Date.now()}`,
         name: `${service} API Key`,
         type: 'api_key',
         service,
         key_value: apiKey.trim(),
       });
-      logAudit(null, 'KEY_ADDED', `Added ${service} API key during CEO ceremony`, 'info');
+      await logAudit(null, 'KEY_ADDED', `Added ${service} API key during CEO ceremony`, 'info');
     }
     setPhase('activating');
   }
 
-  function handleSkipApiKey() {
-    persistCEO();
+  async function handleSkipApiKey() {
+    await persistCEO();
     // Check if key already exists in vault — no need for approval if so
-    const existingKey = getVaultEntryByService(service);
+    const existingKey = await getVaultEntryByService(service);
     if (!existingKey) {
       // Only create approval if one doesn't already exist for this service
-      const pendingApprovals = loadApprovals();
+      const pendingApprovals = await loadApprovals();
       const hasExisting = pendingApprovals.some(a => {
         if (a.type !== 'api_key_request') return false;
-        try { return JSON.parse(a.metadata ?? '{}').service === service; } catch { return false; }
+        try {
+          const meta = typeof a.metadata === 'string' ? JSON.parse(a.metadata) : (a.metadata ?? {});
+          return meta.service === service;
+        } catch { return false; }
       });
       if (!hasExisting) {
-        saveApproval({
+        await saveApproval({
           id: `approval-ceo-key-${Date.now()}`,
           type: 'api_key_request',
           title: `API Key Required: ${service}`,
           description: `CEO ${ceoName.trim().toUpperCase()} needs a ${service} API key to operate with ${model}. Skipped during ceremony.`,
           status: 'pending',
-          metadata: JSON.stringify({ service, model, source: 'ceo_ceremony_skip' }),
+          metadata: { service, model, source: 'ceo_ceremony_skip' },
         });
         window.dispatchEvent(new Event('approvals-changed'));
-        logAudit(null, 'KEY_SKIPPED', `Skipped API key for ${service} during CEO ceremony — approval created`, 'warning');
+        await logAudit(null, 'KEY_SKIPPED', `Skipped API key for ${service} during CEO ceremony — approval created`, 'warning');
       }
     }
     setPhase('activating');
@@ -239,7 +249,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   const gold = '#f1fa8c';
 
   return (
-    <div className="fixed inset-0 bg-black flex items-center justify-center z-[100] overflow-hidden">
+    <div className="fixed inset-0 bg-black flex items-center justify-center z-[100] overflow-y-auto">
       {/* Scanline overlay */}
       <div
         className="absolute inset-0 pointer-events-none z-10 opacity-[0.04]"
@@ -253,7 +263,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
         style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%)' }}
       />
 
-      <div className="relative z-20 w-full max-w-4xl px-8">
+      <div className="relative z-20 w-full max-w-4xl px-8 py-8 my-auto">
         {/* Terminal phase: intro */}
         {phase === 'intro' && (
           <div
@@ -293,13 +303,13 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
         {phase === 'form' && (
           <div className="animate-[fadeIn_0.6s_ease-out]">
             <h1
-              className="font-pixel text-3xl tracking-wider mb-8 text-center"
+              className="font-pixel text-3xl tracking-wider mb-5 text-center"
               style={{ color: gold, textShadow: `0 0 20px ${gold}4d` }}
             >
               CEO DESIGNATION
             </h1>
 
-            <div className="space-y-5 max-w-lg mx-auto">
+            <div className="space-y-4 max-w-lg mx-auto">
               {/* CEO Name */}
               <div>
                 <label className="block font-pixel text-xs tracking-widest mb-2" style={{ color: `${gold}b3` }}>
@@ -331,12 +341,12 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
                 <label className="block font-pixel text-xs tracking-widest mb-2" style={{ color: `${gold}b3` }}>
                   AI MODEL
                 </label>
-                <div className="flex flex-wrap gap-1">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
                   {MODEL_OPTIONS.map(m => (
                     <button
                       key={m}
                       onClick={() => setModel(m)}
-                      className="font-pixel text-[10px] tracking-wider px-2.5 py-1.5 border transition-colors"
+                      className="font-pixel text-[10px] tracking-wider px-2 py-1 border transition-colors truncate"
                       style={{
                         borderColor: model === m ? gold : '#3a3a5a',
                         backgroundColor: model === m ? `${gold}1a` : 'transparent',
@@ -434,7 +444,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
               <button
                 onClick={handleDesignate}
                 disabled={!isValid}
-                className="w-full font-pixel text-sm tracking-[0.3em] py-4 rounded-sm border-2 transition-all duration-300"
+                className="w-full font-pixel text-sm tracking-[0.3em] py-3 rounded-sm border-2 transition-all duration-300"
                 style={{
                   borderColor: isValid ? gold : `${gold}33`,
                   backgroundColor: isValid ? `${gold}1a` : 'transparent',
@@ -526,11 +536,11 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
             >
               CONNECT {service.toUpperCase()} API
             </h1>
-            <p className="font-pixel text-[10px] tracking-wider text-center mb-8" style={{ color: `${gold}80` }}>
+            <p className="font-pixel text-[10px] tracking-wider text-center mb-5" style={{ color: `${gold}80` }}>
               {ceoName.toUpperCase()} needs an API key to operate with {model}
             </p>
 
-            <div className="max-w-lg mx-auto space-y-6">
+            <div className="max-w-lg mx-auto space-y-4">
               {/* Steps */}
               {hints && (
                 <div className="space-y-2">

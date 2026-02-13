@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronDown,
@@ -7,10 +7,13 @@ import {
   ClipboardCheck,
   Search,
   RefreshCw,
+  FlaskConical,
 } from 'lucide-react';
-import { loadSkills, saveSkill, updateSkillModel, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService, logAudit } from '../../lib/database';
+import { loadSkills, saveSkill, updateSkillModel, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService, loadVaultEntries, logAudit } from '../../lib/database';
 import { MODEL_OPTIONS, getServiceForModel } from '../../lib/models';
 import { skills, type SkillDefinition } from '../../data/skillDefinitions';
+import { resolveSkills, type FullSkillDefinition } from '../../lib/skillResolver';
+import SkillTestDialog from './SkillTestDialog';
 
 const categoryLabels: Record<string, string> = {
   communication: 'COMMUNICATION',
@@ -37,32 +40,32 @@ function getRequiredService(skill: SkillDefinition, model: string | null): strin
   return null;
 }
 
-function hasApiKey(service: string): boolean {
-  return getVaultEntryByService(service) !== null;
+async function hasApiKey(service: string): Promise<boolean> {
+  return (await getVaultEntryByService(service)) !== null;
 }
 
-function ensureApproval(service: string, skillName: string, model: string | null): void {
-  const pending = loadApprovals();
+async function ensureApproval(service: string, skillName: string, model: string | null): Promise<void> {
+  const pending = await loadApprovals();
   const alreadyRequested = pending.some(a => {
     try {
-      const meta = JSON.parse(a.metadata ?? '{}');
+      const meta = (a.metadata ?? {}) as Record<string, unknown>;
       return meta.service === service;
     } catch { return false; }
   });
   if (!alreadyRequested) {
-    saveApproval({
+    await saveApproval({
       id: `approval-${Date.now()}`,
       type: 'api_key_request',
       title: `API Key Required: ${service}`,
       description: `Skill "${skillName}" requires a ${service} API key to function.`,
       status: 'pending',
-      metadata: JSON.stringify({ service, skillId: skillName, model }),
+      metadata: { service, skillId: skillName, model },
     });
   }
 }
 
 /** Check if a pending approval for a service is still needed by any enabled skill. If not, dismiss it. */
-function cleanupStaleApproval(oldService: string, allConfigs: Map<string, SkillConfig>): void {
+async function cleanupStaleApproval(oldService: string, allConfigs: Map<string, SkillConfig>): Promise<void> {
   // Check if any other enabled skill still needs this service
   const stillNeeded = skills.some(s => {
     if (s.status === 'coming_soon') return false;
@@ -74,38 +77,38 @@ function cleanupStaleApproval(oldService: string, allConfigs: Map<string, SkillC
   if (stillNeeded) return;
 
   // Also check if the key now exists (user may have provided it)
-  if (hasApiKey(oldService)) return;
+  if (await hasApiKey(oldService)) return;
 
   // Find and dismiss the pending approval for this service
-  const pending = loadApprovals();
+  const pending = await loadApprovals();
   for (const a of pending) {
     try {
-      const meta = JSON.parse(a.metadata ?? '{}');
+      const meta = (a.metadata ?? {}) as Record<string, unknown>;
       if (meta.service === oldService) {
-        updateApprovalStatus(a.id, 'dismissed');
+        await updateApprovalStatus(a.id, 'dismissed');
       }
     } catch { /* ignore */ }
   }
 }
 
 /** Check if a pending approval exists for a given service. */
-function hasPendingApproval(service: string): boolean {
-  const pending = loadApprovals();
+async function hasPendingApproval(service: string): Promise<boolean> {
+  const pending = await loadApprovals();
   return pending.some(a => {
     try {
-      const meta = JSON.parse(a.metadata ?? '{}');
+      const meta = (a.metadata ?? {}) as Record<string, unknown>;
       return meta.service === service;
     } catch { return false; }
   });
 }
 
 /** Check if a dismissed approval exists for a given service (key was never provided). */
-function hasDismissedApproval(service: string): boolean {
-  const all = loadAllApprovals();
+async function hasDismissedApproval(service: string): Promise<boolean> {
+  const all = await loadAllApprovals();
   return all.some(a => {
     if (a.status !== 'dismissed') return false;
     try {
-      const meta = JSON.parse(a.metadata ?? '{}');
+      const meta = (a.metadata ?? {}) as Record<string, unknown>;
       return meta.service === service;
     } catch { return false; }
   });
@@ -113,14 +116,35 @@ function hasDismissedApproval(service: string): boolean {
 
 export default function SkillsView() {
   const navigate = useNavigate();
-  const [skillConfigs, setSkillConfigs] = useState<Map<string, SkillConfig>>(() => {
-    const rows = loadSkills();
-    const map = new Map<string, SkillConfig>();
-    for (const row of rows) {
-      map.set(row.id, { enabled: row.enabled === 1, model: row.model });
-    }
-    return map;
-  });
+  const [skillConfigs, setSkillConfigs] = useState<Map<string, SkillConfig>>(new Map());
+
+  // Cache of services that have API keys in the vault (for synchronous render-time checks)
+  const [vaultServices, setVaultServices] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    loadSkills().then(rows => {
+      const map = new Map<string, SkillConfig>();
+      for (const row of rows) {
+        map.set(row.id, { enabled: !!row.enabled, model: row.model });
+      }
+      setSkillConfigs(map);
+    });
+    loadVaultEntries().then(entries => {
+      setVaultServices(new Set(entries.map(e => e.service)));
+    });
+  }, []);
+
+  /** Refresh the vault services cache after mutations */
+  const refreshVaultCache = useCallback(() => {
+    loadVaultEntries().then(entries => {
+      setVaultServices(new Set(entries.map(e => e.service)));
+    });
+  }, []);
+
+  /** Synchronous check against cached vault data for render-time use */
+  const hasApiKeyCached = useCallback((service: string): boolean => {
+    return vaultServices.has(service);
+  }, [vaultServices]);
 
   // Filter and search state
   const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
@@ -128,6 +152,19 @@ export default function SkillsView() {
 
   // Disable confirmation dialog state
   const [disableConfirm, setDisableConfirm] = useState<SkillDefinition | null>(null);
+
+  // Skill test dialog state
+  const [testSkill, setTestSkill] = useState<FullSkillDefinition | null>(null);
+  const [resolvedSkills, setResolvedSkills] = useState<Map<string, FullSkillDefinition>>(new Map());
+
+  // Load resolved skills (for test dialog — includes commands from DB definition)
+  useEffect(() => {
+    resolveSkills().then(all => {
+      const map = new Map<string, FullSkillDefinition>();
+      for (const s of all) map.set(s.id, s);
+      setResolvedSkills(map);
+    });
+  }, [skillConfigs]);
 
   // Skill refresh state
   const [refreshStatus, setRefreshStatus] = useState<'idle' | 'refreshing' | 'done' | 'no_repo'>('idle');
@@ -154,20 +191,20 @@ export default function SkillsView() {
 
   const getConfig = (id: string): SkillConfig => skillConfigs.get(id) ?? { enabled: false, model: null };
 
-  const doDisable = useCallback((skill: SkillDefinition) => {
+  const doDisable = useCallback(async (skill: SkillDefinition) => {
     const current = getConfig(skill.id);
-    saveSkill(skill.id, false, current.model);
+    await saveSkill(skill.id, false, current.model);
     setSkillConfigs(prev => {
       const next = new Map(prev);
       next.set(skill.id, { enabled: false, model: current.model });
       return next;
     });
     setDisableConfirm(null);
-    logAudit(null, 'SKILL_OFF', `Disabled skill "${skill.name}"`, 'info');
+    await logAudit(null, 'SKILL_OFF', `Disabled skill "${skill.name}"`, 'info');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillConfigs]);
 
-  const toggleSkill = useCallback((skill: SkillDefinition) => {
+  const toggleSkill = useCallback(async (skill: SkillDefinition) => {
     const current = getConfig(skill.id);
     const newEnabled = !current.enabled;
 
@@ -178,12 +215,12 @@ export default function SkillsView() {
         model = skill.defaultModel;
       }
 
-      saveSkill(skill.id, true, model);
+      await saveSkill(skill.id, true, model);
 
       // Check vault for required service
       const service = getRequiredService(skill, model);
-      if (service && !hasApiKey(service)) {
-        ensureApproval(service, skill.name, model);
+      if (service && !(await hasApiKey(service))) {
+        await ensureApproval(service, skill.name, model);
         window.dispatchEvent(new Event('approvals-changed'));
       }
 
@@ -192,7 +229,7 @@ export default function SkillsView() {
         next.set(skill.id, { enabled: true, model });
         return next;
       });
-      logAudit(null, 'SKILL_ON', `Enabled skill "${skill.name}"${model ? ` with ${model}` : ''}`, 'info');
+      await logAudit(null, 'SKILL_ON', `Enabled skill "${skill.name}"${model ? ` with ${model}` : ''}`, 'info');
     } else {
       // Turning OFF — show confirmation
       setDisableConfirm(skill);
@@ -200,14 +237,14 @@ export default function SkillsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillConfigs]);
 
-  const handleModelChange = useCallback((skill: SkillDefinition, newModel: string) => {
+  const handleModelChange = useCallback(async (skill: SkillDefinition, newModel: string) => {
     const current = getConfig(skill.id);
     const enabled = current.enabled;
     const oldModel = current.model;
     const oldService = oldModel ? getServiceForModel(oldModel) : null;
     const newService = getServiceForModel(newModel);
 
-    saveSkill(skill.id, enabled, newModel);
+    await saveSkill(skill.id, enabled, newModel);
 
     // Update local state first so cleanup sees the new config
     const updatedConfigs = new Map(skillConfigs);
@@ -217,18 +254,24 @@ export default function SkillsView() {
     if (enabled) {
       // If the service changed, clean up old approval if no longer needed
       if (oldService && oldService !== newService) {
-        cleanupStaleApproval(oldService, updatedConfigs);
+        await cleanupStaleApproval(oldService, updatedConfigs);
       }
 
       // Ensure approval for new service if needed
-      if (!hasApiKey(newService)) {
-        ensureApproval(newService, skill.name, newModel);
+      if (!(await hasApiKey(newService))) {
+        await ensureApproval(newService, skill.name, newModel);
       }
 
       window.dispatchEvent(new Event('approvals-changed'));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillConfigs]);
+
+  const handleOpenTest = useCallback((e: React.MouseEvent, skill: SkillDefinition) => {
+    e.stopPropagation();
+    const resolved = resolvedSkills.get(skill.id);
+    if (resolved) setTestSkill(resolved);
+  }, [resolvedSkills]);
 
   const categories = ['communication', 'research', 'creation', 'analysis'] as const;
 
@@ -329,7 +372,7 @@ export default function SkillsView() {
 
                 // Determine status
                 const service = isEnabled ? getRequiredService(skill, config.model) : null;
-                const keyPresent = service ? hasApiKey(service) : false;
+                const keyPresent = service ? hasApiKeyCached(service) : false;
                 const needsKey = isEnabled && service && !keyPresent;
 
                 // Card color scheme
@@ -424,9 +467,22 @@ export default function SkillsView() {
                           <span />
                         )}
 
-                        {/* Status indicator */}
+                        {/* Status indicator + Test button */}
                         {isEnabled && (
                           <div className="flex items-center gap-1.5">
+                            {/* Test button — visible when enabled and has commands */}
+                            {resolvedSkills.get(skill.id)?.commands && resolvedSkills.get(skill.id)!.commands!.length > 0 && (
+                              <button
+                                onClick={e => handleOpenTest(e, skill)}
+                                className="font-pixel text-[6px] tracking-wider text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded px-1.5 py-0.5 transition-colors"
+                                title="Test this skill"
+                              >
+                                <span className="flex items-center gap-1">
+                                  <FlaskConical size={8} />
+                                  TEST
+                                </span>
+                              </button>
+                            )}
                             <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${needsKey ? 'bg-amber-400' : 'bg-emerald-400'}`} />
                             {needsKey ? (
                               <span className="font-pixel text-[6px] tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
@@ -482,6 +538,15 @@ export default function SkillsView() {
         onGoApprovals={() => { setDisableConfirm(null); navigate('/approvals'); }}
         onGoVault={() => { setDisableConfirm(null); navigate('/vault'); }}
       />}
+
+      {/* Skill Test Dialog */}
+      {testSkill && (
+        <SkillTestDialog
+          skill={testSkill}
+          open={true}
+          onClose={() => setTestSkill(null)}
+        />
+      )}
     </div>
   );
 }
@@ -498,9 +563,17 @@ function DisableSkillDialog({
   onGoVault: () => void;
 }) {
   const service = getRequiredService(skill, config.model);
-  const keyPresent = service ? hasApiKey(service) : true;
-  const pendingExists = service ? hasPendingApproval(service) : false;
-  const dismissedExists = service ? hasDismissedApproval(service) : false;
+  const [keyPresent, setKeyPresent] = useState(true);
+  const [pendingExists, setPendingExists] = useState(false);
+  const [dismissedExists, setDismissedExists] = useState(false);
+
+  useEffect(() => {
+    if (service) {
+      hasApiKey(service).then(setKeyPresent);
+      hasPendingApproval(service).then(setPendingExists);
+      hasDismissedApproval(service).then(setDismissedExists);
+    }
+  }, [service]);
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center">

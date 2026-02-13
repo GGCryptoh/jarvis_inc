@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Lock, Trash2, MessageSquare } from 'lucide-react';
 import { type ConversationRow, countChatMessages } from '../../lib/database';
 import DeleteConvoDialog from './DeleteConvoDialog';
@@ -29,6 +29,22 @@ function formatDate(dateStr: string): string {
 
 export default function ChatSidebar({ conversations, activeConversationId, onSelect, onNewChat, onDelete }: ChatSidebarProps) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [messageCounts, setMessageCounts] = useState<Record<string, number>>({});
+
+  // Preload all message counts when conversations change
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const counts: Record<string, number> = {};
+      await Promise.all(
+        conversations.map(async (conv) => {
+          counts[conv.id] = await countChatMessages(conv.id);
+        })
+      );
+      if (!cancelled) setMessageCounts(counts);
+    })();
+    return () => { cancelled = true; };
+  }, [conversations]);
 
   return (
     <div className="w-60 flex-shrink-0 bg-jarvis-surface border-r border-white/[0.06] flex flex-col h-full">
@@ -58,7 +74,7 @@ export default function ChatSidebar({ conversations, activeConversationId, onSel
           const isActive = conv.id === activeConversationId;
           const isOnboarding = conv.type === 'onboarding';
           const isDeleting = deleteTarget === conv.id;
-          const msgCount = countChatMessages(conv.id);
+          const msgCount = messageCounts[conv.id] ?? 0;
 
           return (
             <div key={conv.id} className="relative">

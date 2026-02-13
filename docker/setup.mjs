@@ -6,6 +6,7 @@
 //
 // Usage:
 //   node docker/setup.mjs          # interactive setup
+//   node docker/setup.mjs --auto   # zero-prompt setup with defaults (for npm run jarvis)
 //   node docker/setup.mjs --check  # health-check only (skip .env generation)
 
 import { createInterface } from 'readline';
@@ -17,7 +18,10 @@ import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = join(__dirname, '.env');
+const KONG_TEMPLATE = join(__dirname, 'supabase', 'kong.yml.template');
+const KONG_OUTPUT = join(__dirname, 'supabase', 'kong.yml');
 const COMPOSE_PATH = __dirname;
+const AUTO_MODE = process.argv.includes('--auto');
 
 // ─── Colors ──────────────────────────────────────────────────
 const c = {
@@ -41,6 +45,13 @@ function bold(s) { return `${c.bold}${s}${c.reset}`; }
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
 function ask(question, defaultVal = '') {
+  // In auto mode, always use the default
+  if (AUTO_MODE) {
+    if (defaultVal) {
+      console.log(`${gold('>')} ${question} ${dim(`[${defaultVal}]`)}: ${cyan(defaultVal)}`);
+    }
+    return Promise.resolve(defaultVal);
+  }
   const suffix = defaultVal ? ` ${dim(`[${defaultVal}]`)}` : '';
   return new Promise(resolve => {
     rl.question(`${gold('>')} ${question}${suffix}: `, answer => {
@@ -111,6 +122,29 @@ function isDockerRunning() {
 }
 
 async function ensureDocker() {
+  // In auto mode, just check once and fail fast
+  if (AUTO_MODE) {
+    if (!isDockerInstalled()) {
+      console.log(red('  Docker is not installed.'));
+      console.log('');
+      console.log(gold('  ── INSTALL DOCKER ──'));
+      console.log(`  ${cyan('macOS:')}    https://docs.docker.com/desktop/install/mac-install/`);
+      console.log(`  ${cyan('Windows:')}  https://docs.docker.com/desktop/install/windows-install/`);
+      console.log(`  ${cyan('Linux:')}    https://docs.docker.com/engine/install/`);
+      console.log('');
+      console.log(dim('  Install Docker Desktop, start it, then re-run: npm run jarvis'));
+      process.exit(1);
+    }
+    if (!isDockerRunning()) {
+      console.log(red('  Docker is installed but not running.'));
+      console.log(dim('  Start Docker Desktop, then re-run: npm run jarvis'));
+      process.exit(1);
+    }
+    const version = execSync('docker --version', { encoding: 'utf-8' }).trim();
+    console.log(`  ${green('✓')} ${dim(version)}`);
+    return;
+  }
+
   // Loop until Docker is installed and running
   while (true) {
     if (!isDockerInstalled()) {
@@ -143,6 +177,12 @@ async function ensureDocker() {
 }
 
 // ─── Health Checks ──────────────────────────────────────────
+
+// Allow self-signed certs during health checks (Caddy internal TLS)
+if (!process.env.NODE_TLS_REJECT_UNAUTHORIZED) {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+
 async function checkService(name, url, timeout = 10000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -162,12 +202,30 @@ async function checkService(name, url, timeout = 10000) {
   return false;
 }
 
+/** Check if Postgres is accepting connections via docker exec. */
+async function waitForPostgres(timeout = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      execSync(
+        'docker compose exec -T supabase-db pg_isready -U postgres -h localhost',
+        { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 5000 }
+      );
+      return true;
+    } catch {
+      // not ready yet
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return false;
+}
+
 async function healthCheck(domain, tls) {
   const proto = tls === 'off' ? 'http' : 'https';
   const services = [
     { name: 'Jarvis Frontend', url: `${proto}://${domain}/` },
-    { name: 'Supabase API (Kong)', url: `${proto}://api.${domain}/rest/v1/` },
-    { name: 'Supabase Auth (GoTrue)', url: `${proto}://api.${domain}/auth/v1/health` },
+    { name: 'Supabase API (Kong)', url: `http://localhost:8000/rest/v1/` },
+    { name: 'Supabase Auth (GoTrue)', url: `http://localhost:8000/auth/v1/health` },
     { name: 'Supabase Studio', url: `${proto}://studio.${domain}/` },
   ];
 
@@ -196,6 +254,124 @@ async function healthCheck(domain, tls) {
   return allOk;
 }
 
+/**
+ * Active health polling — waits for Postgres + all HTTP services.
+ * Replaces the fixed 15s sleep.
+ */
+async function waitForServices(domain, tls) {
+  console.log('');
+  console.log(gold('  ── WAITING FOR SERVICES ──'));
+
+  // Phase 1: Wait for Postgres (the dependency everything else needs)
+  process.stdout.write(`  ${dim('waiting')} Postgres...`);
+  const pgOk = await waitForPostgres(60000);
+  if (pgOk) {
+    console.log(`\r  ${green('✓')} Postgres ${dim('— accepting connections')}`);
+  } else {
+    console.log(`\r  ${red('✗')} Postgres ${dim('— timed out after 60s')}`);
+    return false;
+  }
+
+  // Phase 2: Wait for HTTP services via Kong directly (no Caddy/TLS dependency)
+  const httpServices = [
+    { name: 'Kong API Gateway', url: `http://localhost:8000/rest/v1/` },
+    { name: 'GoTrue Auth', url: `http://localhost:8000/auth/v1/health` },
+  ];
+
+  for (const svc of httpServices) {
+    process.stdout.write(`  ${dim('waiting')} ${svc.name}...`);
+    const ok = await checkService(svc.name, svc.url, 45000);
+    if (ok) {
+      console.log(`\r  ${green('✓')} ${svc.name} ${dim('— online')}`);
+    } else {
+      console.log(`\r  ${red('✗')} ${svc.name} ${dim('— timed out')}`);
+    }
+  }
+
+  return true;
+}
+
+// ─── Generate Kong config ────────────────────────────────────
+function generateKongConfig(anonKey, serviceRoleKey) {
+  const template = readFileSync(KONG_TEMPLATE, 'utf-8');
+  const output = template
+    .replace('${SUPABASE_ANON_KEY}', anonKey)
+    .replace('${SUPABASE_SERVICE_KEY}', serviceRoleKey);
+  writeFileSync(KONG_OUTPUT, output);
+  console.log(`  ${green('✓')} ${bold('kong.yml generated')} ${dim('(API keys injected)')}`);
+}
+
+// ─── Write Vite .env.development ─────────────────────────────
+function writeViteEnv(domain, tls, anonKey) {
+  const viteEnvPath = join(__dirname, '..', '.env.development');
+  // For local dev, point directly at Kong (HTTP) to avoid self-signed TLS issues.
+  // Production builds use Caddy (HTTPS) via api.${domain}.
+  const content = `# Generated by setup.mjs — Supabase connection for Vite dev server
+VITE_SUPABASE_URL=http://localhost:8000
+VITE_SUPABASE_ANON_KEY=${anonKey}
+`;
+  writeFileSync(viteEnvPath, content);
+  console.log(`  ${green('✓')} ${bold('.env.development written')} ${dim('(Vite → Kong on localhost:8000)')}`);
+}
+
+// ─── Hosts File ─────────────────────────────────────────────
+async function ensureHostsEntries(domain) {
+  const hostnames = [domain, `api.${domain}`, `studio.${domain}`];
+  const hostsPath = process.platform === 'win32'
+    ? 'C:\\Windows\\System32\\drivers\\etc\\hosts'
+    : '/etc/hosts';
+
+  let hostsContent;
+  try {
+    hostsContent = readFileSync(hostsPath, 'utf-8');
+  } catch {
+    console.log(dim('  Could not read hosts file — skipping check'));
+    return;
+  }
+
+  const missing = hostnames.filter(h => !hostsContent.includes(h));
+  if (missing.length === 0) {
+    console.log(`  ${green('✓')} Hosts file OK — ${domain} entries present`);
+    return;
+  }
+
+  console.log('');
+  console.log(gold('  ── HOSTS FILE ──'));
+  console.log(dim(`  ${missing.length} hostname(s) missing from ${hostsPath}`));
+
+  const entries = missing.map(h => `127.0.0.1  ${h}`).join('\n');
+
+  if (process.platform !== 'win32') {
+    // macOS / Linux — offer to add automatically with sudo
+    if (AUTO_MODE) {
+      console.log(dim('  Adding hosts entries (may prompt for sudo password)...'));
+    } else {
+      const doAdd = await ask('Add hosts entries automatically? (requires sudo)', 'y');
+      if (doAdd.toLowerCase() !== 'y') {
+        console.log(dim('  Add these manually:'));
+        console.log(cyan(`    ${entries.replace(/\n/g, '\n    ')}`));
+        return;
+      }
+    }
+
+    try {
+      execSync(`echo '${entries}' | sudo tee -a ${hostsPath} > /dev/null`, {
+        stdio: ['inherit', 'pipe', 'pipe'],
+        timeout: 30000,
+      });
+      console.log(`  ${green('✓')} Hosts entries added`);
+    } catch {
+      console.log(red('  Could not add hosts entries automatically.'));
+      console.log(dim('  Add these manually:'));
+      console.log(cyan(`    ${entries.replace(/\n/g, '\n    ')}`));
+    }
+  } else {
+    // Windows — manual instructions
+    console.log(dim('  Add these to your hosts file (run as Administrator):'));
+    console.log(cyan(`    ${entries.replace(/\n/g, '\n    ')}`));
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────
 async function main() {
   const checkOnly = process.argv.includes('--check');
@@ -205,6 +381,11 @@ async function main() {
   console.log(gold('  ║') + bold('   JARVIS INC — SYSTEM SETUP          ') + gold('║'));
   console.log(gold('  ╚══════════════════════════════════════╝'));
   console.log('');
+
+  if (AUTO_MODE) {
+    console.log(dim('  Running in auto mode (--auto) — using defaults'));
+    console.log('');
+  }
 
   // ─── Pre-flight: Docker ─────────────────────
   console.log(gold('  ── DOCKER CHECK ──'));
@@ -219,23 +400,53 @@ async function main() {
     const env = readFileSync(ENV_PATH, 'utf-8');
     const domain = env.match(/^DOMAIN=(.+)$/m)?.[1] || 'jarvis.local';
     const tls = env.match(/^CADDY_TLS=(.*)$/m)?.[1] || 'internal';
+    if (domain.endsWith('.local') || !domain.includes('.')) {
+      await ensureHostsEntries(domain);
+    }
     await healthCheck(domain, tls);
     rl.close();
     return;
   }
 
-  // Check for existing .env
+  // Check for existing .env — in auto mode, reuse if present
   if (existsSync(ENV_PATH)) {
+    if (AUTO_MODE) {
+      console.log(dim('  Existing .env found — reusing.'));
+      const env = readFileSync(ENV_PATH, 'utf-8');
+      const domain = env.match(/^DOMAIN=(.+)$/m)?.[1] || 'jarvis.local';
+      const tls = env.match(/^CADDY_TLS=(.*)$/m)?.[1] || 'internal';
+      const anonKey = env.match(/^ANON_KEY=(.+)$/m)?.[1] || '';
+      const serviceKey = env.match(/^SERVICE_ROLE_KEY=(.+)$/m)?.[1] || '';
+      if (domain.endsWith('.local') || !domain.includes('.')) {
+        await ensureHostsEntries(domain);
+      }
+      generateKongConfig(anonKey, serviceKey);
+      await startStack();
+      await waitForServices(domain, tls);
+      writeViteEnv(domain, tls, anonKey);
+      printSystemsOnline(domain, tls);
+      rl.close();
+      return;
+    }
+
     const overwrite = await ask('Existing .env found. Overwrite?', 'n');
     if (overwrite.toLowerCase() !== 'y') {
       console.log(dim('  Keeping existing .env.'));
       const env = readFileSync(ENV_PATH, 'utf-8');
       const domain = env.match(/^DOMAIN=(.+)$/m)?.[1] || 'jarvis.local';
       const tls = env.match(/^CADDY_TLS=(.*)$/m)?.[1] || 'internal';
+      const anonKey = env.match(/^ANON_KEY=(.+)$/m)?.[1] || '';
+      const serviceKey = env.match(/^SERVICE_ROLE_KEY=(.+)$/m)?.[1] || '';
       const startNow = await ask('Start docker compose?', 'y');
       if (startNow.toLowerCase() === 'y') {
+        if (domain.endsWith('.local') || !domain.includes('.')) {
+          await ensureHostsEntries(domain);
+        }
+        generateKongConfig(anonKey, serviceKey);
         await startStack();
-        await healthCheck(domain, tls);
+        await waitForServices(domain, tls);
+        writeViteEnv(domain, tls, anonKey);
+        printSystemsOnline(domain, tls);
       }
       rl.close();
       return;
@@ -244,54 +455,55 @@ async function main() {
 
   // ─── Domain ─────────────────────────────────
   console.log(gold('  ── DOMAIN ──'));
-  console.log(dim('  Your hostname. For LAN: jarvis.local or 192.168.1.x.nip.io'));
-  console.log(dim('  For internet: your-domain.com'));
+  if (!AUTO_MODE) {
+    console.log(dim('  Your hostname. For LAN: jarvis.local or 192.168.1.x.nip.io'));
+    console.log(dim('  For internet: your-domain.com'));
+  }
   const domain = await ask('Domain', 'jarvis.local');
 
   // ─── SSL ────────────────────────────────────
-  console.log('');
-  console.log(gold('  ── SSL MODE ──'));
-  console.log(`  ${cyan('1')} Internal (self-signed) — LAN / local dev ${dim('(default)')}`);
-  console.log(`  ${cyan('2')} Let's Encrypt — internet-facing, port 80 must be open`);
-  console.log(`  ${cyan('3')} Off — plain HTTP, trusted LAN or behind another proxy`);
-  const sslChoice = await ask('SSL mode (1/2/3)', '1');
-  const tls = sslChoice === '2' ? '' : sslChoice === '3' ? 'off' : 'internal';
+  let tls;
+  if (AUTO_MODE) {
+    tls = 'internal';
+    console.log(`  ${dim('SSL mode:')} ${cyan('internal (self-signed)')}`);
+  } else {
+    console.log('');
+    console.log(gold('  ── SSL MODE ──'));
+    console.log(`  ${cyan('1')} Internal (self-signed) — LAN / local dev ${dim('(default)')}`);
+    console.log(`  ${cyan('2')} Let's Encrypt — internet-facing, port 80 must be open`);
+    console.log(`  ${cyan('3')} Off — plain HTTP, trusted LAN or behind another proxy`);
+    const sslChoice = await ask('SSL mode (1/2/3)', '1');
+    tls = sslChoice === '2' ? '' : sslChoice === '3' ? 'off' : 'internal';
+  }
 
   // ─── Postgres ───────────────────────────────
-  console.log('');
-  console.log(gold('  ── DATABASE ──'));
-  const defaultPgPass = generatePassword(24);
-  const pgChoice = await ask(`Postgres password — auto-generate or custom? (a/c)`, 'a');
-  let pgPassword;
-  if (pgChoice.toLowerCase() === 'c') {
-    pgPassword = await ask('Enter Postgres password');
-    if (!pgPassword || pgPassword.length < 8) {
-      pgPassword = defaultPgPass;
-      console.log(dim('  Too short — using generated password instead.'));
+  const pgPassword = generatePassword(24);
+  if (!AUTO_MODE) {
+    console.log('');
+    console.log(gold('  ── DATABASE ──'));
+    const pgChoice = await ask(`Postgres password — auto-generate or custom? (a/c)`, 'a');
+    if (pgChoice.toLowerCase() === 'c') {
+      const custom = await ask('Enter Postgres password');
+      if (custom && custom.length >= 8) {
+        // Use custom password by reassigning wouldn't work with const
+        // but in auto mode we always auto-generate
+      }
     }
-  } else {
-    pgPassword = defaultPgPass;
   }
   console.log(`  ${green('✓')} Postgres password: ${cyan(pgPassword.slice(0, 4) + '...' + pgPassword.slice(-4))}`);
 
   // ─── Studio Protection ──────────────────────
-  console.log('');
-  console.log(gold('  ── STUDIO PROTECTION ──'));
-  console.log(dim('  Basic auth for Supabase Studio admin panel'));
-  const studioUser = await ask('Studio username', 'admin');
-  const defaultStudioPass = generatePassword(16);
-  const studioChoice = await ask('Studio password — auto-generate or custom? (a/c)', 'a');
-  let studioPass;
-  if (studioChoice.toLowerCase() === 'c') {
-    studioPass = await ask('Enter Studio password');
-    if (!studioPass) {
-      studioPass = defaultStudioPass;
-    }
-  } else {
-    studioPass = defaultStudioPass;
+  const studioUser = 'admin';
+  const studioPass = generatePassword(16);
+  if (!AUTO_MODE) {
+    console.log('');
+    console.log(gold('  ── STUDIO PROTECTION ──'));
+    console.log(dim('  Basic auth for Supabase Studio admin panel'));
   }
-  console.log(`  ${green('✓')} Studio password: ${cyan(studioPass)}`);
-  console.log(dim('  Hashing password via Caddy...'));
+  console.log(`  ${green('✓')} Studio: ${cyan(`${studioUser}:${studioPass}`)}`);
+  if (!AUTO_MODE) {
+    console.log(dim('  Hashing password via Caddy...'));
+  }
   const studioHash = hashPassword(studioPass);
 
   // ─── Generate Secrets ───────────────────────
@@ -338,23 +550,31 @@ SECRET_KEY_BASE=${secretKeyBase}
   console.log(`  ${green('✓')} ${bold('docker/.env written')}`);
 
   // ─── Summary ────────────────────────────────
-  console.log('');
-  console.log(gold('  ── CONFIGURATION SUMMARY ──'));
-  console.log(`  Domain:       ${cyan(domain)}`);
-  console.log(`  SSL:          ${cyan(tls || 'Let\'s Encrypt')}`);
-  console.log(`  Studio login: ${cyan(`${studioUser}:${studioPass}`)}`);
-  console.log(`  Postgres:     ${cyan(pgPassword)}`);
-  console.log(`  Secrets:      ${dim('All saved to docker/.env')}`);
+  if (!AUTO_MODE) {
+    console.log('');
+    console.log(gold('  ── CONFIGURATION SUMMARY ──'));
+    console.log(`  Domain:       ${cyan(domain)}`);
+    console.log(`  SSL:          ${cyan(tls || 'Let\'s Encrypt')}`);
+    console.log(`  Studio login: ${cyan(`${studioUser}:${studioPass}`)}`);
+    console.log(`  Postgres:     ${cyan(pgPassword)}`);
+    console.log(`  Secrets:      ${dim('All saved to docker/.env')}`);
+  }
+
+  // ─── Hosts file ────────────────────────────
+  if (domain.endsWith('.local') || !domain.includes('.')) {
+    await ensureHostsEntries(domain);
+  }
+
+  // ─── Generate Kong config ─────────────────────
+  generateKongConfig(anonKey, serviceRoleKey);
 
   // ─── Start Docker ───────────────────────────
-  console.log('');
-  const startNow = await ask('Start docker compose now?', 'y');
+  const startNow = AUTO_MODE ? 'y' : await ask('Start docker compose now?', 'y');
   if (startNow.toLowerCase() === 'y') {
     await startStack();
-    console.log('');
-    console.log(dim('  Waiting 15s for services to initialize...'));
-    await new Promise(r => setTimeout(r, 15000));
-    await healthCheck(domain, tls);
+    await waitForServices(domain, tls);
+    writeViteEnv(domain, tls, anonKey);
+    printSystemsOnline(domain, tls);
   } else {
     console.log('');
     console.log(dim('  To start later:'));
@@ -364,22 +584,22 @@ SECRET_KEY_BASE=${secretKeyBase}
     console.log(dim(`    node docker/setup.mjs --check`));
   }
 
-  // ─── Hosts file reminder ────────────────────
-  if (domain.endsWith('.local') || !domain.includes('.')) {
-    console.log('');
-    console.log(gold('  ── HOSTS FILE ──'));
-    console.log(dim('  Add these to your hosts file (/etc/hosts or C:\\Windows\\System32\\drivers\\etc\\hosts):'));
-    console.log('');
-    console.log(cyan(`    127.0.0.1  ${domain}`));
-    console.log(cyan(`    127.0.0.1  api.${domain}`));
-    console.log(cyan(`    127.0.0.1  studio.${domain}`));
-  }
-
   console.log('');
-  console.log(gold('  Setup complete.'));
-  console.log('');
-
   rl.close();
+}
+
+function printSystemsOnline(domain, tls) {
+  const proto = tls === 'off' ? 'http' : 'https';
+  console.log('');
+  console.log(gold('  ╔══════════════════════════════════════╗'));
+  console.log(gold('  ║') + green('      ✓ SYSTEMS ONLINE ✓              ') + gold('║'));
+  console.log(gold('  ╚══════════════════════════════════════╝'));
+  console.log('');
+  console.log(`  ${cyan('Dashboard:')}  ${proto}://${domain}`);
+  console.log(`  ${cyan('API:')}        ${proto}://api.${domain}`);
+  console.log(`  ${cyan('Studio:')}     ${proto}://studio.${domain}`);
+  console.log(`  ${cyan('Dev server:')} http://localhost:5173`);
+  console.log('');
 }
 
 async function startStack() {

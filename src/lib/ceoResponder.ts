@@ -12,19 +12,20 @@ interface CEOContext {
   orgName: string;
 }
 
-function gatherContext(): CEOContext {
-  const enabledSkills = loadSkills().filter(s => s.enabled);
+async function gatherContext(): Promise<CEOContext> {
+  const enabledSkills = (await loadSkills()).filter(s => s.enabled);
   const availableSkills = skillDefinitions.filter(s => s.status === 'available');
-  const missions = loadMissions();
+  const missions = await loadMissions();
+  const agents = await loadAgents();
   return {
-    mission: getSetting('primary_mission'),
-    agentCount: loadAgents().length,
-    pendingApprovals: getPendingApprovalCount(),
+    mission: await getSetting('primary_mission'),
+    agentCount: agents.length,
+    pendingApprovals: await getPendingApprovalCount(),
     enabledSkillCount: enabledSkills.length,
     totalAvailableSkills: availableSkills.length,
     missionCount: missions.length,
-    ceoName: getSetting('ceo_name') ?? 'CEO',
-    orgName: getSetting('org_name') ?? 'the organization',
+    ceoName: (await getSetting('ceo_name')) ?? 'CEO',
+    orgName: (await getSetting('org_name')) ?? 'the organization',
   };
 }
 
@@ -119,8 +120,8 @@ let fallbackIndex = 0;
  * Generate a scripted CEO response based on keyword matching.
  * No LLM required — pure pattern matching with context from DB.
  */
-export function getCEOResponse(userText: string): string {
-  const ctx = gatherContext();
+export async function getCEOResponse(userText: string): Promise<string> {
+  const ctx = await gatherContext();
 
   for (const [pattern, responder] of PATTERNS) {
     if (pattern.test(userText)) {

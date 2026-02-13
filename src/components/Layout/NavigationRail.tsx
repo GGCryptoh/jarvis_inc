@@ -59,18 +59,21 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
 
   // Load CEO + approvals count from DB on mount
   useEffect(() => {
-    const row = loadCEO()
-    if (row) {
-      setCeoName(row.name)
-      setCeoStatus((row.status as CeoStatus) || 'nominal')
+    const load = async () => {
+      const row = await loadCEO()
+      if (row) {
+        setCeoName(row.name)
+        setCeoStatus((row.status as CeoStatus) || 'nominal')
+      }
+      try { setPendingApprovals(await getPendingApprovalCount()); } catch { /* DB not ready */ }
     }
-    try { setPendingApprovals(getPendingApprovalCount()); } catch { /* DB not ready */ }
+    load()
   }, [])
 
   // Refresh approval count periodically + on custom event
   useEffect(() => {
-    const refreshCount = () => {
-      try { setPendingApprovals(getPendingApprovalCount()); } catch { /* ignore */ }
+    const refreshCount = async () => {
+      try { setPendingApprovals(await getPendingApprovalCount()); } catch { /* ignore */ }
     }
     const interval = setInterval(refreshCount, 5000)
     window.addEventListener('approvals-changed', refreshCount)

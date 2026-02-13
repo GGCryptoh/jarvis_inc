@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Plus, RefreshCw, Pencil, Trash2, X, ChevronRight, ChevronLeft } from 'lucide-react'
 import { loadMissions, saveMission, updateMission, deleteMission, logAudit, loadAgents, loadCEO, type MissionRow } from '../../lib/database'
 
@@ -164,13 +164,18 @@ function MissionDialog({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   // Load available assignees
-  const [assigneeOptions] = useState(() => {
-    const names: string[] = []
-    const ceo = loadCEO()
-    if (ceo) names.push(ceo.name)
-    loadAgents().forEach(a => names.push(a.name))
-    return names
-  })
+  const [assigneeOptions, setAssigneeOptions] = useState<string[]>([])
+  useEffect(() => {
+    async function loadAssignees() {
+      const names: string[] = []
+      const ceo = await loadCEO()
+      if (ceo) names.push(ceo.name)
+      const agents = await loadAgents()
+      agents.forEach(a => names.push(a.name))
+      setAssigneeOptions(names)
+    }
+    loadAssignees()
+  }, [])
 
   const valid = title.trim().length > 0
 
@@ -336,10 +341,12 @@ function MissionDialog({
 // ---------------------------------------------------------------------------
 
 export default function MissionsView() {
-  const [dbMissions, setDbMissions] = useState(() => loadMissions())
+  const [dbMissions, setDbMissions] = useState<MissionRow[]>([])
   const [dialogState, setDialogState] = useState<{ mission: MissionRow | null; defaultStatus: ColumnKey } | null>(null)
 
-  const refresh = useCallback(() => setDbMissions(loadMissions()), [])
+  useEffect(() => { loadMissions().then(setDbMissions) }, [])
+
+  const refresh = useCallback(() => { loadMissions().then(setDbMissions) }, [])
 
   const grouped: Record<ColumnKey, MissionRow[]> = {
     backlog: [],
@@ -363,25 +370,25 @@ export default function MissionsView() {
     setDialogState({ mission, defaultStatus: mission.status as ColumnKey })
   }
 
-  function handleMove(id: string, dir: 'left' | 'right') {
+  async function handleMove(id: string, dir: 'left' | 'right') {
     const mission = dbMissions.find(m => m.id === id)
     if (!mission) return
     const colIdx = STATUSES.indexOf(mission.status as ColumnKey)
     const newIdx = dir === 'left' ? colIdx - 1 : colIdx + 1
     if (newIdx < 0 || newIdx >= STATUSES.length) return
     const newStatus = STATUSES[newIdx]
-    updateMission(id, { status: newStatus })
-    logAudit(null, 'MISSION_MOVE', `Moved "${mission.title}" to ${STATUS_LABELS[newStatus]}`, 'info')
+    await updateMission(id, { status: newStatus })
+    await logAudit(null, 'MISSION_MOVE', `Moved "${mission.title}" to ${STATUS_LABELS[newStatus]}`, 'info')
     refresh()
   }
 
-  function handleSave(data: { title: string; status: ColumnKey; assignee: string; priority: string; due_date: string; recurring: string }) {
+  async function handleSave(data: { title: string; status: ColumnKey; assignee: string; priority: string; due_date: string; recurring: string }) {
     if (!dialogState) return
     const { mission } = dialogState
 
     if (mission) {
       // Edit existing
-      updateMission(mission.id, {
+      await updateMission(mission.id, {
         title: data.title,
         status: data.status,
         assignee: data.assignee || null,
@@ -389,10 +396,10 @@ export default function MissionsView() {
         due_date: data.due_date || null,
         recurring: data.recurring || null,
       })
-      logAudit(null, 'MISSION_EDIT', `Edited mission "${data.title}"`, 'info')
+      await logAudit(null, 'MISSION_EDIT', `Edited mission "${data.title}"`, 'info')
     } else {
       // Create new
-      saveMission({
+      await saveMission({
         id: `mission-${Date.now()}`,
         title: data.title,
         status: data.status,
@@ -402,18 +409,18 @@ export default function MissionsView() {
         recurring: data.recurring || null,
         created_at: new Date().toISOString(),
       })
-      logAudit(null, 'MISSION_NEW', `Created mission "${data.title}" in ${STATUS_LABELS[data.status]}`, 'info')
+      await logAudit(null, 'MISSION_NEW', `Created mission "${data.title}" in ${STATUS_LABELS[data.status]}`, 'info')
     }
 
     setDialogState(null)
     refresh()
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!dialogState?.mission) return
     const { mission } = dialogState
-    logAudit(null, 'MISSION_DEL', `Deleted mission "${mission.title}"`, 'warning')
-    deleteMission(mission.id)
+    await logAudit(null, 'MISSION_DEL', `Deleted mission "${mission.title}"`, 'warning')
+    await deleteMission(mission.id)
     setDialogState(null)
     refresh()
   }

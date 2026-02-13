@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ClipboardCheck, Check, X, Key, Blocks, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   loadApprovals,
@@ -12,34 +12,35 @@ import type { ApprovalRow } from '../../lib/database';
 import { SERVICE_KEY_HINTS } from '../../lib/models';
 
 export default function ApprovalsView() {
-  const [pending, setPending] = useState<ApprovalRow[]>(() => loadApprovals());
-  const [history, setHistory] = useState<ApprovalRow[]>(() =>
-    loadAllApprovals().filter(a => a.status !== 'pending'),
-  );
+  const [pending, setPending] = useState<ApprovalRow[]>([]);
+  const [history, setHistory] = useState<ApprovalRow[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
   // Per-approval key input state
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
 
-  const refresh = useCallback(() => {
-    setPending(loadApprovals());
-    setHistory(loadAllApprovals().filter(a => a.status !== 'pending'));
+  useEffect(() => {
+    loadApprovals().then(setPending);
+    loadAllApprovals().then(all => setHistory(all.filter(a => a.status !== 'pending')));
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const [p, all] = await Promise.all([loadApprovals(), loadAllApprovals()]);
+    setPending(p);
+    setHistory(all.filter(a => a.status !== 'pending'));
     // Notify nav badge to update immediately
     window.dispatchEvent(new Event('approvals-changed'));
   }, []);
 
-  function handleProvideKey(approval: ApprovalRow) {
+  async function handleProvideKey(approval: ApprovalRow) {
     const key = keyInputs[approval.id]?.trim();
     if (!key || key.length < 10) return;
 
-    let meta: { service?: string; model?: string } = {};
-    try {
-      meta = approval.metadata ? JSON.parse(approval.metadata) : {};
-    } catch { /* ignore */ }
+    const meta = (approval.metadata ?? {}) as { service?: string; model?: string };
 
     const service = meta.service ?? 'Unknown';
 
-    saveVaultEntry({
+    await saveVaultEntry({
       id: `vault-${Date.now()}`,
       name: `${service} API Key`,
       type: 'api_key',
@@ -47,8 +48,8 @@ export default function ApprovalsView() {
       key_value: key,
     });
 
-    updateApprovalStatus(approval.id, 'approved');
-    logAudit(null, 'APPROVED', `Provided ${service} API key for "${approval.title}"`, 'info');
+    await updateApprovalStatus(approval.id, 'approved');
+    await logAudit(null, 'APPROVED', `Provided ${service} API key for "${approval.title}"`, 'info');
     setKeyInputs(prev => {
       const next = { ...prev };
       delete next[approval.id];
@@ -57,22 +58,21 @@ export default function ApprovalsView() {
     refresh();
   }
 
-  function handleApproveSkillEnable(approval: ApprovalRow) {
-    let meta: { skillId?: string; model?: string } = {};
-    try { meta = approval.metadata ? JSON.parse(approval.metadata) : {}; } catch { /* ignore */ }
+  async function handleApproveSkillEnable(approval: ApprovalRow) {
+    const meta = (approval.metadata ?? {}) as { skillId?: string; model?: string };
 
     if (meta.skillId) {
-      saveSkill(meta.skillId, true, meta.model ?? null);
+      await saveSkill(meta.skillId, true, meta.model ?? null);
     }
 
-    updateApprovalStatus(approval.id, 'approved');
-    logAudit(null, 'APPROVED', `Approved skill enable: "${approval.title}"`, 'info');
+    await updateApprovalStatus(approval.id, 'approved');
+    await logAudit(null, 'APPROVED', `Approved skill enable: "${approval.title}"`, 'info');
     refresh();
   }
 
-  function handleDismiss(approval: ApprovalRow) {
-    updateApprovalStatus(approval.id, 'dismissed');
-    logAudit(null, 'DISMISSED', `Dismissed: "${approval.title}"`, 'info');
+  async function handleDismiss(approval: ApprovalRow) {
+    await updateApprovalStatus(approval.id, 'dismissed');
+    await logAudit(null, 'DISMISSED', `Dismissed: "${approval.title}"`, 'info');
     refresh();
   }
 
@@ -101,10 +101,7 @@ export default function ApprovalsView() {
       ) : (
         <div className="space-y-4 mb-6">
           {pending.map(approval => {
-            let meta: { service?: string; model?: string; agentId?: string } = {};
-            try {
-              meta = approval.metadata ? JSON.parse(approval.metadata) : {};
-            } catch { /* ignore */ }
+            const meta = (approval.metadata ?? {}) as { service?: string; model?: string; agentId?: string };
 
             const service = meta.service ?? 'Unknown';
             const hints = SERVICE_KEY_HINTS[service];

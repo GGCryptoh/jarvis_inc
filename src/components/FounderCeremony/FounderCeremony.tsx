@@ -28,10 +28,10 @@ const BOOT_LINES = [
 ];
 
 const SCAN_BLOCK = [
-  '╔══════════════════════════════════════╗',
-  '║  FOUNDER REGISTRATION REQUIRED       ║',
-  '║  Please identify yourself to proceed ║',
-  '╚══════════════════════════════════════╝',
+  '\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557',
+  '\u2551  FOUNDER REGISTRATION REQUIRED       \u2551',
+  '\u2551  Please identify yourself to proceed \u2551',
+  '\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D',
 ];
 
 export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
@@ -118,15 +118,15 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
     return () => clearTimeout(t);
   }, [phase, onComplete]);
 
-  function handleActivate() {
+  async function handleActivate() {
     if (!founderName.trim() || !orgName.trim()) return;
     const name = founderName.trim();
     // Write to SQLite
-    setSetting('founder_name', name);
-    setSetting('org_name', orgName.trim());
-    setSetting('created_at', new Date().toISOString());
+    await setSetting('founder_name', name);
+    await setSetting('org_name', orgName.trim());
+    await setSetting('created_at', new Date().toISOString());
     // Seed milestone mission
-    saveMission({
+    await saveMission({
       id: 'mission-founder-ceremony',
       title: 'Register Founder & Initialize Systems',
       status: 'done',
@@ -136,7 +136,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
       created_at: new Date().toISOString(),
       due_date: null,
     });
-    logAudit(name, 'FOUNDED', `Founder "${name}" registered org "${orgName.trim()}"`, 'info');
+    await logAudit(name, 'FOUNDED', `Founder "${name}" registered org "${orgName.trim()}"`, 'info');
     setPhase('activating');
   }
 
@@ -271,7 +271,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                     : 'bg-transparent border-pixel-green/20 text-pixel-green/30 cursor-not-allowed'
                 }`}
               >
-                ▶ ACTIVATE JARVIS
+                {'\u25B6'} ACTIVATE JARVIS
               </button>
 
               <p className="font-pixel text-[10px] text-pixel-green/30 text-center tracking-wider leading-relaxed">

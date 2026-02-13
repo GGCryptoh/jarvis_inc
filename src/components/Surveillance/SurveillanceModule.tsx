@@ -73,24 +73,26 @@ export default function SurveillanceModule() {
     setAgents(loaded);
 
     // Load CEO from DB (read-only)
-    const ceoRow = loadCEO();
-    if (ceoRow) {
-      const ceoPos = TIER_CEO_POSITION[tier];
-      setCeoAgent({
-        id: 'ceo',
-        name: ceoRow.name,
-        role: 'Chief Executive Officer',
-        color: '#f1fa8c',
-        skinTone: '#ffcc99',
-        status: 'working',
-        position: { ...ceoPos },
-        targetPosition: { ...ceoPos },
-        currentTask: `Philosophy: ${ceoRow.philosophy}`,
-        confidence: 99,
-        costSoFar: 0,
-        model: ceoRow.model,
-      });
-    }
+    (async () => {
+      const ceoRow = await loadCEO();
+      if (ceoRow) {
+        const ceoPos = TIER_CEO_POSITION[tier];
+        setCeoAgent({
+          id: 'ceo',
+          name: ceoRow.name,
+          role: 'Chief Executive Officer',
+          color: '#f1fa8c',
+          skinTone: '#ffcc99',
+          status: 'working',
+          position: { ...ceoPos },
+          targetPosition: { ...ceoPos },
+          currentTask: `Philosophy: ${ceoRow.philosophy}`,
+          confidence: 99,
+          costSoFar: 0,
+          model: ceoRow.model,
+        });
+      }
+    })();
   }, []);
 
   // ---- Scene transitions ----

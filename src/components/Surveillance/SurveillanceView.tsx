@@ -11,7 +11,7 @@ import {
   generateDeskPositions,
   getDeskCountWithSpare,
 } from '../../lib/positionGenerator';
-import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions, logAudit } from '../../lib/database';
+import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions, logAudit, assignSkillToAgent } from '../../lib/database';
 import type { AgentRow } from '../../lib/database';
 import { getServiceForModel } from '../../lib/models';
 import CRTFrame from './CRTFrame';
@@ -87,72 +87,74 @@ export default function SurveillanceView() {
 
   // ---- Load agents from DB + CEO walk-in logic ----
   useEffect(() => {
-    const rows = loadAgents();
-    const tier = getRoomTier(rows.length);
-    const tierPresets = TIER_DESK_PRESETS[tier];
-    // Fallback desks for agents beyond the tier presets
-    const fallbackDesks = generateDeskPositions(getDeskCountWithSpare(rows.length));
+    (async () => {
+      const rows = await loadAgents();
+      const tier = getRoomTier(rows.length);
+      const tierPresets = TIER_DESK_PRESETS[tier];
+      // Fallback desks for agents beyond the tier presets
+      const fallbackDesks = generateDeskPositions(getDeskCountWithSpare(rows.length));
 
-    const loaded = rows.map((row, i) => {
-      // Use DB position if set, otherwise tier preset, otherwise generated fallback
-      const pos: Position = (row.desk_x != null && row.desk_y != null)
-        ? { x: row.desk_x, y: row.desk_y }
-        : tierPresets[i] ?? fallbackDesks[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 };
-      return rowToAgent(row, pos, i);
-    });
-    setAgents(loaded);
+      const loaded = rows.map((row, i) => {
+        // Use DB position if set, otherwise tier preset, otherwise generated fallback
+        const pos: Position = (row.desk_x != null && row.desk_y != null)
+          ? { x: row.desk_x, y: row.desk_y }
+          : tierPresets[i] ?? fallbackDesks[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 };
+        return rowToAgent(row, pos, i);
+      });
+      setAgents(loaded);
 
-    // CEO walk-in on first visit
-    const ceoRow = loadCEO();
-    if (ceoRow) {
-      const ceoPos = (ceoRow.desk_x != null && ceoRow.desk_y != null)
-        ? { x: ceoRow.desk_x, y: ceoRow.desk_y }
-        : TIER_CEO_POSITION[tier];
+      // CEO walk-in on first visit
+      const ceoRow = await loadCEO();
+      if (ceoRow) {
+        const ceoPos = (ceoRow.desk_x != null && ceoRow.desk_y != null)
+          ? { x: ceoRow.desk_x, y: ceoRow.desk_y }
+          : TIER_CEO_POSITION[tier];
 
-      const walkedIn = getSetting('ceo_walked_in');
-      if (!walkedIn) {
-        setCeoStage('entering');
-        setCeoAgent({
-          id: 'ceo',
-          name: ceoRow.name,
-          role: 'Chief Executive Officer',
-          color: '#f1fa8c',
-          skinTone: '#ffcc99',
-          status: 'walking',
-          position: { ...ENTRANCE_POSITION },
-          targetPosition: { ...CENTER_STAGE },
-          currentTask: `Philosophy: ${ceoRow.philosophy}`,
-          confidence: 99,
-          costSoFar: 0,
-          model: ceoRow.model,
-        });
-      } else {
-        setCeoAgent({
-          id: 'ceo',
-          name: ceoRow.name,
-          role: 'Chief Executive Officer',
-          color: '#f1fa8c',
-          skinTone: '#ffcc99',
-          status: 'working',
-          position: { ...ceoPos },
-          targetPosition: { ...ceoPos },
-          currentTask: `Philosophy: ${ceoRow.philosophy}`,
-          confidence: 99,
-          costSoFar: 0,
-          model: ceoRow.model,
-        });
-        if (!getSetting('ceo_meeting_done')) {
-          setShowApproval(true);
+        const walkedIn = await getSetting('ceo_walked_in');
+        if (!walkedIn) {
+          setCeoStage('entering');
+          setCeoAgent({
+            id: 'ceo',
+            name: ceoRow.name,
+            role: 'Chief Executive Officer',
+            color: '#f1fa8c',
+            skinTone: '#ffcc99',
+            status: 'walking',
+            position: { ...ENTRANCE_POSITION },
+            targetPosition: { ...CENTER_STAGE },
+            currentTask: `Philosophy: ${ceoRow.philosophy}`,
+            confidence: 99,
+            costSoFar: 0,
+            model: ceoRow.model,
+          });
+        } else {
+          setCeoAgent({
+            id: 'ceo',
+            name: ceoRow.name,
+            role: 'Chief Executive Officer',
+            color: '#f1fa8c',
+            skinTone: '#ffcc99',
+            status: 'working',
+            position: { ...ceoPos },
+            targetPosition: { ...ceoPos },
+            currentTask: `Philosophy: ${ceoRow.philosophy}`,
+            confidence: 99,
+            costSoFar: 0,
+            model: ceoRow.model,
+          });
+          const meetingDone = await getSetting('ceo_meeting_done');
+          if (!meetingDone) {
+            setShowApproval(true);
+          }
         }
       }
-    }
+    })();
   }, []);
 
   // ---- Load missions for priorities board ----
   useEffect(() => {
-    const meetingDone = getSetting('ceo_meeting_done');
-
-    const refreshPriorities = () => {
+    const refreshPriorities = async () => {
+      const meetingDone = await getSetting('ceo_meeting_done');
       if (!meetingDone) {
         // Before onboarding: show contextual first-time priorities
         setPriorities([
@@ -162,7 +164,7 @@ export default function SurveillanceView() {
         ]);
         return;
       }
-      const all = loadMissions();
+      const all = await loadMissions();
       const active = all.filter(m => m.status !== 'done').slice(0, 3);
       setPriorities(active.map(m => {
         // Truncate long titles for the small holographic board
@@ -190,12 +192,15 @@ export default function SurveillanceView() {
       return () => clearTimeout(timer);
     }
     if (ceoStage === 'seated') {
-      setSetting('ceo_walked_in', 'true');
-      setCeoStage(null);
-      // Show approval notification if meeting hasn't happened yet
-      if (!getSetting('ceo_meeting_done')) {
-        setTimeout(() => setShowApproval(true), 800);
-      }
+      (async () => {
+        await setSetting('ceo_walked_in', 'true');
+        setCeoStage(null);
+        // Show approval notification if meeting hasn't happened yet
+        const meetingDone = await getSetting('ceo_meeting_done');
+        if (!meetingDone) {
+          setTimeout(() => setShowApproval(true), 800);
+        }
+      })();
     }
   }, [ceoStage]);
 
@@ -223,10 +228,10 @@ export default function SurveillanceView() {
   }, [hireCeremony]);
 
   // ---- Hire a new agent (persists to DB) ----
-  const handleHire = useCallback((config: AgentConfig) => {
+  const handleHire = useCallback(async (config: AgentConfig) => {
     const id = `agent-${Date.now()}`;
 
-    saveAgent({
+    await saveAgent({
       id,
       name: config.name,
       role: config.role,
@@ -237,15 +242,15 @@ export default function SurveillanceView() {
 
     // Check if vault has an API key for this model's service
     const service = getServiceForModel(config.model);
-    const existingKey = getVaultEntryByService(service);
+    const existingKey = await getVaultEntryByService(service);
     if (!existingKey) {
-      saveApproval({
+      await saveApproval({
         id: `approval-${Date.now()}`,
         type: 'api_key_request',
         title: `API Key Required: ${service}`,
         description: `Agent ${config.name} needs a ${service} API key to operate with ${config.model}.`,
         status: 'pending',
-        metadata: JSON.stringify({ service, model: config.model, agentId: id }),
+        metadata: { service, model: config.model, agentId: id },
       });
     }
 
@@ -276,14 +281,22 @@ export default function SurveillanceView() {
 
     setAgents(prev => [...prev, newAgent]);
     setHireModalOpen(false);
-    logAudit(config.name, 'AGENT_HIRED', `Hired agent "${config.name}" (${config.role}) using ${config.model}`, 'info');
+
+    // Assign selected skills to the new agent
+    if (config.selectedSkills && config.selectedSkills.length > 0) {
+      for (const skillId of config.selectedSkills) {
+        await assignSkillToAgent(id, skillId, 'founder');
+      }
+    }
+
+    await logAudit(config.name, 'AGENT_HIRED', `Hired agent "${config.name}" (${config.role}) using ${config.model}`, 'info');
   }, [agents.length]);
 
   // ---- Edit an existing agent (persists to DB) ----
-  const handleEdit = useCallback((config: AgentConfig) => {
+  const handleEdit = useCallback(async (config: AgentConfig) => {
     if (!editingAgent) return;
 
-    saveAgent({
+    await saveAgent({
       id: editingAgent.id,
       name: config.name,
       role: config.role,
@@ -307,32 +320,32 @@ export default function SurveillanceView() {
     );
 
     setEditingAgent(null);
-    logAudit(config.name, 'AGENT_EDITED', `Edited agent "${config.name}" (${config.role})`, 'info');
+    await logAudit(config.name, 'AGENT_EDITED', `Edited agent "${config.name}" (${config.role})`, 'info');
   }, [editingAgent]);
 
   // ---- Fire (delete) an agent (persists to DB) ----
-  const handleFire = useCallback((agentId: string) => {
+  const handleFire = useCallback(async (agentId: string) => {
     const agent = agents.find(a => a.id === agentId);
-    logAudit(agent?.name ?? agentId, 'AGENT_FIRED', `Fired agent "${agent?.name ?? agentId}"`, 'warning');
-    dbDeleteAgent(agentId);
+    await logAudit(agent?.name ?? agentId, 'AGENT_FIRED', `Fired agent "${agent?.name ?? agentId}"`, 'warning');
+    await dbDeleteAgent(agentId);
     setAgents(prev => prev.filter(a => a.id !== agentId));
     setSelectedAgent(null);
   }, [agents]);
 
   // ---- Floor planner: handle click on office floor ----
-  const handleFloorClick = useCallback((x: number, y: number) => {
+  const handleFloorClick = useCallback(async (x: number, y: number) => {
     if (!floorPlannerSelectedId) return;
 
     // Save position to DB
     console.log(`[FloorPlanner] ${floorPlannerSelectedId} placed at { x: ${Math.round(x * 10) / 10}, y: ${Math.round(y * 10) / 10} }`);
     if (floorPlannerSelectedId === 'ceo') {
-      saveCEODeskPosition(x, y);
+      await saveCEODeskPosition(x, y);
       setCeoAgent(prev => prev ? {
         ...prev,
         targetPosition: { x, y },
       } : prev);
     } else {
-      saveAgentDeskPosition(floorPlannerSelectedId, x, y);
+      await saveAgentDeskPosition(floorPlannerSelectedId, x, y);
       setAgents(prev => prev.map(a =>
         a.id === floorPlannerSelectedId
           ? { ...a, targetPosition: { x, y } }

@@ -1,181 +1,46 @@
-import initSqlJs, { type Database } from 'sql.js';
+/**
+ * Jarvis Inc — Data Layer (Supabase Backend)
+ * ===========================================
+ * Same exported function signatures as the original sql.js version,
+ * but all functions are now async and backed by Supabase/PostgREST.
+ *
+ * Key differences from sql.js version:
+ * - All functions return Promises
+ * - Boolean: Postgres BOOLEAN (true/false) instead of INTEGER (0/1)
+ * - JSONB: Postgres native objects instead of JSON strings
+ * - persist() is a no-op (Postgres handles persistence)
+ * - resetDatabase() truncates all tables via RPC
+ */
+
+import { getSupabase } from './supabase';
 import { MODEL_SERVICE_MAP } from './models';
-
-const DB_STORAGE_KEY = 'jarvis_inc_db';
-
-let db: Database | null = null;
-
-/** Initialize (or restore) the SQLite database. */
-export async function initDatabase(): Promise<Database> {
-  const SQL = await initSqlJs({
-    locateFile: () => '/sql-wasm.wasm',
-  });
-
-  // Try to restore a previously-persisted database from IndexedDB
-  const saved = await loadFromIndexedDB();
-  if (saved) {
-    db = new SQL.Database(new Uint8Array(saved));
-  } else {
-    db = new SQL.Database();
-  }
-
-  // Ensure schema exists (idempotent)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key   TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS agents (
-      id         TEXT PRIMARY KEY,
-      name       TEXT NOT NULL,
-      role       TEXT NOT NULL,
-      color      TEXT NOT NULL,
-      skin_tone  TEXT NOT NULL,
-      model      TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS missions (
-      id        TEXT PRIMARY KEY,
-      title     TEXT NOT NULL,
-      status    TEXT NOT NULL DEFAULT 'backlog',
-      assignee  TEXT,
-      priority  TEXT NOT NULL DEFAULT 'medium',
-      due_date  TEXT
-    );
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id        INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-      agent     TEXT,
-      action    TEXT NOT NULL,
-      details   TEXT,
-      severity  TEXT NOT NULL DEFAULT 'info'
-    );
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS ceo (
-      id              TEXT PRIMARY KEY DEFAULT 'ceo',
-      name            TEXT NOT NULL,
-      model           TEXT NOT NULL,
-      philosophy      TEXT NOT NULL,
-      risk_tolerance  TEXT NOT NULL DEFAULT 'moderate',
-      status          TEXT NOT NULL DEFAULT 'nominal',
-      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS vault (
-      id         TEXT PRIMARY KEY,
-      name       TEXT NOT NULL,
-      type       TEXT NOT NULL DEFAULT 'api_key',
-      service    TEXT NOT NULL,
-      key_value  TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS approvals (
-      id          TEXT PRIMARY KEY,
-      type        TEXT NOT NULL,
-      title       TEXT NOT NULL,
-      description TEXT,
-      status      TEXT NOT NULL DEFAULT 'pending',
-      metadata    TEXT,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS skills (
-      id         TEXT PRIMARY KEY,
-      enabled    INTEGER NOT NULL DEFAULT 0,
-      model      TEXT DEFAULT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id         TEXT PRIMARY KEY,
-      title      TEXT NOT NULL,
-      type       TEXT NOT NULL DEFAULT 'general',
-      status     TEXT NOT NULL DEFAULT 'active',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS chat_messages (
-      id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      sender          TEXT NOT NULL,
-      text            TEXT NOT NULL,
-      metadata        TEXT DEFAULT NULL,
-      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  // Migrations — add columns to existing tables (idempotent)
-  try { db.run('ALTER TABLE agents ADD COLUMN desk_x REAL DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE agents ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE ceo ADD COLUMN desk_x REAL DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE ceo ADD COLUMN desk_y REAL DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE ceo ADD COLUMN archetype TEXT DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE missions ADD COLUMN recurring TEXT DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE missions ADD COLUMN created_by TEXT DEFAULT NULL'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE missions ADD COLUMN created_at TEXT DEFAULT NULL'); } catch { /* already exists */ }
-
-  await persist();
-  return db;
-}
-
-/** Get the current database instance (must call initDatabase first). */
-export function getDB(): Database {
-  if (!db) throw new Error('Database not initialized — call initDatabase() first');
-  return db;
-}
 
 // ---------------------------------------------------------------------------
 // Settings helpers
 // ---------------------------------------------------------------------------
 
-export function getSetting(key: string): string | null {
-  const stmt = getDB().prepare('SELECT value FROM settings WHERE key = ?');
-  stmt.bind([key]);
-  if (stmt.step()) {
-    const row = stmt.getAsObject();
-    stmt.free();
-    return row.value as string;
-  }
-  stmt.free();
-  return null;
+export async function getSetting(key: string): Promise<string | null> {
+  const { data } = await getSupabase()
+    .from('settings')
+    .select('value')
+    .eq('key', key)
+    .single();
+  return data?.value ?? null;
 }
 
-export function setSetting(key: string, value: string): void {
-  getDB().run(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-    [key, value],
-  );
-  persist();
+export async function setSetting(key: string, value: string): Promise<void> {
+  await getSupabase()
+    .from('settings')
+    .upsert({ key, value }, { onConflict: 'key' });
 }
 
-/** Returns true when the founder has completed the ceremony. */
-export function isFounderInitialized(): boolean {
-  return getSetting('founder_name') !== null;
+export async function isFounderInitialized(): Promise<boolean> {
+  return (await getSetting('founder_name')) !== null;
 }
 
-/** Retrieve the founder / org names stored during the ceremony. */
-export function getFounderInfo(): { founderName: string; orgName: string } | null {
-  const founderName = getSetting('founder_name');
-  const orgName = getSetting('org_name');
+export async function getFounderInfo(): Promise<{ founderName: string; orgName: string } | null> {
+  const founderName = await getSetting('founder_name');
+  const orgName = await getSetting('org_name');
   if (!founderName || !orgName) return null;
   return { founderName, orgName };
 }
@@ -195,58 +60,62 @@ export interface AgentRow {
   desk_y: number | null;
 }
 
-/** Load all agents from DB. Returns empty array if none. */
-export function loadAgents(): AgentRow[] {
-  const results: AgentRow[] = [];
-  const stmt = getDB().prepare('SELECT id, name, role, color, skin_tone, model, desk_x, desk_y FROM agents ORDER BY created_at');
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as AgentRow);
-  }
-  stmt.free();
-  return results;
+export async function loadAgents(): Promise<AgentRow[]> {
+  const { data } = await getSupabase()
+    .from('agents')
+    .select('id, name, role, color, skin_tone, model, desk_x, desk_y')
+    .order('created_at');
+  return (data ?? []) as AgentRow[];
 }
 
-/** Insert or update an agent. */
-export function saveAgent(agent: Omit<AgentRow, 'desk_x' | 'desk_y'> & { desk_x?: number | null; desk_y?: number | null }): void {
-  getDB().run(
-    `INSERT INTO agents (id, name, role, color, skin_tone, model, desk_x, desk_y)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       role = excluded.role,
-       color = excluded.color,
-       skin_tone = excluded.skin_tone,
-       model = excluded.model,
-       desk_x = COALESCE(excluded.desk_x, agents.desk_x),
-       desk_y = COALESCE(excluded.desk_y, agents.desk_y)`,
-    [agent.id, agent.name, agent.role, agent.color, agent.skin_tone, agent.model, agent.desk_x ?? null, agent.desk_y ?? null],
-  );
-  persist();
+export async function saveAgent(agent: Omit<AgentRow, 'desk_x' | 'desk_y'> & { desk_x?: number | null; desk_y?: number | null }): Promise<void> {
+  // Fetch existing to preserve desk position if not provided
+  const { data: existing } = await getSupabase()
+    .from('agents')
+    .select('desk_x, desk_y')
+    .eq('id', agent.id)
+    .single();
+
+  await getSupabase()
+    .from('agents')
+    .upsert({
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      color: agent.color,
+      skin_tone: agent.skin_tone,
+      model: agent.model,
+      desk_x: agent.desk_x ?? existing?.desk_x ?? null,
+      desk_y: agent.desk_y ?? existing?.desk_y ?? null,
+    }, { onConflict: 'id' });
 }
 
-/** Update only the desk position for an agent. */
-export function saveAgentDeskPosition(id: string, x: number, y: number): void {
-  getDB().run('UPDATE agents SET desk_x = ?, desk_y = ? WHERE id = ?', [x, y, id]);
-  persist();
+export async function saveAgentDeskPosition(id: string, x: number, y: number): Promise<void> {
+  await getSupabase()
+    .from('agents')
+    .update({ desk_x: x, desk_y: y })
+    .eq('id', id);
 }
 
-/** Save the initial fleet of agents (only if DB has none). */
-export function seedAgentsIfEmpty(agents: AgentRow[]): void {
-  const existing = loadAgents();
+export async function seedAgentsIfEmpty(agents: AgentRow[]): Promise<void> {
+  const existing = await loadAgents();
   if (existing.length > 0) return;
   for (const a of agents) {
-    getDB().run(
-      'INSERT OR IGNORE INTO agents (id, name, role, color, skin_tone, model) VALUES (?, ?, ?, ?, ?, ?)',
-      [a.id, a.name, a.role, a.color, a.skin_tone, a.model],
-    );
+    await getSupabase()
+      .from('agents')
+      .insert({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        color: a.color,
+        skin_tone: a.skin_tone,
+        model: a.model,
+      });
   }
-  persist();
 }
 
-/** Delete an agent by ID. */
-export function deleteAgent(id: string): void {
-  getDB().run('DELETE FROM agents WHERE id = ?', [id]);
-  persist();
+export async function deleteAgent(id: string): Promise<void> {
+  await getSupabase().from('agents').delete().eq('id', id);
 }
 
 // ---------------------------------------------------------------------------
@@ -263,55 +132,67 @@ export interface CEORow {
   desk_x: number | null;
   desk_y: number | null;
   archetype: string | null;
+  backup_model: string | null;
+  fallback_active: boolean;
+  primary_failures: number;
 }
 
-/** Returns true when a CEO record exists. */
-export function isCEOInitialized(): boolean {
-  const stmt = getDB().prepare('SELECT id FROM ceo LIMIT 1');
-  const exists = stmt.step();
-  stmt.free();
-  return exists;
+export async function isCEOInitialized(): Promise<boolean> {
+  const { data } = await getSupabase()
+    .from('ceo')
+    .select('id')
+    .limit(1)
+    .single();
+  return !!data;
 }
 
-/** Load the CEO record (null if none). */
-export function loadCEO(): CEORow | null {
-  const stmt = getDB().prepare('SELECT id, name, model, philosophy, risk_tolerance, status, desk_x, desk_y, archetype FROM ceo LIMIT 1');
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as unknown as CEORow;
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
+export async function loadCEO(): Promise<CEORow | null> {
+  const { data } = await getSupabase()
+    .from('ceo')
+    .select('id, name, model, philosophy, risk_tolerance, status, desk_x, desk_y, archetype, backup_model, fallback_active, primary_failures')
+    .limit(1)
+    .single();
+  return data as CEORow | null;
 }
 
-/** Insert or update the CEO. */
-export function saveCEO(ceo: Omit<CEORow, 'id' | 'desk_x' | 'desk_y'>): void {
-  getDB().run(
-    `INSERT INTO ceo (id, name, model, philosophy, risk_tolerance, status, archetype)
-     VALUES ('ceo', ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       model = excluded.model,
-       philosophy = excluded.philosophy,
-       risk_tolerance = excluded.risk_tolerance,
-       status = excluded.status,
-       archetype = excluded.archetype`,
-    [ceo.name, ceo.model, ceo.philosophy, ceo.risk_tolerance, ceo.status, ceo.archetype ?? null],
-  );
-  persist();
+export async function saveCEO(ceo: Omit<CEORow, 'id' | 'desk_x' | 'desk_y' | 'backup_model' | 'fallback_active' | 'primary_failures'> & { backup_model?: string | null }): Promise<void> {
+  await getSupabase()
+    .from('ceo')
+    .upsert({
+      id: 'ceo',
+      name: ceo.name,
+      model: ceo.model,
+      philosophy: ceo.philosophy,
+      risk_tolerance: ceo.risk_tolerance,
+      status: ceo.status,
+      archetype: ceo.archetype ?? null,
+      backup_model: ceo.backup_model ?? null,
+    }, { onConflict: 'id' });
 }
 
-/** Update only the CEO status field. */
-export function updateCEOStatus(status: string): void {
-  getDB().run("UPDATE ceo SET status = ? WHERE id = 'ceo'", [status]);
-  persist();
+export async function updateCEOStatus(status: string): Promise<void> {
+  await getSupabase()
+    .from('ceo')
+    .update({ status })
+    .eq('id', 'ceo');
 }
 
-/** Update only the CEO desk position. */
-export function saveCEODeskPosition(x: number, y: number): void {
-  getDB().run("UPDATE ceo SET desk_x = ?, desk_y = ? WHERE id = 'ceo'", [x, y]);
-  persist();
+export async function saveCEODeskPosition(x: number, y: number): Promise<void> {
+  await getSupabase()
+    .from('ceo')
+    .update({ desk_x: x, desk_y: y })
+    .eq('id', 'ceo');
+}
+
+export async function updateCEOFallback(fallbackActive: boolean, primaryFailures: number): Promise<void> {
+  await getSupabase()
+    .from('ceo')
+    .update({
+      fallback_active: fallbackActive,
+      primary_failures: primaryFailures,
+      last_primary_check: new Date().toISOString(),
+    })
+    .eq('id', 'ceo');
 }
 
 // ---------------------------------------------------------------------------
@@ -327,25 +208,19 @@ export interface AuditLogRow {
   severity: string;
 }
 
-/** Write to the immutable audit log. */
-export function logAudit(agent: string | null, action: string, details: string | null, severity: 'info' | 'warning' | 'error' = 'info'): void {
-  getDB().run(
-    'INSERT INTO audit_log (agent, action, details, severity) VALUES (?, ?, ?, ?)',
-    [agent, action, details, severity],
-  );
-  persist();
+export async function logAudit(agent: string | null, action: string, details: string | null, severity: 'info' | 'warning' | 'error' = 'info'): Promise<void> {
+  await getSupabase()
+    .from('audit_log')
+    .insert({ agent, action, details, severity });
 }
 
-/** Load audit log entries (newest first). */
-export function loadAuditLog(limit = 200): AuditLogRow[] {
-  const results: AuditLogRow[] = [];
-  const stmt = getDB().prepare('SELECT id, timestamp, agent, action, details, severity FROM audit_log ORDER BY id DESC LIMIT ?');
-  stmt.bind([limit]);
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as AuditLogRow);
-  }
-  stmt.free();
-  return results;
+export async function loadAuditLog(limit = 200): Promise<AuditLogRow[]> {
+  const { data } = await getSupabase()
+    .from('audit_log')
+    .select('id, timestamp, agent, action, details, severity')
+    .order('id', { ascending: false })
+    .limit(limit);
+  return (data ?? []) as AuditLogRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -362,83 +237,71 @@ export interface VaultRow {
   updated_at: string;
 }
 
-export function loadVaultEntries(): VaultRow[] {
-  const results: VaultRow[] = [];
-  const stmt = getDB().prepare('SELECT id, name, type, service, key_value, created_at, updated_at FROM vault ORDER BY created_at');
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as VaultRow);
-  }
-  stmt.free();
-  return results;
+export async function loadVaultEntries(): Promise<VaultRow[]> {
+  const { data } = await getSupabase()
+    .from('vault')
+    .select('id, name, type, service, key_value, created_at, updated_at')
+    .order('created_at');
+  return (data ?? []) as VaultRow[];
 }
 
-export function saveVaultEntry(entry: Omit<VaultRow, 'created_at' | 'updated_at'>): void {
-  getDB().run(
-    `INSERT INTO vault (id, name, type, service, key_value)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       name = excluded.name,
-       type = excluded.type,
-       service = excluded.service,
-       key_value = excluded.key_value,
-       updated_at = datetime('now')`,
-    [entry.id, entry.name, entry.type, entry.service, entry.key_value],
-  );
-  persist();
+export async function saveVaultEntry(entry: Omit<VaultRow, 'created_at' | 'updated_at'>): Promise<void> {
+  await getSupabase()
+    .from('vault')
+    .upsert({
+      id: entry.id,
+      name: entry.name,
+      type: entry.type,
+      service: entry.service,
+      key_value: entry.key_value,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
 }
 
-export function updateVaultEntry(id: string, fields: Partial<Pick<VaultRow, 'name' | 'key_value'>>): void {
-  const sets: string[] = [];
-  const vals: string[] = [];
-  if (fields.name !== undefined) { sets.push('name = ?'); vals.push(fields.name); }
-  if (fields.key_value !== undefined) { sets.push('key_value = ?'); vals.push(fields.key_value); }
-  if (sets.length === 0) return;
-  sets.push("updated_at = datetime('now')");
-  getDB().run(`UPDATE vault SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
-  persist();
+export async function updateVaultEntry(id: string, fields: Partial<Pick<VaultRow, 'name' | 'key_value'>>): Promise<void> {
+  const update: Record<string, string> = { updated_at: new Date().toISOString() };
+  if (fields.name !== undefined) update.name = fields.name;
+  if (fields.key_value !== undefined) update.key_value = fields.key_value;
+  await getSupabase().from('vault').update(update).eq('id', id);
 }
 
-export function deleteVaultEntry(id: string): void {
-  getDB().run('DELETE FROM vault WHERE id = ?', [id]);
-  persist();
+export async function deleteVaultEntry(id: string): Promise<void> {
+  await getSupabase().from('vault').delete().eq('id', id);
 }
 
-export function getVaultEntryByService(service: string): VaultRow | null {
-  const stmt = getDB().prepare('SELECT id, name, type, service, key_value, created_at, updated_at FROM vault WHERE service = ? LIMIT 1');
-  stmt.bind([service]);
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as unknown as VaultRow;
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
+export async function getVaultEntryByService(service: string): Promise<VaultRow | null> {
+  const { data } = await getSupabase()
+    .from('vault')
+    .select('id, name, type, service, key_value, created_at, updated_at')
+    .eq('service', service)
+    .limit(1)
+    .single();
+  return data as VaultRow | null;
 }
 
-export function getEntitiesUsingService(service: string): { type: 'ceo' | 'agent'; name: string; model: string }[] {
+export async function getEntitiesUsingService(service: string): Promise<{ type: 'ceo' | 'agent'; name: string; model: string }[]> {
   const modelsForService = Object.entries(MODEL_SERVICE_MAP)
     .filter(([, svc]) => svc === service)
     .map(([model]) => model);
   if (modelsForService.length === 0) return [];
 
   const results: { type: 'ceo' | 'agent'; name: string; model: string }[] = [];
-  const placeholders = modelsForService.map(() => '?').join(', ');
 
-  const ceoStmt = getDB().prepare(`SELECT name, model FROM ceo WHERE model IN (${placeholders})`);
-  ceoStmt.bind(modelsForService);
-  while (ceoStmt.step()) {
-    const row = ceoStmt.getAsObject() as { name: string; model: string };
+  const { data: ceos } = await getSupabase()
+    .from('ceo')
+    .select('name, model')
+    .in('model', modelsForService);
+  for (const row of ceos ?? []) {
     results.push({ type: 'ceo', name: row.name, model: row.model });
   }
-  ceoStmt.free();
 
-  const agentStmt = getDB().prepare(`SELECT name, model FROM agents WHERE model IN (${placeholders})`);
-  agentStmt.bind(modelsForService);
-  while (agentStmt.step()) {
-    const row = agentStmt.getAsObject() as { name: string; model: string };
+  const { data: agents } = await getSupabase()
+    .from('agents')
+    .select('name, model')
+    .in('model', modelsForService);
+  for (const row of agents ?? []) {
     results.push({ type: 'agent', name: row.name, model: row.model });
   }
-  agentStmt.free();
 
   return results;
 }
@@ -453,49 +316,53 @@ export interface ApprovalRow {
   title: string;
   description: string | null;
   status: string;
-  metadata: string | null;
+  metadata: Record<string, unknown> | null; // JSONB — native object, not string
   created_at: string;
 }
 
-export function loadApprovals(): ApprovalRow[] {
-  const results: ApprovalRow[] = [];
-  const stmt = getDB().prepare("SELECT id, type, title, description, status, metadata, created_at FROM approvals WHERE status = 'pending' ORDER BY created_at");
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as ApprovalRow);
-  }
-  stmt.free();
-  return results;
+export async function loadApprovals(): Promise<ApprovalRow[]> {
+  const { data } = await getSupabase()
+    .from('approvals')
+    .select('id, type, title, description, status, metadata, created_at')
+    .eq('status', 'pending')
+    .order('created_at');
+  return (data ?? []) as ApprovalRow[];
 }
 
-export function loadAllApprovals(): ApprovalRow[] {
-  const results: ApprovalRow[] = [];
-  const stmt = getDB().prepare('SELECT id, type, title, description, status, metadata, created_at FROM approvals ORDER BY created_at DESC');
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as ApprovalRow);
-  }
-  stmt.free();
-  return results;
+export async function loadAllApprovals(): Promise<ApprovalRow[]> {
+  const { data } = await getSupabase()
+    .from('approvals')
+    .select('id, type, title, description, status, metadata, created_at')
+    .order('created_at', { ascending: false });
+  return (data ?? []) as ApprovalRow[];
 }
 
-export function saveApproval(approval: Omit<ApprovalRow, 'created_at'>): void {
-  getDB().run(
-    'INSERT INTO approvals (id, type, title, description, status, metadata) VALUES (?, ?, ?, ?, ?, ?)',
-    [approval.id, approval.type, approval.title, approval.description, approval.status, approval.metadata],
-  );
-  persist();
+export async function saveApproval(approval: Omit<ApprovalRow, 'created_at'>): Promise<void> {
+  await getSupabase()
+    .from('approvals')
+    .insert({
+      id: approval.id,
+      type: approval.type,
+      title: approval.title,
+      description: approval.description,
+      status: approval.status,
+      metadata: approval.metadata,
+    });
 }
 
-export function updateApprovalStatus(id: string, status: string): void {
-  getDB().run('UPDATE approvals SET status = ? WHERE id = ?', [status, id]);
-  persist();
+export async function updateApprovalStatus(id: string, status: string): Promise<void> {
+  await getSupabase()
+    .from('approvals')
+    .update({ status })
+    .eq('id', id);
 }
 
-export function getPendingApprovalCount(): number {
-  const stmt = getDB().prepare("SELECT COUNT(*) as cnt FROM approvals WHERE status = 'pending'");
-  stmt.step();
-  const row = stmt.getAsObject() as { cnt: number };
-  stmt.free();
-  return row.cnt;
+export async function getPendingApprovalCount(): Promise<number> {
+  const { count } = await getSupabase()
+    .from('approvals')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'pending');
+  return count ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -509,92 +376,82 @@ export interface MissionRow {
   assignee: string | null;
   priority: string;
   due_date: string | null;
-  recurring: string | null;   // cron expression or null
-  created_by: string | null;  // founder name, CEO name, or agent name
-  created_at: string | null;  // ISO timestamp
+  recurring: string | null;
+  created_by: string | null;
+  created_at: string | null;
 }
 
-export function loadMissions(): MissionRow[] {
-  const results: MissionRow[] = [];
-  const stmt = getDB().prepare(
-    `SELECT id, title, status, assignee, priority, due_date, recurring, created_by, created_at
-     FROM missions
-     ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'review' THEN 1 WHEN 'backlog' THEN 2 WHEN 'done' THEN 3 END,
-              CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END`
-  );
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as MissionRow);
-  }
-  stmt.free();
-  return results;
+export async function loadMissions(): Promise<MissionRow[]> {
+  const { data } = await getSupabase()
+    .from('missions')
+    .select('id, title, status, assignee, priority, due_date, recurring, created_by, created_at')
+    .order('created_at');
+  // Client-side sort to match original sql.js ordering
+  return ((data ?? []) as MissionRow[]).sort((a, b) => {
+    const statusOrder: Record<string, number> = { in_progress: 0, review: 1, backlog: 2, done: 3 };
+    const priorityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    const sd = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+    if (sd !== 0) return sd;
+    return (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9);
+  });
 }
 
-export function saveMission(mission: Partial<MissionRow> & { id: string; title: string }): void {
-  getDB().run(
-    `INSERT INTO missions (id, title, status, assignee, priority, due_date, recurring, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       title = excluded.title,
-       status = excluded.status,
-       assignee = excluded.assignee,
-       priority = excluded.priority,
-       due_date = excluded.due_date,
-       recurring = excluded.recurring,
-       created_by = excluded.created_by`,
-    [
-      mission.id,
-      mission.title,
-      mission.status ?? 'backlog',
-      mission.assignee ?? null,
-      mission.priority ?? 'medium',
-      mission.due_date ?? null,
-      mission.recurring ?? null,
-      mission.created_by ?? null,
-      mission.created_at ?? new Date().toISOString(),
-    ],
-  );
-  persist();
+export async function saveMission(mission: Partial<MissionRow> & { id: string; title: string }): Promise<void> {
+  await getSupabase()
+    .from('missions')
+    .upsert({
+      id: mission.id,
+      title: mission.title,
+      status: mission.status ?? 'backlog',
+      assignee: mission.assignee ?? null,
+      priority: mission.priority ?? 'medium',
+      due_date: mission.due_date ?? null,
+      recurring: mission.recurring ?? null,
+      created_by: mission.created_by ?? null,
+      created_at: mission.created_at ?? new Date().toISOString(),
+    }, { onConflict: 'id', ignoreDuplicates: false });
 }
 
-export function updateMissionStatus(id: string, status: string): void {
-  getDB().run('UPDATE missions SET status = ? WHERE id = ?', [status, id]);
-  persist();
+export async function updateMissionStatus(id: string, status: string): Promise<void> {
+  await getSupabase().from('missions').update({ status }).eq('id', id);
 }
 
-/** Update multiple mission fields at once. */
-export function updateMission(id: string, fields: Partial<Pick<MissionRow, 'title' | 'status' | 'assignee' | 'priority' | 'due_date' | 'recurring'>>): void {
-  const sets: string[] = [];
-  const vals: (string | null)[] = [];
-  if (fields.title !== undefined) { sets.push('title = ?'); vals.push(fields.title); }
-  if (fields.status !== undefined) { sets.push('status = ?'); vals.push(fields.status); }
-  if (fields.assignee !== undefined) { sets.push('assignee = ?'); vals.push(fields.assignee); }
-  if (fields.priority !== undefined) { sets.push('priority = ?'); vals.push(fields.priority); }
-  if (fields.due_date !== undefined) { sets.push('due_date = ?'); vals.push(fields.due_date); }
-  if (fields.recurring !== undefined) { sets.push('recurring = ?'); vals.push(fields.recurring); }
-  if (sets.length === 0) return;
-  getDB().run(`UPDATE missions SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
-  persist();
+export async function updateMission(id: string, fields: Partial<Pick<MissionRow, 'title' | 'status' | 'assignee' | 'priority' | 'due_date' | 'recurring'>>): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if (fields.title !== undefined) update.title = fields.title;
+  if (fields.status !== undefined) update.status = fields.status;
+  if (fields.assignee !== undefined) update.assignee = fields.assignee;
+  if (fields.priority !== undefined) update.priority = fields.priority;
+  if (fields.due_date !== undefined) update.due_date = fields.due_date;
+  if (fields.recurring !== undefined) update.recurring = fields.recurring;
+  if (Object.keys(update).length === 0) return;
+  await getSupabase().from('missions').update(update).eq('id', id);
 }
 
-/** Delete a mission by ID. */
-export function deleteMission(id: string): void {
-  getDB().run('DELETE FROM missions WHERE id = ?', [id]);
-  persist();
+export async function deleteMission(id: string): Promise<void> {
+  await getSupabase().from('missions').delete().eq('id', id);
 }
 
-export function seedMissionsIfEmpty(missions: Array<Omit<MissionRow, 'recurring' | 'created_by' | 'created_at'> & Partial<Pick<MissionRow, 'recurring' | 'created_by' | 'created_at'>>>): void {
-  const stmt = getDB().prepare('SELECT COUNT(*) as cnt FROM missions');
-  stmt.step();
-  const row = stmt.getAsObject() as { cnt: number };
-  stmt.free();
-  if (row.cnt > 0) return;
+export async function seedMissionsIfEmpty(missions: Array<Omit<MissionRow, 'recurring' | 'created_by' | 'created_at'> & Partial<Pick<MissionRow, 'recurring' | 'created_by' | 'created_at'>>>): Promise<void> {
+  const { count } = await getSupabase()
+    .from('missions')
+    .select('id', { count: 'exact', head: true });
+  if ((count ?? 0) > 0) return;
   for (const m of missions) {
-    getDB().run(
-      'INSERT OR IGNORE INTO missions (id, title, status, assignee, priority, due_date, recurring, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [m.id, m.title, m.status, m.assignee, m.priority, m.due_date, m.recurring ?? null, m.created_by ?? null, m.created_at ?? null],
-    );
+    await getSupabase()
+      .from('missions')
+      .insert({
+        id: m.id,
+        title: m.title,
+        status: m.status,
+        assignee: m.assignee,
+        priority: m.priority,
+        due_date: m.due_date,
+        recurring: m.recurring ?? null,
+        created_by: m.created_by ?? null,
+        created_at: m.created_at ?? null,
+      });
   }
-  persist();
 }
 
 // ---------------------------------------------------------------------------
@@ -603,44 +460,67 @@ export function seedMissionsIfEmpty(missions: Array<Omit<MissionRow, 'recurring'
 
 export interface SkillRow {
   id: string;
-  enabled: number;     // 0 or 1
+  enabled: boolean;          // Postgres BOOLEAN (was INTEGER 0/1)
   model: string | null;
   updated_at: string;
+  definition: Record<string, unknown> | null;  // full JSON from repo
+  category: string | null;
+  status: string;
+  source: string;
 }
 
-export function loadSkills(): SkillRow[] {
-  const results: SkillRow[] = [];
-  const stmt = getDB().prepare('SELECT id, enabled, model, updated_at FROM skills ORDER BY id');
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as SkillRow);
-  }
-  stmt.free();
-  return results;
+export async function loadSkills(): Promise<SkillRow[]> {
+  const { data } = await getSupabase()
+    .from('skills')
+    .select('id, enabled, model, updated_at, definition, category, status, source')
+    .order('id');
+  return (data ?? []) as SkillRow[];
 }
 
-export function saveSkill(id: string, enabled: boolean, model: string | null): void {
-  getDB().run(
-    `INSERT INTO skills (id, enabled, model, updated_at)
-     VALUES (?, ?, ?, datetime('now'))
-     ON CONFLICT(id) DO UPDATE SET
-       enabled = excluded.enabled,
-       model = excluded.model,
-       updated_at = datetime('now')`,
-    [id, enabled ? 1 : 0, model],
-  );
-  persist();
+export async function saveSkill(id: string, enabled: boolean, model: string | null): Promise<void> {
+  await getSupabase()
+    .from('skills')
+    .upsert({
+      id,
+      enabled,
+      model,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
 }
 
-export function updateSkillModel(id: string, model: string | null): void {
-  getDB().run(
-    `INSERT INTO skills (id, enabled, model, updated_at)
-     VALUES (?, 0, ?, datetime('now'))
-     ON CONFLICT(id) DO UPDATE SET
-       model = excluded.model,
-       updated_at = datetime('now')`,
-    [id, model],
-  );
-  persist();
+export async function updateSkillModel(id: string, model: string | null): Promise<void> {
+  await getSupabase()
+    .from('skills')
+    .upsert({
+      id,
+      enabled: false,
+      model,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+}
+
+/** Seed a skill with its full definition from the repo JSON. */
+export async function seedSkill(id: string, definition: Record<string, unknown>, category: string): Promise<void> {
+  // Only insert if doesn't exist — don't overwrite user state
+  const { data: existing } = await getSupabase()
+    .from('skills')
+    .select('id')
+    .eq('id', id)
+    .single();
+  if (existing) return;
+
+  await getSupabase()
+    .from('skills')
+    .insert({
+      id,
+      enabled: false,
+      model: null,
+      definition,
+      category,
+      status: (definition.status as string) ?? 'available',
+      source: 'seed',
+      updated_at: new Date().toISOString(),
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -650,74 +530,62 @@ export function updateSkillModel(id: string, model: string | null): void {
 export interface ConversationRow {
   id: string;
   title: string;
-  type: string;       // 'onboarding' | 'general'
-  status: string;     // 'active' | 'archived'
+  type: string;
+  status: string;
   created_at: string;
   updated_at: string;
 }
 
-export function loadConversations(): ConversationRow[] {
-  const results: ConversationRow[] = [];
-  const stmt = getDB().prepare('SELECT id, title, type, status, created_at, updated_at FROM conversations ORDER BY updated_at DESC');
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as ConversationRow);
-  }
-  stmt.free();
-  return results;
+export async function loadConversations(): Promise<ConversationRow[]> {
+  const { data } = await getSupabase()
+    .from('conversations')
+    .select('id, title, type, status, created_at, updated_at')
+    .order('updated_at', { ascending: false });
+  return (data ?? []) as ConversationRow[];
 }
 
-export function getConversation(id: string): ConversationRow | null {
-  const stmt = getDB().prepare('SELECT id, title, type, status, created_at, updated_at FROM conversations WHERE id = ?');
-  stmt.bind([id]);
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as unknown as ConversationRow;
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
+export async function getConversation(id: string): Promise<ConversationRow | null> {
+  const { data } = await getSupabase()
+    .from('conversations')
+    .select('id, title, type, status, created_at, updated_at')
+    .eq('id', id)
+    .single();
+  return data as ConversationRow | null;
 }
 
-export function saveConversation(conv: Omit<ConversationRow, 'created_at' | 'updated_at'>): void {
-  getDB().run(
-    `INSERT INTO conversations (id, title, type, status)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       title = excluded.title,
-       type = excluded.type,
-       status = excluded.status,
-       updated_at = datetime('now')`,
-    [conv.id, conv.title, conv.type, conv.status],
-  );
-  persist();
+export async function saveConversation(conv: Omit<ConversationRow, 'created_at' | 'updated_at'>): Promise<void> {
+  await getSupabase()
+    .from('conversations')
+    .upsert({
+      id: conv.id,
+      title: conv.title,
+      type: conv.type,
+      status: conv.status,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
 }
 
-export function updateConversation(id: string, fields: Partial<Pick<ConversationRow, 'title' | 'status'>>): void {
-  const sets: string[] = [];
-  const vals: string[] = [];
-  if (fields.title !== undefined) { sets.push('title = ?'); vals.push(fields.title); }
-  if (fields.status !== undefined) { sets.push('status = ?'); vals.push(fields.status); }
-  if (sets.length === 0) return;
-  sets.push("updated_at = datetime('now')");
-  getDB().run(`UPDATE conversations SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
-  persist();
+export async function updateConversation(id: string, fields: Partial<Pick<ConversationRow, 'title' | 'status'>>): Promise<void> {
+  const update: Record<string, string> = { updated_at: new Date().toISOString() };
+  if (fields.title !== undefined) update.title = fields.title;
+  if (fields.status !== undefined) update.status = fields.status;
+  await getSupabase().from('conversations').update(update).eq('id', id);
 }
 
-export function deleteConversation(id: string): void {
-  getDB().run('DELETE FROM chat_messages WHERE conversation_id = ?', [id]);
-  getDB().run('DELETE FROM conversations WHERE id = ?', [id]);
-  persist();
+export async function deleteConversation(id: string): Promise<void> {
+  // chat_messages cascade on FK, but delete explicitly for safety
+  await getSupabase().from('chat_messages').delete().eq('conversation_id', id);
+  await getSupabase().from('conversations').delete().eq('id', id);
 }
 
-export function getOnboardingConversation(): ConversationRow | null {
-  const stmt = getDB().prepare("SELECT id, title, type, status, created_at, updated_at FROM conversations WHERE type = 'onboarding' LIMIT 1");
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as unknown as ConversationRow;
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
+export async function getOnboardingConversation(): Promise<ConversationRow | null> {
+  const { data } = await getSupabase()
+    .from('conversations')
+    .select('id, title, type, status, created_at, updated_at')
+    .eq('type', 'onboarding')
+    .limit(1)
+    .single();
+  return data as ConversationRow | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -727,84 +595,82 @@ export function getOnboardingConversation(): ConversationRow | null {
 export interface ChatMessageRow {
   id: string;
   conversation_id: string;
-  sender: string;    // 'ceo' | 'user' | 'system'
+  sender: string;
   text: string;
-  metadata: string | null;
+  metadata: Record<string, unknown> | null;  // JSONB
   created_at: string;
 }
 
-export function loadChatMessages(conversationId: string): ChatMessageRow[] {
-  const results: ChatMessageRow[] = [];
-  const stmt = getDB().prepare('SELECT id, conversation_id, sender, text, metadata, created_at FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC');
-  stmt.bind([conversationId]);
-  while (stmt.step()) {
-    results.push(stmt.getAsObject() as unknown as ChatMessageRow);
-  }
-  stmt.free();
-  return results;
+export async function loadChatMessages(conversationId: string): Promise<ChatMessageRow[]> {
+  const { data } = await getSupabase()
+    .from('chat_messages')
+    .select('id, conversation_id, sender, text, metadata, created_at')
+    .eq('conversation_id', conversationId)
+    .order('created_at');
+  return (data ?? []) as ChatMessageRow[];
 }
 
-export function saveChatMessage(msg: Omit<ChatMessageRow, 'created_at'>): void {
-  getDB().run(
-    'INSERT INTO chat_messages (id, conversation_id, sender, text, metadata) VALUES (?, ?, ?, ?, ?)',
-    [msg.id, msg.conversation_id, msg.sender, msg.text, msg.metadata],
-  );
-  // Touch the conversation's updated_at
-  getDB().run("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?", [msg.conversation_id]);
-  persist();
+export async function saveChatMessage(msg: Omit<ChatMessageRow, 'created_at'>): Promise<void> {
+  await getSupabase()
+    .from('chat_messages')
+    .insert({
+      id: msg.id,
+      conversation_id: msg.conversation_id,
+      sender: msg.sender,
+      text: msg.text,
+      metadata: msg.metadata,
+    });
+  // Touch conversation updated_at
+  await getSupabase()
+    .from('conversations')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', msg.conversation_id);
 }
 
-export function deleteChatMessages(conversationId: string): void {
-  getDB().run('DELETE FROM chat_messages WHERE conversation_id = ?', [conversationId]);
-  persist();
+export async function deleteChatMessages(conversationId: string): Promise<void> {
+  await getSupabase().from('chat_messages').delete().eq('conversation_id', conversationId);
 }
 
-export function countChatMessages(conversationId: string): number {
-  const stmt = getDB().prepare('SELECT COUNT(*) as cnt FROM chat_messages WHERE conversation_id = ?');
-  stmt.bind([conversationId]);
-  stmt.step();
-  const row = stmt.getAsObject() as { cnt: number };
-  stmt.free();
-  return row.cnt;
+export async function countChatMessages(conversationId: string): Promise<number> {
+  const { count } = await getSupabase()
+    .from('chat_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', conversationId);
+  return count ?? 0;
 }
 
-export function getLastChatMessage(conversationId: string): ChatMessageRow | null {
-  const stmt = getDB().prepare('SELECT id, conversation_id, sender, text, metadata, created_at FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1');
-  stmt.bind([conversationId]);
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as unknown as ChatMessageRow;
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
+export async function getLastChatMessage(conversationId: string): Promise<ChatMessageRow | null> {
+  const { data } = await getSupabase()
+    .from('chat_messages')
+    .select('id, conversation_id, sender, text, metadata, created_at')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+  return data as ChatMessageRow | null;
 }
 
 // ---------------------------------------------------------------------------
-// Fire CEO (preserves agents, vault, missions, etc.)
+// Fire CEO
 // ---------------------------------------------------------------------------
 
-export function fireCEO(): void {
-  getDB().run('DELETE FROM ceo');
-  getDB().run("DELETE FROM settings WHERE key IN ('ceo_walked_in', 'ceo_meeting_done')");
-  getDB().run('DELETE FROM chat_messages');
-  getDB().run('DELETE FROM conversations');
-  persist();
+export async function fireCEO(): Promise<void> {
+  await getSupabase().from('ceo').delete().neq('id', '');
+  await getSupabase().from('settings').delete().in('key', ['ceo_walked_in', 'ceo_meeting_done']);
+  await getSupabase().from('chat_messages').delete().neq('id', '');
+  await getSupabase().from('conversations').delete().neq('id', '');
 }
 
 // ---------------------------------------------------------------------------
 // Export full database as JSON
 // ---------------------------------------------------------------------------
 
-export function exportDatabaseAsJSON(): Record<string, unknown[]> {
+export async function exportDatabaseAsJSON(): Promise<Record<string, unknown[]>> {
   const tables = ['settings', 'agents', 'ceo', 'missions', 'audit_log', 'vault', 'approvals', 'skills', 'conversations', 'chat_messages'];
   const data: Record<string, unknown[]> = {};
   for (const table of tables) {
-    const results: unknown[] = [];
-    const stmt = getDB().prepare(`SELECT * FROM ${table}`);
-    while (stmt.step()) results.push(stmt.getAsObject());
-    stmt.free();
-    data[table] = results;
+    const { data: rows } = await getSupabase().from(table).select('*');
+    data[table] = rows ?? [];
   }
   return data;
 }
@@ -813,58 +679,76 @@ export function exportDatabaseAsJSON(): Record<string, unknown[]> {
 // Reset
 // ---------------------------------------------------------------------------
 
-/** Nuke the entire database and remove persisted copy. */
 export async function resetDatabase(): Promise<void> {
-  if (db) {
-    db.close();
-    db = null;
+  // Truncate all tables in dependency order
+  const tables = ['chat_messages', 'conversations', 'approvals', 'skills', 'vault', 'audit_log', 'missions', 'agents', 'ceo', 'settings',
+    'org_memory', 'conversation_summaries', 'mission_memory', 'agent_skills', 'scheduler_state', 'ceo_action_queue', 'task_executions', 'agent_stats'];
+  for (const table of tables) {
+    try {
+      await getSupabase().from(table).delete().neq('id', '');
+    } catch {
+      // Some tables may use different PK names (e.g., audit_log uses serial id)
+    }
   }
-  await deleteFromIndexedDB();
+  // Also clear audit_log (bigserial PK)
+  try {
+    await getSupabase().from('audit_log').delete().gte('id', 0);
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
-// Persistence via IndexedDB
+// Agent Skills (assignment)
 // ---------------------------------------------------------------------------
 
-function openIDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('jarvis_inc', 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore('kv');
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+export interface AgentSkillRow {
+  id: string;
+  agent_id: string;
+  skill_id: string;
+  assigned_by: string;
+  created_at: string;
 }
 
-async function persist(): Promise<void> {
-  if (!db) return;
-  const data = db.export();
-  const idb = await openIDB();
-  return new Promise((resolve, reject) => {
-    const tx = idb.transaction('kv', 'readwrite');
-    tx.objectStore('kv').put(data.buffer, DB_STORAGE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+export async function getAgentSkills(agentId: string): Promise<AgentSkillRow[]> {
+  const { data } = await getSupabase()
+    .from('agent_skills')
+    .select('id, agent_id, skill_id, assigned_by, created_at')
+    .eq('agent_id', agentId)
+    .order('created_at');
+  return (data ?? []) as AgentSkillRow[];
 }
 
-async function loadFromIndexedDB(): Promise<ArrayBuffer | null> {
-  const idb = await openIDB();
-  return new Promise((resolve, reject) => {
-    const tx = idb.transaction('kv', 'readonly');
-    const req = tx.objectStore('kv').get(DB_STORAGE_KEY);
-    req.onsuccess = () => resolve(req.result ?? null);
-    req.onerror = () => reject(req.error);
-  });
+export async function assignSkillToAgent(agentId: string, skillId: string, assignedBy: string = 'ceo'): Promise<void> {
+  await getSupabase()
+    .from('agent_skills')
+    .upsert({
+      id: `as-${agentId}-${skillId}`,
+      agent_id: agentId,
+      skill_id: skillId,
+      assigned_by: assignedBy,
+    }, { onConflict: 'agent_id,skill_id' });
 }
 
-async function deleteFromIndexedDB(): Promise<void> {
-  const idb = await openIDB();
-  return new Promise((resolve, reject) => {
-    const tx = idb.transaction('kv', 'readwrite');
-    tx.objectStore('kv').delete(DB_STORAGE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+export async function removeSkillFromAgent(agentId: string, skillId: string): Promise<void> {
+  await getSupabase()
+    .from('agent_skills')
+    .delete()
+    .eq('agent_id', agentId)
+    .eq('skill_id', skillId);
+}
+
+export async function getAgentsWithSkill(skillId: string): Promise<AgentSkillRow[]> {
+  const { data } = await getSupabase()
+    .from('agent_skills')
+    .select('id, agent_id, skill_id, assigned_by, created_at')
+    .eq('skill_id', skillId)
+    .order('created_at');
+  return (data ?? []) as AgentSkillRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Persistence — no-op (Supabase handles it)
+// ---------------------------------------------------------------------------
+
+export async function persist(): Promise<void> {
+  // No-op — Postgres persists automatically
 }

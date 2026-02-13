@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, Crown, Download, DatabaseZap } from 'lucide-react';
 import { loadCEO, getFounderInfo, exportDatabaseAsJSON } from '../../lib/database';
+import type { CEORow } from '../../lib/database';
 
 type ActionType = 'fire_ceo' | 'shutter' | 'reset';
 
@@ -17,10 +18,23 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
   const [confirmText, setConfirmText] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
 
-  const ceoRow = open ? loadCEO() : null;
-  const founderInfo = open ? getFounderInfo() : null;
+  const [ceoRow, setCeoRow] = useState<CEORow | null>(null);
+  const [founderInfo, setFounderInfo] = useState<{ founderName: string; orgName: string } | null>(null);
+
   const ceoName = ceoRow?.name ?? 'CEO';
   const orgName = founderInfo?.orgName ?? 'JARVIS';
+
+  // Load CEO and founder info when dialog opens
+  useEffect(() => {
+    if (open) {
+      const load = async () => {
+        const [ceo, founder] = await Promise.all([loadCEO(), getFounderInfo()]);
+        setCeoRow(ceo);
+        setFounderInfo(founder);
+      };
+      load();
+    }
+  }, [open]);
 
   // Reset internal state when dialog opens/closes
   useEffect(() => {
@@ -77,7 +91,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
     } else if (selectedAction === 'shutter') {
       // Export data as JSON first
       try {
-        const data = exportDatabaseAsJSON();
+        const data = await exportDatabaseAsJSON();
         const dateStr = new Date().toISOString().split('T')[0];
         const filename = `${ceoName}_${dateStr}_terminated.json`;
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });

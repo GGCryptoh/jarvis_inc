@@ -18,28 +18,48 @@ import FounderCeremony from './components/FounderCeremony/FounderCeremony'
 import CEOCeremony from './components/CEOCeremony/CEOCeremony'
 
 export default function App() {
-  const { ready, initialized, ceoInitialized, reset, reinit } = useDatabase()
+  const { ready, initialized, ceoInitialized, error, reset, reinit } = useDatabase()
   const navigate = useNavigate()
 
-  // After CEO ceremony, reinit DB state AND navigate to /surveillance
-  const handleCeremonyComplete = useCallback(() => {
-    reinit()
+  // After ceremony, reinit DB state AND navigate to /surveillance
+  const handleCeremonyComplete = useCallback(async () => {
+    await reinit()
     navigate('/surveillance', { replace: true })
   }, [reinit, navigate])
 
   // Fire CEO: remove CEO row + ceremony settings, then re-check DB state
-  const handleFireCEO = useCallback(() => {
-    fireCEOFromDB()
-    reinit()
+  const handleFireCEO = useCallback(async () => {
+    await fireCEOFromDB()
+    await reinit()
   }, [reinit])
 
-  // Loading state while SQLite boots
+  // Error state — show connection help
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-black">
+        <div className="text-center max-w-lg p-8">
+          <div className="font-pixel text-pixel-pink text-[10px] tracking-widest mb-4">
+            CONNECTION ERROR
+          </div>
+          <div className="font-pixel text-[9px] tracking-wider text-zinc-400 leading-relaxed mb-6">
+            {error}
+          </div>
+          <div className="font-pixel text-[9px] tracking-wider text-zinc-500 leading-relaxed">
+            Run <span className="text-pixel-green">npm run jarvis</span> to start the full stack,{' '}
+            or set VITE_SUPABASE_URL in .env.development
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading state while connecting to Supabase
   if (!ready) {
     return (
       <div className="flex items-center justify-center h-screen bg-black">
         <div className="text-center">
           <div className="font-pixel text-pixel-green text-[10px] tracking-widest animate-pulse">
-            LOADING SYSTEMS...
+            CONNECTING TO SYSTEMS...
           </div>
         </div>
       </div>

@@ -51,6 +51,7 @@ coverage
 # Docker (local overrides & secrets)
 docker-compose.override.yml
 docker/.env
+docker/supabase/kong.yml
 docker/supabase/volumes/
 
 # SQLite (if ever used on disk)

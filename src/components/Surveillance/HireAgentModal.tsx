@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import type { Agent } from '../../types';
 import { MODEL_OPTIONS } from '../../lib/models';
+import { resolveSkills, type FullSkillDefinition } from '../../lib/skillResolver';
+import { getAgentSkills, assignSkillToAgent, removeSkillFromAgent } from '../../lib/database';
 
 export interface AgentConfig {
   name: string;
@@ -9,6 +11,7 @@ export interface AgentConfig {
   model: string;
   color: string;
   skinTone: string;
+  selectedSkills?: string[];
 }
 
 interface HireAgentModalProps {
@@ -62,7 +65,31 @@ export default function HireAgentModal({ open, onClose, onSubmit, editAgent }: H
   const [skinTone, setSkinTone] = useState('#ffcc99');
   const [showCustomRole, setShowCustomRole] = useState(false);
 
+  // Skills state
+  const [availableSkills, setAvailableSkills] = useState<FullSkillDefinition[]>([]);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
+
   const isEditing = !!editAgent;
+
+  // Load available skills (only enabled ones)
+  useEffect(() => {
+    if (!open) return;
+    resolveSkills().then(all => {
+      setAvailableSkills(all.filter(s => s.enabled));
+    });
+  }, [open]);
+
+  // Load currently assigned skills when editing
+  useEffect(() => {
+    if (!open) return;
+    if (editAgent) {
+      getAgentSkills(editAgent.id).then(rows => {
+        setSelectedSkillIds(new Set(rows.map(r => r.skill_id)));
+      });
+    } else {
+      setSelectedSkillIds(new Set());
+    }
+  }, [editAgent, open]);
 
   // Populate form when editing
   useEffect(() => {
@@ -96,14 +123,47 @@ export default function HireAgentModal({ open, onClose, onSubmit, editAgent }: H
   const effectiveRole = showCustomRole ? customRole : role;
   const isValid = name.trim().length > 0 && effectiveRole.trim().length > 0;
 
-  function handleSubmit() {
+  function toggleSkillSelection(skillId: string) {
+    setSelectedSkillIds(prev => {
+      const next = new Set(prev);
+      if (next.has(skillId)) {
+        next.delete(skillId);
+      } else {
+        next.add(skillId);
+      }
+      return next;
+    });
+  }
+
+  async function handleSubmit() {
     if (!isValid) return;
+
+    // If editing, diff skills and sync
+    if (editAgent) {
+      const currentSkills = await getAgentSkills(editAgent.id);
+      const currentIds = new Set(currentSkills.map(r => r.skill_id));
+
+      // Add newly selected
+      for (const id of selectedSkillIds) {
+        if (!currentIds.has(id)) {
+          await assignSkillToAgent(editAgent.id, id, 'founder');
+        }
+      }
+      // Remove deselected
+      for (const id of currentIds) {
+        if (!selectedSkillIds.has(id)) {
+          await removeSkillFromAgent(editAgent.id, id);
+        }
+      }
+    }
+
     onSubmit({
       name: name.trim().toUpperCase(),
       role: effectiveRole.trim(),
       model,
       color,
       skinTone,
+      selectedSkills: Array.from(selectedSkillIds),
     });
   }
 
@@ -261,6 +321,36 @@ export default function HireAgentModal({ open, onClose, onSubmit, editAgent }: H
                     ))}
                   </div>
                 </div>
+
+                {/* Skills */}
+                {availableSkills.length > 0 && (
+                  <div>
+                    <label className="block font-pixel text-[7px] text-gray-400 tracking-wider mb-1">
+                      ASSIGNED SKILLS ({selectedSkillIds.size})
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {availableSkills.map((sk) => (
+                        <button
+                          key={sk.id}
+                          onClick={() => toggleSkillSelection(sk.id)}
+                          className={`font-pixel text-[6px] tracking-wider px-2 py-1 border transition-colors truncate max-w-[120px] ${
+                            selectedSkillIds.has(sk.id)
+                              ? 'border-pixel-green bg-pixel-green/10 text-pixel-green'
+                              : 'border-pixel-crt-border bg-pixel-bg text-gray-400 hover:text-gray-200'
+                          }`}
+                          title={sk.description}
+                        >
+                          {sk.name}
+                        </button>
+                      ))}
+                    </div>
+                    {selectedSkillIds.size === 0 && (
+                      <p className="font-pixel text-[5px] text-gray-600 tracking-wider mt-1">
+                        CEO WILL ASSIGN SKILLS AUTOMATICALLY IF NONE SELECTED
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Right: Live Sprite Preview */}
