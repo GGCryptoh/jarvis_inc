@@ -432,6 +432,23 @@ export async function deleteMission(id: string): Promise<void> {
   await getSupabase().from('missions').delete().eq('id', id);
 }
 
+export async function getMissionReviewCount(): Promise<number> {
+  const { count } = await getSupabase()
+    .from('missions')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'review');
+  return count ?? 0;
+}
+
+export async function loadTaskExecutions(missionId: string): Promise<any[]> {
+  const { data } = await getSupabase()
+    .from('task_executions')
+    .select('*')
+    .eq('mission_id', missionId)
+    .order('created_at', { ascending: true });
+  return data ?? [];
+}
+
 export async function seedMissionsIfEmpty(missions: Array<Omit<MissionRow, 'recurring' | 'created_by' | 'created_at'> & Partial<Pick<MissionRow, 'recurring' | 'created_by' | 'created_at'>>>): Promise<void> {
   const { count } = await getSupabase()
     .from('missions')
@@ -743,6 +760,35 @@ export async function getAgentsWithSkill(skillId: string): Promise<AgentSkillRow
     .eq('skill_id', skillId)
     .order('created_at');
   return (data ?? []) as AgentSkillRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Notification Channels CRUD
+// ---------------------------------------------------------------------------
+
+export interface ChannelRow {
+  id: string;
+  type: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  cost_per_unit: number;
+  created_at?: string;
+}
+
+export async function loadChannels(): Promise<ChannelRow[]> {
+  const { data } = await getSupabase()
+    .from('notification_channels')
+    .select('*')
+    .order('created_at', { ascending: true });
+  return (data ?? []) as ChannelRow[];
+}
+
+export async function saveChannel(channel: Partial<ChannelRow>): Promise<void> {
+  await getSupabase().from('notification_channels').upsert(channel);
+}
+
+export async function deleteChannel(id: string): Promise<void> {
+  await getSupabase().from('notification_channels').delete().eq('id', id);
 }
 
 // ---------------------------------------------------------------------------

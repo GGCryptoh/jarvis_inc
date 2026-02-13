@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import ResetDBDialog from './ResetDBDialog'
-import { loadCEO, getPendingApprovalCount } from '../../lib/database'
+import { loadCEO, getPendingApprovalCount, getMissionReviewCount } from '../../lib/database'
 
 interface NavItem {
   label: string
@@ -56,6 +56,7 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
   const [ceoName, setCeoName] = useState<string | null>(null)
   const [ceoStatus, setCeoStatus] = useState<CeoStatus>('nominal')
   const [pendingApprovals, setPendingApprovals] = useState(0)
+  const [reviewCount, setReviewCount] = useState(0)
 
   // Load CEO + approvals count from DB on mount
   useEffect(() => {
@@ -80,6 +81,20 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
     return () => {
       clearInterval(interval)
       window.removeEventListener('approvals-changed', refreshCount)
+    }
+  }, [])
+
+  // Refresh mission review count periodically + on custom event
+  useEffect(() => {
+    const load = async () => {
+      try { setReviewCount(await getMissionReviewCount()); } catch { /* ignore */ }
+    }
+    load()
+    const interval = setInterval(load, 5000)
+    window.addEventListener('missions-changed', load)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('missions-changed', load)
     }
   }, [])
 
@@ -138,6 +153,13 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
                     {item.label === 'Approvals' && pendingApprovals > 0 && (
                       <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-black px-1">
                         {pendingApprovals}
+                      </span>
+                    )}
+
+                    {/* Missions review badge */}
+                    {item.label === 'Missions' && reviewCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-black px-1">
+                        {reviewCount}
                       </span>
                     )}
 

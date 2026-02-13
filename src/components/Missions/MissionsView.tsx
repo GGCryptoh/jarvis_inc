@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Plus, RefreshCw, Pencil, Trash2, X, ChevronRight, ChevronLeft } from 'lucide-react'
-import { loadMissions, saveMission, updateMission, deleteMission, logAudit, loadAgents, loadCEO, type MissionRow } from '../../lib/database'
+import { loadMissions, saveMission, updateMission, updateMissionStatus, deleteMission, logAudit, loadAgents, loadCEO, loadTaskExecutions, type MissionRow } from '../../lib/database'
 
 const priorityColor: Record<string, string> = {
   critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -337,12 +337,112 @@ function MissionDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Mission Review Dialog (task outputs + approve/discard)
+// ---------------------------------------------------------------------------
+
+function MissionReviewDialog({ mission, onClose }: { mission: MissionRow; onClose: () => void }) {
+  const [tasks, setTasks] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadTaskExecutions(mission.id).then(data => {
+      setTasks(data)
+      setLoading(false)
+    })
+  }, [mission.id])
+
+  const totalCost = tasks.reduce((sum: number, t: any) => sum + (t.cost_usd ?? 0), 0)
+  const totalTokens = tasks.reduce((sum: number, t: any) => sum + (t.tokens_used ?? 0), 0)
+
+  const handleApprove = async () => {
+    await updateMissionStatus(mission.id, 'done')
+    await logAudit('Founder', 'MISSION_APPROVED', `Approved: ${mission.title} ($${totalCost.toFixed(4)})`, 'info')
+    window.dispatchEvent(new Event('missions-changed'))
+    onClose()
+  }
+
+  const handleDiscard = async () => {
+    await updateMissionStatus(mission.id, 'done')
+    await logAudit('Founder', 'MISSION_DISCARDED', `Discarded: ${mission.title}`, 'warning')
+    window.dispatchEvent(new Event('missions-changed'))
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-8">
+      <div className="bg-jarvis-surface border border-white/[0.08] rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
+          <div>
+            <div className="text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-1">MISSION REVIEW</div>
+            <h2 className="text-lg font-bold text-jarvis-text">{mission.title}</h2>
+          </div>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 text-sm">&#x2715;</button>
+        </div>
+
+        {/* Stats */}
+        <div className="px-6 py-3 border-b border-white/[0.06] flex items-center gap-6 text-xs text-jarvis-muted">
+          <span>{tasks.length} task{tasks.length !== 1 ? 's' : ''}</span>
+          <span>{totalTokens.toLocaleString()} tokens</span>
+          <span>${totalCost.toFixed(4)} total cost</span>
+        </div>
+
+        {/* Task outputs */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {loading ? (
+            <div className="text-sm text-jarvis-muted text-center py-8">Loading task results...</div>
+          ) : tasks.length === 0 ? (
+            <div className="text-sm text-jarvis-muted text-center py-8">No task results found</div>
+          ) : tasks.map((task: any) => (
+            <div key={task.id} className="border border-white/[0.06] rounded-lg overflow-hidden">
+              <div className="px-4 py-2 bg-white/[0.02] border-b border-white/[0.04] flex items-center justify-between">
+                <span className="text-xs font-medium text-jarvis-text">{task.skill_id} / {task.command_name}</span>
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                  task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-cyan-400'
+                }`}>
+                  {task.status}
+                </span>
+              </div>
+              <div className="px-4 py-3 text-sm text-jarvis-muted whitespace-pre-line leading-relaxed max-h-64 overflow-y-auto">
+                {task.result?.output ?? task.result?.error ?? 'No output'}
+              </div>
+              {task.cost_usd != null && (
+                <div className="px-4 py-2 bg-white/[0.01] border-t border-white/[0.04] text-[10px] text-zinc-600">
+                  {task.tokens_used?.toLocaleString()} tokens &middot; ${task.cost_usd.toFixed(4)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 py-4 border-t border-white/[0.06] flex items-center justify-end gap-3">
+          <button
+            onClick={handleDiscard}
+            className="px-4 py-2 text-xs font-medium text-zinc-500 hover:text-red-400 transition-colors"
+          >
+            DISCARD
+          </button>
+          <button
+            onClick={handleApprove}
+            className="px-5 py-2 text-xs font-bold text-black bg-emerald-500 hover:bg-emerald-400 rounded-lg transition-colors"
+          >
+            APPROVE
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main View
 // ---------------------------------------------------------------------------
 
 export default function MissionsView() {
   const [dbMissions, setDbMissions] = useState<MissionRow[]>([])
   const [dialogState, setDialogState] = useState<{ mission: MissionRow | null; defaultStatus: ColumnKey } | null>(null)
+  const [reviewMission, setReviewMission] = useState<MissionRow | null>(null)
 
   useEffect(() => { loadMissions().then(setDbMissions) }, [])
 
@@ -473,12 +573,19 @@ export default function MissionsView() {
                   </button>
                 ) : (
                   items.map((mission) => (
-                    <MissionCard
+                    <div
                       key={mission.id}
-                      mission={mission}
-                      onEdit={handleEdit}
-                      onMove={handleMove}
-                    />
+                      onClick={() => {
+                        if (mission.status === 'review') setReviewMission(mission)
+                      }}
+                      className={mission.status === 'review' ? 'cursor-pointer' : ''}
+                    >
+                      <MissionCard
+                        mission={mission}
+                        onEdit={handleEdit}
+                        onMove={handleMove}
+                      />
+                    </div>
                   ))
                 )}
               </div>
@@ -495,6 +602,14 @@ export default function MissionsView() {
           onSave={handleSave}
           onDelete={dialogState.mission ? handleDelete : undefined}
           onClose={() => setDialogState(null)}
+        />
+      )}
+
+      {/* Mission Review Dialog */}
+      {reviewMission && (
+        <MissionReviewDialog
+          mission={reviewMission}
+          onClose={() => { setReviewMission(null); refresh(); }}
         />
       )}
     </div>
