@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Plus, RefreshCw, Pencil, Trash2, X, ChevronRight, ChevronLeft } from 'lucide-react'
-import { loadMissions, saveMission, updateMission, updateMissionStatus, deleteMission, logAudit, loadAgents, loadCEO, loadTaskExecutions, type MissionRow } from '../../lib/database'
+import { loadMissions, saveMission, updateMission, updateMissionStatus, deleteMission, logAudit, loadAgents, loadCEO, loadTaskExecutions, saveConversation, saveChatMessage, getFounderInfo, type MissionRow } from '../../lib/database'
 
 const priorityColor: Record<string, string> = {
   critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -51,7 +52,7 @@ function RecurringBadge({ cron }: { cron: string }) {
     >
       <RefreshCw size={11} className="text-cyan-400" />
       {showTooltip && (
-        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-[10px] text-zinc-300 whitespace-nowrap z-10 shadow-lg">
+        <span className="fixed -translate-x-1/2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-[10px] text-zinc-300 whitespace-nowrap z-[100] shadow-lg pointer-events-none" style={{ marginTop: '-2.5rem' }}>
           <span className="text-cyan-400 font-medium">Recurring:</span> {cron}
         </span>
       )}
@@ -150,12 +151,13 @@ function MissionDialog({
 }: {
   mission: MissionRow | null
   defaultStatus: ColumnKey
-  onSave: (data: { title: string; status: ColumnKey; assignee: string; priority: string; due_date: string; recurring: string }) => void
+  onSave: (data: { title: string; status: ColumnKey; assignee: string; priority: string; due_date: string; recurring: string; goal: string }) => void
   onDelete?: () => void
   onClose: () => void
 }) {
   const isEditing = !!mission
   const [title, setTitle] = useState(mission?.title ?? '')
+  const [goal, setGoal] = useState('')
   const [status, setStatus] = useState<ColumnKey>((mission?.status as ColumnKey) ?? defaultStatus)
   const [assignee, setAssignee] = useState(mission?.assignee ?? '')
   const [priority, setPriority] = useState(mission?.priority ?? 'medium')
@@ -208,6 +210,20 @@ function MissionDialog({
               className="w-full bg-jarvis-surface border border-jarvis-border rounded-lg px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
             />
           </div>
+
+          {/* Goal — create mode only */}
+          {!isEditing && (
+            <div>
+              <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-1.5">Goal / Brief</label>
+              <textarea
+                value={goal}
+                onChange={e => setGoal(e.target.value)}
+                placeholder="What should this mission accomplish? The CEO will review this brief..."
+                rows={3}
+                className="w-full bg-jarvis-surface border border-jarvis-border rounded-lg px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors resize-none"
+              />
+            </div>
+          )}
 
           {/* Status + Priority row */}
           <div className="grid grid-cols-2 gap-3">
@@ -323,11 +339,11 @@ function MissionDialog({
               Cancel
             </button>
             <button
-              onClick={() => valid && onSave({ title: title.trim(), status, assignee: assignee.trim(), priority, due_date: dueDate, recurring })}
+              onClick={() => valid && onSave({ title: title.trim(), status, assignee: assignee.trim(), priority, due_date: dueDate, recurring, goal: goal.trim() })}
               disabled={!valid}
               className="px-4 py-2 text-xs font-semibold rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              {isEditing ? 'Save Changes' : 'Create Mission'}
+              {isEditing ? 'Save Changes' : 'MISSION BRIEF'}
             </button>
           </div>
         </div>
@@ -440,6 +456,7 @@ function MissionReviewDialog({ mission, onClose }: { mission: MissionRow; onClos
 // ---------------------------------------------------------------------------
 
 export default function MissionsView() {
+  const navigate = useNavigate()
   const [dbMissions, setDbMissions] = useState<MissionRow[]>([])
   const [dialogState, setDialogState] = useState<{ mission: MissionRow | null; defaultStatus: ColumnKey } | null>(null)
   const [reviewMission, setReviewMission] = useState<MissionRow | null>(null)
@@ -482,7 +499,7 @@ export default function MissionsView() {
     refresh()
   }
 
-  async function handleSave(data: { title: string; status: ColumnKey; assignee: string; priority: string; due_date: string; recurring: string }) {
+  async function handleSave(data: { title: string; status: ColumnKey; assignee: string; priority: string; due_date: string; recurring: string; goal: string }) {
     if (!dialogState) return
     const { mission } = dialogState
 
@@ -497,10 +514,13 @@ export default function MissionsView() {
         recurring: data.recurring || null,
       })
       await logAudit(null, 'MISSION_EDIT', `Edited mission "${data.title}"`, 'info')
+      setDialogState(null)
+      refresh()
     } else {
-      // Create new
+      // Create new — save mission then open CEO chat for review
+      const missionId = `mission-${Date.now()}`
       await saveMission({
-        id: `mission-${Date.now()}`,
+        id: missionId,
         title: data.title,
         status: data.status,
         assignee: data.assignee || null,
@@ -509,11 +529,46 @@ export default function MissionsView() {
         recurring: data.recurring || null,
         created_at: new Date().toISOString(),
       })
-      await logAudit(null, 'MISSION_NEW', `Created mission "${data.title}" in ${STATUS_LABELS[data.status]}`, 'info')
-    }
+      await logAudit(null, 'MISSION_BRIEF', `Mission brief: "${data.title}"`, 'info')
 
-    setDialogState(null)
-    refresh()
+      // Create a new conversation for CEO review
+      const convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const founderInfo = await getFounderInfo()
+      const ceo = await loadCEO()
+      const ceoName = ceo?.name ?? 'CEO'
+
+      await saveConversation({
+        id: convId,
+        title: `Mission Brief: ${data.title}`,
+        type: 'general',
+        status: 'active',
+      })
+
+      // Seed with the mission brief as a user message
+      const briefText = [
+        `**MISSION BRIEF**`,
+        `**Title:** ${data.title}`,
+        data.goal ? `**Goal:** ${data.goal}` : null,
+        `**Priority:** ${data.priority}`,
+        data.assignee ? `**Suggested Assignee:** ${data.assignee}` : null,
+        data.due_date ? `**Due:** ${data.due_date}` : null,
+        data.recurring ? `**Recurring:** ${data.recurring}` : null,
+        ``,
+        `Please review this mission brief. Ask any clarifying questions before we lock it in.`,
+      ].filter(Boolean).join('\n')
+
+      await saveChatMessage({
+        id: `msg-${Date.now()}-brief`,
+        conversation_id: convId,
+        sender: 'user',
+        text: briefText,
+        metadata: { type: 'mission_brief', mission_id: missionId },
+      })
+
+      setDialogState(null)
+      // Navigate to chat with this conversation
+      navigate(`/chat?conversation=${convId}`)
+    }
   }
 
   async function handleDelete() {
@@ -552,25 +607,33 @@ export default function MissionsView() {
                   >
                     {items.length}
                   </span>
-                  <button
-                    onClick={() => handleCreate(col.key)}
-                    className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
-                    title={`Add to ${col.label}`}
-                  >
-                    <Plus size={12} />
-                  </button>
+                  {(col.key === 'backlog' || col.key === 'in_progress') && (
+                    <button
+                      onClick={() => handleCreate(col.key)}
+                      className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                      title={`Add to ${col.label}`}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Column Body */}
               <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                 {items.length === 0 ? (
-                  <button
-                    onClick={() => handleCreate(col.key)}
-                    className="flex items-center justify-center h-24 w-full rounded-lg border border-dashed border-white/[0.06] text-xs text-zinc-600 hover:border-white/[0.12] hover:text-zinc-400 transition-colors"
-                  >
-                    + Add mission
-                  </button>
+                  (col.key === 'backlog' || col.key === 'in_progress') ? (
+                    <button
+                      onClick={() => handleCreate(col.key)}
+                      className="flex items-center justify-center h-24 w-full rounded-lg border border-dashed border-white/[0.06] text-xs text-zinc-600 hover:border-white/[0.12] hover:text-zinc-400 transition-colors"
+                    >
+                      + Add mission
+                    </button>
+                  ) : (
+                    <div className="flex items-center justify-center h-24 w-full text-xs text-zinc-700">
+                      No missions
+                    </div>
+                  )
                 ) : (
                   items.map((mission) => (
                     <div

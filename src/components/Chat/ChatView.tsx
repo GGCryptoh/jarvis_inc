@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   getSetting, loadCEO, getFounderInfo,
   loadConversations, saveConversation, deleteConversation, getConversation,
@@ -45,6 +46,7 @@ function randomGreeting(founderName: string): string {
 // ---------------------------------------------------------------------------
 
 export default function ChatView() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [meetingDone, setMeetingDone] = useState<boolean | null>(null);
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -67,6 +69,15 @@ export default function ChatView() {
       setCeoName(ceoRow?.name ?? 'CEO');
       setFounderName(founderInfo?.founderName ?? 'Founder');
       setConversations(convos);
+
+      // Check for ?conversation= query param (e.g. from mission brief)
+      const requestedConvo = searchParams.get('conversation');
+      if (requestedConvo) {
+        setActiveConversationId(requestedConvo);
+        // Clear the query param so it doesn't persist on refresh
+        setSearchParams({}, { replace: true });
+        return;
+      }
 
       // Default to the most recent active conversation, or first one
       const active = convos.find(c => c.status === 'active');

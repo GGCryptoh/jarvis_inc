@@ -277,8 +277,11 @@ No organizational memories yet. As you interact with the founder, you'll build u
     ? missions.map(m => `- [${m.status}] ${m.title} — Assignee: ${m.assignee ?? 'Unassigned'} — Priority: ${m.priority}`).join('\n')
     : '- No missions yet';
 
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
   return `You are ${ceo.name}, the AI Chief Executive Officer of ${orgName}.
 Founded by ${founderName}. Primary mission: ${primaryMission}.
+Today's date: ${today}.
 
 ${personaBlock}
 
