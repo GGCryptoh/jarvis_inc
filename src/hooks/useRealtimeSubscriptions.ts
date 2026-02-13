@@ -6,7 +6,7 @@
  * `window.addEventListener`) get live updates without any refactoring.
  *
  * Tables monitored:
- *   approvals, agents, missions, chat_messages, ceo, ceo_action_queue
+ *   approvals, agents, missions, chat_messages, ceo, ceo_action_queue, task_executions
  */
 
 import { useEffect } from 'react';
@@ -20,6 +20,7 @@ const TABLE_EVENT_MAP: Record<string, string> = {
   chat_messages: 'chat-messages-changed',
   ceo: 'ceo-changed',
   ceo_action_queue: 'ceo-actions-changed',
+  task_executions: 'task-executions-changed',
 };
 
 export function useRealtimeSubscriptions(): void {
