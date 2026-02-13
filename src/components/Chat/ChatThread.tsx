@@ -7,6 +7,8 @@ import {
 import { getCEOResponse } from '../../lib/ceoResponder';
 import { isLLMAvailable, streamCEOResponse, type LLMAvailability } from '../../lib/llm/chatService';
 import { extractMemories } from '../../lib/memory';
+import { parseTaskPlan, dispatchTaskPlan } from '../../lib/taskDispatcher';
+import { hasSupabaseConfig } from '../../lib/supabase';
 import RichMessageContent from './ToolCallBlock';
 
 interface ChatThreadProps {
@@ -39,6 +41,16 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
       console.warn('Memory extraction failed:', err)
     );
   }, [conversation.id]);
+
+  /** Fire-and-forget task dispatch when CEO response contains task_plan blocks */
+  const maybeDispatchTasks = useCallback((ceoText: string, model: string) => {
+    if (!hasSupabaseConfig()) return; // Only dispatch when Supabase is configured
+    const missions = parseTaskPlan(ceoText);
+    if (missions.length === 0) return;
+    dispatchTaskPlan(missions, model).catch(err =>
+      console.warn('Task dispatch failed:', err)
+    );
+  }, []);
 
   // Load CEO name + LLM availability on mount and when conversation changes
   useEffect(() => {
@@ -169,6 +181,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
         setMessages(prev => [...prev, ceoMsg]);
         abortRef.current = null;
         maybeExtractMemories(withCeo);
+        maybeDispatchTasks(fullText, llm.model);
       },
       onError: async (error) => {
         console.error('LLM stream error:', error);
@@ -227,7 +240,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
         maybeExtractMemories(withCeo);
       }, delay);
     }
-  }, [input, conversation.id, isArchived, messages, maybeExtractMemories]);
+  }, [input, conversation.id, isArchived, messages, maybeExtractMemories, maybeDispatchTasks, llm.model]);
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">

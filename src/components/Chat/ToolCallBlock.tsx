@@ -1,5 +1,6 @@
 import { Zap } from 'lucide-react';
 import { skills as skillDefinitions } from '../../data/skillDefinitions';
+import { parseTaskPlan, stripTaskBlocks } from '../../lib/taskDispatcher';
 
 interface ToolCall {
   name: string;
@@ -90,8 +91,29 @@ export function ToolCallCard({ call }: { call: ToolCall }) {
   );
 }
 
-/** Render message text with inline tool call blocks */
+/** Render message text with inline tool call or task plan blocks */
 export default function RichMessageContent({ text }: { text: string }) {
+  // Check for task_plan blocks first
+  const missions = parseTaskPlan(text);
+  if (missions.length > 0) {
+    const cleanText = stripTaskBlocks(text);
+    // TaskPlanBlock needs mission IDs — loaded from DB in parent (ChatThread)
+    // For now, show the missions as enhanced tool cards grouped by mission
+    return (
+      <>
+        {cleanText && <span>{cleanText}</span>}
+        {missions.map((m, i) => (
+          <div key={i} className="my-2">
+            {m.toolCalls.map((call, j) => (
+              <ToolCallCard key={j} call={call} />
+            ))}
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  // Fallback to individual tool_call parsing
   const segments = parseToolCalls(text);
 
   // If no tool calls, just render plain text
