@@ -69,6 +69,10 @@
 - [x] **Supabase Realtime** (`src/hooks/useRealtimeSubscriptions.ts`) — 6 table subscriptions → window events
 - [x] **Organizational memory** (`src/lib/memory.ts`) — CRUD, LLM extraction, conversation summaries
 - [x] **Memory in CEO prompt** — top-20 memories injected into system prompt
+- [x] **Personality-aware memory extraction** — archetype weights categories differently
+- [x] **Founder profile/soul** — `founder_profile` category, separate prompt section, always included
+- [x] **Memory extraction on conversation leave** — catches short chats (not just every-N-message batch)
+- [x] **Mission context dispatch** — conversation excerpt + relevant memories travel with dispatched tasks
 - [ ] Proactive chat (CEO initiates conversations via action queue)
 - [ ] Daily executive reports
 - [ ] Task definition model (structured objectives + constraints)
@@ -126,6 +130,9 @@
 - [x] 12 models → 6 services mapping + setup hints (Anthropic 4, OpenAI 3, Google 2, DeepSeek 1, Meta 1, xAI 1)
 - [x] Dependency warnings on delete
 - [x] CEO ceremony vault dedup (check before insert)
+- [x] **Tabbed interface** — 5 tabs: Keys, Credentials, Tokens & Secrets, Channels, Memories
+- [x] **Memories CRUD** — table with category/content/tags/importance, edit modal, delete with confirm
+- [x] **Notification channels** — Email, Telegram, SMS, Voice placeholders
 - [ ] Encrypted storage (pgcrypto in Supabase)
 - [ ] Scoped access (secrets per agent)
 - [ ] Usage tracking (who used what, when, cost)
@@ -156,7 +163,8 @@
 - [x] Scene modes (working, meeting, break, all_hands, welcome)
 - [x] Door animation removed (clean ceremonies without door visual)
 - [x] Working screen glow fixed (subtle radial gradient, not solid green block)
-- [ ] Real-time agent status (reflect execution state)
+- [x] Real-time CEO status (chatting/working/idle via window events, status colors)
+- [x] Typing hands animation (Police Quest-style pixel hands when working)
 - [ ] Blocked state visualization
 - [ ] Agent reporting lines
 - [ ] Advanced floor planner (drag-and-drop, snap-to-grid)
@@ -222,9 +230,10 @@
 
 ## 11. Audit
 
-- [~] Audit page — dummy log with severity filter
-- [ ] Real event recording (every action → audit_log)
-- [ ] Export functionality
+- [x] Audit page — severity filter + formatted timestamps
+- [x] CEO_CHAT entries with "View Chat" button → navigates to archived conversation
+- [x] Real event recording (CEO_CHAT, KEY_ADDED/UPDATED/DELETED, MEMORY_EDITED/DELETED, CHANNEL_ADDED/DELETED)
+- [x] Export functionality (TSV download)
 - [ ] Immutable log (append-only, hash chain)
 
 ---
@@ -259,9 +268,7 @@
 
 | Module | Description |
 |--------|-------------|
-| Collateral | Artifact browser — all task outputs, filterable by date/skill/mission/agent. Designed in Phase 3. |
 | System Stats | Health dashboard: gateway, scheduler, CEO heartbeat, agent responsiveness |
-| Channels | Notification channels (email, Telegram, SMS, voice) — placeholder architecture in Phase 3. |
 | Kill Switch | Pause agents, lock budgets, system state machine (running/paused/degraded) |
 
 ---
@@ -308,24 +315,39 @@
 30. ~~Onboarding state persistence~~ ✅ — survives route navigation (step + messages to settings)
 31. ~~Audit date fix~~ ✅ — TIMESTAMPTZ format (no more "invalid date")
 
-### Phase 3 — Skill Execution Pipeline ← CURRENT
+### Phase 3 — Skill Execution Pipeline ✅ DONE
 
 > See `AI/Skill-Execution-Pipeline.md` for full design.
 
-32. **Edge function runtime** — add `supabase/edge-runtime` to Docker stack
-33. **`execute-skill` edge function** — background skill execution (Deno, all 5 providers)
-34. **Task plan parser** — intercept `<task_plan>` / `<tool_call>` from CEO response, create missions + task_executions
-35. **TaskPlanBlock component** — retro mission cards in chat (queued → executing → complete/failed)
-36. **Realtime subscriptions** — task_executions, missions, chat_messages updates
-37. **Toast notification system** — retro popup on task completion, click to navigate
-38. **Missions review flow** — click review item → output viewer, approve/redo/discard
-39. **Missions nav badge** — green circle with review count
-40. **Collateral page** (`/collateral`) — artifact browser, filter by date/skill/mission/agent, markdown rendering
-41. **Financials real data** — replace dummy with llm_usage + channel_usage aggregates
-42. **Agent cost tracking** — hover card shows total spend, tasks, avg cost
-43. **CEO hover card** — personality, model, philosophy, cost so far
-44. **Vault channels** — notification_channels table, CHANNELS section, placeholder types (email, telegram, sms, voice)
-45. **Channel cost tracking** — channel_usage table, feeds into financials
+32. ~~Edge function runtime~~ ✅ — `supabase/edge-runtime` in Docker stack
+33. ~~`execute-skill` edge function~~ ✅ — background skill execution (Deno, all 5 providers)
+34. ~~Task plan parser~~ ✅ — intercept `<task_plan>` / `<tool_call>` from CEO response, create missions + task_executions
+35. ~~TaskPlanBlock component~~ ✅ — retro mission cards in chat (queued → executing → complete/failed)
+36. ~~Realtime subscriptions~~ ✅ — task_executions, missions, chat_messages updates
+37. ~~Toast notification system~~ ✅ — retro popup on task completion, click to navigate
+38. ~~Missions review flow~~ ✅ — click review item → output viewer, approve/redo/discard
+39. ~~Missions nav badge~~ ✅ — green circle with review count
+40. ~~Collateral page~~ ✅ — `/collateral` artifact browser, filter by date/skill/search, detail view
+41. ~~Financials real data~~ ✅ — replace dummy with llm_usage + channel_usage aggregates
+42. ~~Agent cost tracking~~ ✅ — hover card shows total spend, tasks, avg cost
+43. ~~CEO hover card~~ ✅ — personality, model, philosophy, cost so far
+44. ~~Vault channels~~ ✅ — notification_channels table, CHANNELS section, placeholder types (email, telegram, sms, voice)
+45. ~~Channel cost tracking~~ ✅ — channel_usage table, feeds into financials
+
+### Phase 3.5 — UX Polish & Memory Intelligence ✅ DONE
+
+46. ~~CEO date awareness~~ ✅ — today's date in system prompt, enforced in skill queries
+47. ~~CEO decision flow~~ ✅ — 3-step prompt: answer directly / ask before skill / propose mission brief
+48. ~~Mission brief flow~~ ✅ — create mission → opens CEO chat conversation for review
+49. ~~CEO real-time surveillance status~~ ✅ — sprite reflects chatting/working/idle via window events
+50. ~~Chat copy-to-input~~ ✅ — hover user messages → copy icon → pushes text back to input
+51. ~~Typing hands animation~~ ✅ — Police Quest-style pixel hands on agents when working
+52. ~~Audit "View Chat" button~~ ✅ — CEO_CHAT entries link to conversation via `/chat?conversation=id`
+53. ~~Vault tabbed interface~~ ✅ — 5 tabs: Keys, Credentials, Tokens, Channels, Memories with CRUD
+54. ~~Memory extraction on leave~~ ✅ — extract when switching conversations (catches short chats)
+55. ~~Personality-aware memory extraction~~ ✅ — archetype weights categories (Wall Street → financial, MIT → technical)
+56. ~~Founder profile/soul~~ ✅ — `founder_profile` memory category, separate system prompt section, always included
+57. ~~Mission context dispatch~~ ✅ — CEO passes conversation excerpt + relevant memories + founder profile to agents
 
 ### Phase 4 — CEO Autonomy & Agent Runtime
 
