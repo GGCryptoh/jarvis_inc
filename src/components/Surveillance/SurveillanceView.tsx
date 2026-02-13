@@ -156,6 +156,70 @@ export default function SurveillanceView() {
     })();
   }, []);
 
+  // ---- CEO real-time status from events ----
+  const ceoIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!ceoAgent || ceoStage) return; // Don't interfere during ceremony
+
+    const resetIdleTimer = () => {
+      if (ceoIdleTimer.current) clearTimeout(ceoIdleTimer.current);
+      ceoIdleTimer.current = setTimeout(() => {
+        setCeoAgent(prev => prev ? { ...prev, status: 'idle' as AgentStatus, currentTask: 'Awaiting instructions...' } : prev);
+      }, 30000); // 30s of no activity → idle
+    };
+
+    const onChatActivity = () => {
+      setCeoAgent(prev => prev ? { ...prev, status: 'meeting' as AgentStatus, currentTask: 'Chatting with Founder...' } : prev);
+      resetIdleTimer();
+    };
+
+    const onTaskActivity = async () => {
+      // Check for running tasks
+      try {
+        const { getSupabase } = await import('../../lib/supabase');
+        const { data } = await getSupabase()
+          .from('task_executions')
+          .select('skill_id, status')
+          .eq('agent_id', 'ceo')
+          .in('status', ['pending', 'running'])
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (data && data.length > 0) {
+          setCeoAgent(prev => prev ? { ...prev, status: 'working' as AgentStatus, currentTask: `Executing: ${data[0].skill_id}` } : prev);
+        }
+      } catch { /* ignore */ }
+      resetIdleTimer();
+    };
+
+    const onMissionsActivity = async () => {
+      try {
+        const all = await loadMissions();
+        const inProgress = all.filter(m => m.status === 'in_progress');
+        if (inProgress.length > 0) {
+          setCeoAgent(prev => prev ? {
+            ...prev,
+            status: 'working' as AgentStatus,
+            currentTask: inProgress[0].title.length > 35 ? inProgress[0].title.slice(0, 32) + '...' : inProgress[0].title,
+          } : prev);
+        }
+      } catch { /* ignore */ }
+      resetIdleTimer();
+    };
+
+    window.addEventListener('chat-messages-changed', onChatActivity);
+    window.addEventListener('task-executions-changed', onTaskActivity);
+    window.addEventListener('missions-changed', onMissionsActivity);
+    resetIdleTimer();
+
+    return () => {
+      window.removeEventListener('chat-messages-changed', onChatActivity);
+      window.removeEventListener('task-executions-changed', onTaskActivity);
+      window.removeEventListener('missions-changed', onMissionsActivity);
+      if (ceoIdleTimer.current) clearTimeout(ceoIdleTimer.current);
+    };
+  }, [ceoAgent?.id, ceoStage]);
+
   // ---- Load missions for priorities board ----
   useEffect(() => {
     const refreshPriorities = async () => {
