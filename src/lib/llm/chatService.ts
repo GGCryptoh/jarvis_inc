@@ -13,6 +13,7 @@ import { anthropicProvider } from './providers/anthropic';
 import { openaiProvider, deepseekProvider, xaiProvider } from './providers/openai';
 import { googleProvider } from './providers/google';
 import { getMemories } from '../memory';
+import { parseTaskPlan, dispatchTaskPlan } from '../taskDispatcher';
 
 // ---------------------------------------------------------------------------
 // Provider registry
@@ -112,6 +113,13 @@ export async function streamCEOResponse(
         `LLM response via ${availability.displayModel} (${inputTokens + outputTokens} tokens)`,
         'info',
       ).catch(() => {});
+
+      // Detect and dispatch task plans from CEO response
+      const missions = parseTaskPlan(fullText);
+      if (missions.length > 0) {
+        dispatchTaskPlan(missions, availability.displayModel).catch(() => {});
+      }
+
       callbacks.onDone(fullText, usage);
     },
     onError: callbacks.onError,
@@ -291,6 +299,14 @@ ${skillList}
 
 ### Active Missions
 ${missionList}
+
+## Tool Usage
+When you need to use skills, wrap tool calls in a <task_plan> block:
+<task_plan>
+{"missions":[{"title":"Mission name","tool_calls":[{"name":"skill-id","arguments":{"param":"value"}}]}]}
+</task_plan>
+Group related calls into one mission. Unrelated requests = separate missions.
+For a single quick call, you can use <tool_call>{"name":"skill-id","arguments":{...}}</tool_call>
 
 ## Rules
 1. Respond naturally and conversationally to the founder's messages
