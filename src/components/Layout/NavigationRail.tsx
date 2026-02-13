@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
+  Archive,
   BarChart3,
   Target,
   Cctv,
@@ -31,6 +32,7 @@ const navItems: NavItem[] = [
   { label: 'Surveillance', icon: Cctv, path: '/surveillance', isSurveillance: true },
   { label: 'Skills', icon: Blocks, path: '/skills' },
   { label: 'The Vault', icon: Shield, path: '/vault' },
+  { label: 'Collateral', icon: Archive, path: '/collateral' },
   { label: 'Audit', icon: ScrollText, path: '/audit' },
   { label: 'Financials', icon: DollarSign, path: '/financials' },
   { label: 'Sample', icon: FlaskConical, path: '/sample-surveillance' },

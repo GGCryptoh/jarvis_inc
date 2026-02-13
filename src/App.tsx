@@ -13,6 +13,7 @@ import FinancialsView from './components/Financials/FinancialsView'
 import ChatView from './components/Chat/ChatView'
 import ApprovalsView from './components/Approvals/ApprovalsView'
 import SkillsView from './components/Skills/SkillsView'
+import CollateralView from './components/Collateral/CollateralView'
 import SoundTestView from './components/SoundTest/SoundTestView'
 import FounderCeremony from './components/FounderCeremony/FounderCeremony'
 import CEOCeremony from './components/CEOCeremony/CEOCeremony'
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/surveillance" element={<SurveillanceView />} />
         <Route path="/skills" element={<SkillsView />} />
         <Route path="/vault" element={<VaultView />} />
+        <Route path="/collateral" element={<CollateralView />} />
         <Route path="/audit" element={<AuditView />} />
         <Route path="/financials" element={<FinancialsView />} />
         <Route path="/sample-surveillance" element={<SurveillanceModule />} />
