@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Copy } from 'lucide-react';
 import {
   type ConversationRow, type ChatMessageRow,
   loadChatMessages, saveChatMessage, loadCEO,
@@ -279,8 +279,18 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
         {messages.map(msg => (
           <div
             key={msg.id}
-            className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'} group/msg`}
           >
+            {/* Re-send icon — appears on hover for user messages */}
+            {msg.sender === 'user' && !isArchived && (
+              <button
+                onClick={() => { setInput(msg.text); inputRef.current?.focus(); }}
+                className="self-center mr-2 opacity-0 group-hover/msg:opacity-100 transition-opacity text-zinc-600 hover:text-emerald-400"
+                title="Copy to input"
+              >
+                <Copy size={12} />
+              </button>
+            )}
             <div
               className={[
                 'max-w-[70%] rounded-lg px-4 py-3',
