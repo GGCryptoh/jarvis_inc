@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Shield, Lock, Plus, Pencil, Trash2, X, AlertTriangle, Mail, Send, MessageCircle, Phone, Bell } from 'lucide-react';
+import { Shield, Lock, Plus, Pencil, Trash2, X, AlertTriangle, Mail, Send, MessageCircle, Phone, Bell, Brain } from 'lucide-react';
 import {
   loadVaultEntries,
   saveVaultEntry,
@@ -13,6 +13,8 @@ import {
 } from '../../lib/database';
 import type { VaultRow, ChannelRow } from '../../lib/database';
 import { SERVICE_KEY_HINTS } from '../../lib/models';
+import { getMemories, deleteMemory, saveMemory } from '../../lib/memory';
+import type { MemoryRow } from '../../lib/memory';
 
 const TYPE_OPTIONS = ['api_key', 'credential', 'token', 'secret'] as const;
 
@@ -28,6 +30,14 @@ const typeLabels: Record<string, string> = {
   credential: 'Credential',
   token: 'Token',
   secret: 'Secret',
+};
+
+const categoryColors: Record<string, string> = {
+  fact: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+  decision: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+  preference: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  insight: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
+  reminder: 'bg-pink-500/15 text-pink-400 border-pink-500/30',
 };
 
 function maskKey(key: string): string {
@@ -49,9 +59,21 @@ const channelIconMap: Record<string, typeof Mail> = {
   voice: Phone,
 };
 
+type TabId = 'keys' | 'credentials' | 'tokens' | 'channels' | 'memories';
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'keys', label: 'Keys' },
+  { id: 'credentials', label: 'Credentials' },
+  { id: 'tokens', label: 'Tokens & Secrets' },
+  { id: 'channels', label: 'Channels' },
+  { id: 'memories', label: 'Memories' },
+];
+
 export default function VaultView() {
   const [entries, setEntries] = useState<VaultRow[]>([]);
   const [channels, setChannels] = useState<ChannelRow[]>([]);
+  const [memories, setMemories] = useState<MemoryRow[]>([]);
+  const [activeTab, setActiveTab] = useState<TabId>('keys');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<VaultRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<VaultRow | null>(null);
@@ -61,13 +83,23 @@ export default function VaultView() {
   const [channelFormCost, setChannelFormCost] = useState('0.001');
   const [deleteChannelTarget, setDeleteChannelTarget] = useState<ChannelRow | null>(null);
 
+  // Memory modals
+  const [editingMemory, setEditingMemory] = useState<MemoryRow | null>(null);
+  const [memoryFormContent, setMemoryFormContent] = useState('');
+  const [memoryFormImportance, setMemoryFormImportance] = useState(5);
+  const [deleteMemoryTarget, setDeleteMemoryTarget] = useState<MemoryRow | null>(null);
+
+  const refresh = useCallback(() => { loadVaultEntries().then(setEntries); }, []);
+  const refreshChannels = useCallback(() => { loadChannels().then(setChannels); }, []);
+  const refreshMemories = useCallback(() => {
+    getMemories(100).then(setMemories);
+  }, []);
+
   useEffect(() => {
     loadVaultEntries().then(setEntries);
     loadChannels().then(setChannels);
-  }, []);
-
-  const refresh = useCallback(() => { loadVaultEntries().then(setEntries) }, []);
-  const refreshChannels = useCallback(() => { loadChannels().then(setChannels) }, []);
+    refreshMemories();
+  }, [refreshMemories]);
 
   // Modal state
   const [formName, setFormName] = useState('');
@@ -78,7 +110,14 @@ export default function VaultView() {
   function openAdd() {
     setEditingEntry(null);
     setFormName('');
-    setFormType('api_key');
+    // Pre-select type based on active tab
+    if (activeTab === 'credentials') {
+      setFormType('credential');
+    } else if (activeTab === 'tokens') {
+      setFormType('token');
+    } else {
+      setFormType('api_key');
+    }
     setFormService('');
     setFormKey('');
     setModalOpen(true);
@@ -156,7 +195,50 @@ export default function VaultView() {
     refreshChannels();
   }
 
+  // Memory handlers
+  function openEditMemory(mem: MemoryRow) {
+    setEditingMemory(mem);
+    setMemoryFormContent(mem.content);
+    setMemoryFormImportance(mem.importance);
+  }
+
+  async function handleSaveMemory() {
+    if (!editingMemory || !memoryFormContent.trim()) return;
+    await saveMemory({
+      id: editingMemory.id,
+      category: editingMemory.category,
+      content: memoryFormContent.trim(),
+      source: editingMemory.source,
+      tags: editingMemory.tags,
+      importance: memoryFormImportance,
+    });
+    await logAudit(null, 'MEMORY_EDITED', `Edited memory: "${memoryFormContent.trim().slice(0, 50)}..."`, 'info');
+    setEditingMemory(null);
+    refreshMemories();
+  }
+
+  async function handleDeleteMemoryConfirm() {
+    if (!deleteMemoryTarget) return;
+    await deleteMemory(deleteMemoryTarget.id);
+    await logAudit(null, 'MEMORY_DELETED', `Deleted memory: "${deleteMemoryTarget.content.slice(0, 50)}..."`, 'warning');
+    setDeleteMemoryTarget(null);
+    refreshMemories();
+  }
+
   const serviceOptions = Object.keys(SERVICE_KEY_HINTS);
+
+  // Filtered entries per tab
+  const filteredEntries = activeTab === 'keys'
+    ? entries.filter(e => e.type === 'api_key')
+    : activeTab === 'credentials'
+      ? entries.filter(e => e.type === 'credential')
+      : activeTab === 'tokens'
+        ? entries.filter(e => e.type === 'token' || e.type === 'secret')
+        : [];
+
+  // Header button config based on tab
+  const showAddKey = activeTab === 'keys' || activeTab === 'credentials' || activeTab === 'tokens';
+  const showAddChannel = activeTab === 'channels';
 
   return (
     <div className="min-h-screen bg-jarvis-bg p-6">
@@ -168,193 +250,310 @@ export default function VaultView() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-jarvis-text tracking-wide">THE VAULT</h1>
-            <p className="text-sm text-jarvis-muted">Credentials &amp; API Keys</p>
+            <p className="text-sm text-jarvis-muted">The Vault</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
           <span className="text-xs text-jarvis-muted font-mono">{entries.length} entries secured</span>
-          <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/20 transition-colors"
-          >
-            <Plus size={16} />
-            ADD KEY
-          </button>
+          {showAddKey && (
+            <button
+              onClick={openAdd}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/20 transition-colors"
+            >
+              <Plus size={16} />
+              ADD KEY
+            </button>
+          )}
+          {showAddChannel && (
+            <button
+              onClick={openAddChannel}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-cyan-400 bg-cyan-500/10 border border-cyan-500/25 rounded-lg hover:bg-cyan-500/20 transition-colors"
+            >
+              <Plus size={16} />
+              ADD CHANNEL
+            </button>
+          )}
         </div>
       </div>
 
       {/* Summary Bar */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        {(['api_key', 'credential', 'token'] as const).map(type => {
-          const count = entries.filter(e => e.type === type).length;
-          const colors = type === 'api_key'
-            ? { border: 'border-blue-500/15', dot: 'bg-blue-500', text: 'text-blue-400', label: 'API Keys' }
-            : type === 'credential'
-              ? { border: 'border-purple-500/15', dot: 'bg-purple-500', text: 'text-purple-400', label: 'Credentials' }
-              : { border: 'border-amber-500/15', dot: 'bg-amber-500', text: 'text-amber-400', label: 'Tokens & Secrets' };
-          const actualCount = type === 'token' ? entries.filter(e => e.type === 'token' || e.type === 'secret').length : count;
+      <div className="grid grid-cols-5 gap-4 mb-6">
+        {([
+          { type: 'api_key' as const, tab: 'keys' as TabId, border: 'border-blue-500/15', dot: 'bg-blue-500', text: 'text-blue-400', label: 'API Keys' },
+          { type: 'credential' as const, tab: 'credentials' as TabId, border: 'border-purple-500/15', dot: 'bg-purple-500', text: 'text-purple-400', label: 'Credentials' },
+          { type: 'token' as const, tab: 'tokens' as TabId, border: 'border-amber-500/15', dot: 'bg-amber-500', text: 'text-amber-400', label: 'Tokens & Secrets' },
+        ]).map(item => {
+          const count = item.type === 'token'
+            ? entries.filter(e => e.type === 'token' || e.type === 'secret').length
+            : entries.filter(e => e.type === item.type).length;
           return (
-            <div key={type} className={`bg-jarvis-surface border ${colors.border} rounded-lg px-5 py-4`}>
+            <button
+              key={item.type}
+              onClick={() => setActiveTab(item.tab)}
+              className={`bg-jarvis-surface border ${item.border} rounded-lg px-5 py-4 text-left transition-colors hover:border-white/[0.12] ${activeTab === item.tab ? 'ring-1 ring-emerald-500/30' : ''}`}
+            >
               <div className="flex items-center gap-2 mb-1">
-                <span className={`w-2.5 h-2.5 rounded-full ${colors.dot}`} />
-                <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">{colors.label}</span>
+                <span className={`w-2.5 h-2.5 rounded-full ${item.dot}`} />
+                <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">{item.label}</span>
               </div>
-              <span className={`text-3xl font-bold ${colors.text}`}>{actualCount}</span>
-            </div>
+              <span className={`text-3xl font-bold ${item.text}`}>{count}</span>
+            </button>
           );
         })}
-        <div className="bg-jarvis-surface border border-cyan-500/15 rounded-lg px-5 py-4">
+        <button
+          onClick={() => setActiveTab('channels')}
+          className={`bg-jarvis-surface border border-cyan-500/15 rounded-lg px-5 py-4 text-left transition-colors hover:border-white/[0.12] ${activeTab === 'channels' ? 'ring-1 ring-emerald-500/30' : ''}`}
+        >
           <div className="flex items-center gap-2 mb-1">
             <span className="w-2.5 h-2.5 rounded-full bg-cyan-500" />
             <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">Channels</span>
           </div>
           <span className="text-3xl font-bold text-cyan-400">{channels.length}</span>
-        </div>
+        </button>
+        <button
+          onClick={() => setActiveTab('memories')}
+          className={`bg-jarvis-surface border border-emerald-500/15 rounded-lg px-5 py-4 text-left transition-colors hover:border-white/[0.12] ${activeTab === 'memories' ? 'ring-1 ring-emerald-500/30' : ''}`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">Memories</span>
+          </div>
+          <span className="text-3xl font-bold text-emerald-400">{memories.length}</span>
+        </button>
       </div>
 
-      {/* Vault Table */}
-      {entries.length === 0 ? (
-        <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-12 text-center">
-          <Lock size={32} className="text-jarvis-muted mx-auto mb-4 opacity-40" />
-          <p className="text-jarvis-muted text-sm mb-1">No credentials stored yet</p>
-          <p className="text-jarvis-muted/60 text-xs">Add API keys during CEO or agent setup, or manually with the ADD KEY button.</p>
-        </div>
-      ) : (
-        <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl overflow-hidden">
-          {/* Table Header */}
-          <div className="grid grid-cols-[1fr_100px_110px_160px_140px_90px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.02]">
-            <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Name</span>
-            <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Type</span>
-            <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Service</span>
-            <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Key</span>
-            <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Added</span>
-            <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Actions</span>
-          </div>
-
-          {entries.map((entry, idx) => (
-            <div
-              key={entry.id}
-              className={[
-                'grid grid-cols-[1fr_100px_110px_160px_140px_90px] gap-4 px-6 py-4 border-b border-white/[0.04] items-center transition-colors hover:bg-white/[0.03]',
-                idx % 2 === 1 ? 'bg-white/[0.015]' : '',
-              ].join(' ')}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Lock size={14} className="text-jarvis-muted flex-shrink-0" />
-                <span className="text-sm font-medium text-jarvis-text truncate">{entry.name}</span>
-              </div>
-
-              <div>
-                <span className={`inline-block px-2.5 py-1 text-[11px] font-semibold rounded-md border ${typeBadgeColors[entry.type] ?? 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30'}`}>
-                  {typeLabels[entry.type] ?? entry.type}
-                </span>
-              </div>
-
-              <span className="text-sm text-jarvis-muted">{entry.service}</span>
-
-              <span className="text-sm font-mono text-zinc-500 tracking-wider select-none">
-                {maskKey(entry.key_value)}
-              </span>
-
-              <span className="text-sm font-mono text-jarvis-muted">
-                {entry.created_at?.slice(0, 10) ?? '---'}
-              </span>
-
-              <div className="flex justify-end gap-1">
-                <button
-                  onClick={() => openEdit(entry)}
-                  className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-jarvis-text hover:bg-white/[0.06] rounded-md transition-colors"
-                >
-                  <Pencil size={14} />
-                </button>
-                <button
-                  onClick={() => handleDeleteClick(entry)}
-                  className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Notification Channels Section */}
-      <div className="mt-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <Bell size={20} className="text-cyan-400" />
-            <h2 className="text-lg font-bold text-jarvis-text tracking-wide">NOTIFICATION CHANNELS</h2>
-          </div>
+      {/* Tab Bar */}
+      <div className="flex items-center gap-1 mb-6 border-b border-white/[0.06] pb-0">
+        {TABS.map(tab => (
           <button
-            onClick={openAddChannel}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-cyan-400 bg-cyan-500/10 border border-cyan-500/25 rounded-lg hover:bg-cyan-500/20 transition-colors"
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2.5 text-xs font-semibold tracking-wider transition-colors border-b-2 ${
+              activeTab === tab.id
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-jarvis-muted hover:text-jarvis-text'
+            }`}
           >
-            <Plus size={16} />
-            ADD CHANNEL
+            {tab.label}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {channels.length === 0 ? (
-          <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-12 text-center">
-            <Bell size={32} className="text-jarvis-muted mx-auto mb-4 opacity-40" />
-            <p className="text-jarvis-muted text-sm mb-1">No notification channels configured</p>
-            <p className="text-jarvis-muted/60 text-xs">Add channels for Email, Telegram, SMS, or Voice notifications.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {channels.map(channel => {
-              const IconComponent = channelIconMap[channel.type] ?? Bell;
-              const channelMeta = CHANNEL_TYPES.find(ct => ct.type === channel.type);
-              const label = channelMeta?.label ?? channel.type.charAt(0).toUpperCase() + channel.type.slice(1);
-              return (
+      {/* Tab Content: Keys / Credentials / Tokens */}
+      {(activeTab === 'keys' || activeTab === 'credentials' || activeTab === 'tokens') && (
+        <>
+          {filteredEntries.length === 0 ? (
+            <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-12 text-center">
+              <Lock size={32} className="text-jarvis-muted mx-auto mb-4 opacity-40" />
+              <p className="text-jarvis-muted text-sm mb-1">
+                No {activeTab === 'keys' ? 'API keys' : activeTab === 'credentials' ? 'credentials' : 'tokens or secrets'} stored yet
+              </p>
+              <p className="text-jarvis-muted/60 text-xs">Add entries with the ADD KEY button above.</p>
+            </div>
+          ) : (
+            <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl overflow-hidden">
+              {/* Table Header */}
+              <div className="grid grid-cols-[1fr_100px_110px_160px_140px_90px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Name</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Type</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Service</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Key</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Added</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Actions</span>
+              </div>
+
+              {filteredEntries.map((entry, idx) => (
                 <div
-                  key={channel.id}
-                  className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-5 flex flex-col gap-3 hover:border-white/[0.1] transition-colors"
+                  key={entry.id}
+                  className={[
+                    'grid grid-cols-[1fr_100px_110px_160px_140px_90px] gap-4 px-6 py-4 border-b border-white/[0.04] items-center transition-colors hover:bg-white/[0.03]',
+                    idx % 2 === 1 ? 'bg-white/[0.015]' : '',
+                  ].join(' ')}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
-                        <IconComponent size={18} className="text-cyan-400" />
-                      </div>
-                      <span className="text-sm font-semibold text-jarvis-text uppercase tracking-wide">{label}</span>
-                    </div>
-                    <span className="inline-block px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 uppercase tracking-wider">
-                      Coming Soon
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Lock size={14} className="text-jarvis-muted flex-shrink-0" />
+                    <span className="text-sm font-medium text-jarvis-text truncate">{entry.name}</span>
+                  </div>
+
+                  <div>
+                    <span className={`inline-block px-2.5 py-1 text-[11px] font-semibold rounded-md border ${typeBadgeColors[entry.type] ?? 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30'}`}>
+                      {typeLabels[entry.type] ?? entry.type}
                     </span>
                   </div>
 
-                  <div className="space-y-1.5 mt-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-jarvis-muted">Cost per unit</span>
-                      <span className="text-xs font-mono text-jarvis-text">${channel.cost_per_unit.toFixed(4)}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-jarvis-muted">Status</span>
-                      <span className="text-xs font-medium text-zinc-500">Disabled</span>
-                    </div>
-                  </div>
+                  <span className="text-sm text-jarvis-muted">{entry.service}</span>
 
-                  <div className="flex items-center gap-2 mt-auto pt-2">
+                  <span className="text-sm font-mono text-zinc-500 tracking-wider select-none">
+                    {maskKey(entry.key_value)}
+                  </span>
+
+                  <span className="text-sm font-mono text-jarvis-muted">
+                    {entry.created_at?.slice(0, 10) ?? '---'}
+                  </span>
+
+                  <div className="flex justify-end gap-1">
                     <button
-                      disabled
-                      className="flex-1 px-3 py-1.5 text-xs font-medium text-jarvis-muted bg-white/[0.03] border border-white/[0.06] rounded-md cursor-not-allowed opacity-50"
+                      onClick={() => openEdit(entry)}
+                      className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-jarvis-text hover:bg-white/[0.06] rounded-md transition-colors"
                     >
-                      Configure
+                      <Pencil size={14} />
                     </button>
                     <button
-                      onClick={() => setDeleteChannelTarget(channel)}
+                      onClick={() => handleDeleteClick(entry)}
                       className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
                     >
                       <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Tab Content: Channels */}
+      {activeTab === 'channels' && (
+        <>
+          {channels.length === 0 ? (
+            <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-12 text-center">
+              <Bell size={32} className="text-jarvis-muted mx-auto mb-4 opacity-40" />
+              <p className="text-jarvis-muted text-sm mb-1">No notification channels configured</p>
+              <p className="text-jarvis-muted/60 text-xs">Add channels for Email, Telegram, SMS, or Voice notifications.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {channels.map(channel => {
+                const IconComponent = channelIconMap[channel.type] ?? Bell;
+                const channelMeta = CHANNEL_TYPES.find(ct => ct.type === channel.type);
+                const label = channelMeta?.label ?? channel.type.charAt(0).toUpperCase() + channel.type.slice(1);
+                return (
+                  <div
+                    key={channel.id}
+                    className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-5 flex flex-col gap-3 hover:border-white/[0.1] transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                          <IconComponent size={18} className="text-cyan-400" />
+                        </div>
+                        <span className="text-sm font-semibold text-jarvis-text uppercase tracking-wide">{label}</span>
+                      </div>
+                      <span className="inline-block px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 uppercase tracking-wider">
+                        Coming Soon
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5 mt-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-jarvis-muted">Cost per unit</span>
+                        <span className="text-xs font-mono text-jarvis-text">${channel.cost_per_unit.toFixed(4)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-jarvis-muted">Status</span>
+                        <span className="text-xs font-medium text-zinc-500">Disabled</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-auto pt-2">
+                      <button
+                        disabled
+                        className="flex-1 px-3 py-1.5 text-xs font-medium text-jarvis-muted bg-white/[0.03] border border-white/[0.06] rounded-md cursor-not-allowed opacity-50"
+                      >
+                        Configure
+                      </button>
+                      <button
+                        onClick={() => setDeleteChannelTarget(channel)}
+                        className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Tab Content: Memories */}
+      {activeTab === 'memories' && (
+        <>
+          {memories.length === 0 ? (
+            <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl p-12 text-center">
+              <Brain size={32} className="text-jarvis-muted mx-auto mb-4 opacity-40" />
+              <p className="text-jarvis-muted text-sm mb-1">No organizational memories yet</p>
+              <p className="text-jarvis-muted/60 text-xs">The CEO extracts and stores important facts, decisions, and preferences from your conversations.</p>
+            </div>
+          ) : (
+            <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl overflow-hidden">
+              <div className="grid grid-cols-[90px_1fr_150px_80px_120px_90px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Category</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Content</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Tags</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Priority</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Updated</span>
+                <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider text-right">Actions</span>
+              </div>
+
+              {memories.map((mem, idx) => (
+                <div key={mem.id} className={`grid grid-cols-[90px_1fr_150px_80px_120px_90px] gap-4 px-6 py-3.5 border-b border-white/[0.04] items-center hover:bg-white/[0.03] ${idx % 2 === 1 ? 'bg-white/[0.015]' : ''}`}>
+                  {/* Category badge */}
+                  <div>
+                    <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-md border uppercase tracking-wider ${categoryColors[mem.category] ?? 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30'}`}>
+                      {mem.category}
+                    </span>
+                  </div>
+
+                  {/* Content */}
+                  <span className="text-sm text-jarvis-text truncate" title={mem.content}>
+                    {mem.content}
+                  </span>
+
+                  {/* Tags */}
+                  <div className="flex flex-wrap gap-1">
+                    {mem.tags.map(tag => (
+                      <span key={tag} className="px-1.5 py-0.5 text-[9px] bg-white/[0.05] border border-white/[0.08] rounded text-jarvis-muted">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Importance bar */}
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500/60 rounded-full" style={{ width: `${mem.importance * 10}%` }} />
+                    </div>
+                    <span className="text-[10px] text-jarvis-muted font-mono">{mem.importance}</span>
+                  </div>
+
+                  {/* Updated */}
+                  <span className="text-sm font-mono text-jarvis-muted">
+                    {mem.updated_at?.slice(0, 10) ?? '---'}
+                  </span>
+
+                  {/* Actions: edit + delete */}
+                  <div className="flex justify-end gap-1">
+                    <button
+                      onClick={() => openEditMemory(mem)}
+                      className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-jarvis-text hover:bg-white/[0.06] rounded-md transition-colors"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={() => setDeleteMemoryTarget(mem)}
+                      className="flex items-center justify-center w-8 h-8 text-jarvis-muted hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {/* Footer */}
       <div className="mt-4 flex items-center gap-2 px-2">
@@ -364,7 +563,7 @@ export default function VaultView() {
         </span>
       </div>
 
-      {/* Add/Edit Modal */}
+      {/* Add/Edit Vault Entry Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setModalOpen(false)} />
@@ -467,7 +666,7 @@ export default function VaultView() {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Vault Entry Confirmation Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeleteTarget(null)} />
@@ -628,6 +827,126 @@ export default function VaultView() {
                 </button>
                 <button
                   onClick={handleDeleteChannelConfirm}
+                  className="px-5 py-2 text-sm font-medium text-red-400 bg-red-500/10 border border-red-500/25 rounded-lg hover:bg-red-500/20 transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Memory Modal */}
+      {editingMemory && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditingMemory(null)} />
+          <div className="relative z-10 bg-jarvis-surface border border-white/[0.08] rounded-xl w-full max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
+              <h2 className="text-lg font-semibold text-jarvis-text">Edit Memory</h2>
+              <button onClick={() => setEditingMemory(null)} className="text-jarvis-muted hover:text-jarvis-text transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-1.5">Category</label>
+                <span className={`inline-block px-2.5 py-1 text-[11px] font-semibold rounded-md border uppercase tracking-wider ${categoryColors[editingMemory.category] ?? 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30'}`}>
+                  {editingMemory.category}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-1.5">Content</label>
+                <textarea
+                  value={memoryFormContent}
+                  onChange={e => setMemoryFormContent(e.target.value)}
+                  rows={4}
+                  className="w-full bg-jarvis-bg border border-white/[0.08] text-jarvis-text text-sm px-3 py-2.5 rounded-lg focus:outline-none focus:border-emerald-500/50 transition-colors placeholder:text-zinc-600 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-1.5">
+                  Importance ({memoryFormImportance}/10)
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  value={memoryFormImportance}
+                  onChange={e => setMemoryFormImportance(parseInt(e.target.value))}
+                  className="w-full accent-emerald-500"
+                />
+                <div className="flex justify-between text-[10px] text-jarvis-muted font-mono mt-1">
+                  <span>1 (low)</span>
+                  <span>10 (critical)</span>
+                </div>
+              </div>
+
+              {editingMemory.tags.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-1.5">Tags</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {editingMemory.tags.map(tag => (
+                      <span key={tag} className="px-2 py-1 text-[10px] bg-white/[0.05] border border-white/[0.08] rounded text-jarvis-muted">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-white/[0.06]">
+              <button
+                onClick={() => setEditingMemory(null)}
+                className="px-4 py-2 text-sm text-jarvis-muted hover:text-jarvis-text transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveMemory}
+                disabled={!memoryFormContent.trim()}
+                className="px-5 py-2 text-sm font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Memory Confirmation Modal */}
+      {deleteMemoryTarget && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeleteMemoryTarget(null)} />
+          <div className="relative z-10 bg-jarvis-surface border border-red-500/20 rounded-xl w-full max-w-md mx-4 shadow-2xl">
+            <div className="px-6 py-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center">
+                  <AlertTriangle size={20} className="text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-jarvis-text">Delete Memory</h3>
+                  <p className="text-xs text-jarvis-muted truncate max-w-[300px]">{deleteMemoryTarget.content}</p>
+                </div>
+              </div>
+
+              <p className="text-sm text-jarvis-muted mb-4">
+                Are you sure you want to delete this memory? This action cannot be undone.
+              </p>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setDeleteMemoryTarget(null)}
+                  className="px-4 py-2 text-sm text-jarvis-muted hover:text-jarvis-text transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteMemoryConfirm}
                   className="px-5 py-2 text-sm font-medium text-red-400 bg-red-500/10 border border-red-500/25 rounded-lg hover:bg-red-500/20 transition-colors"
                 >
                   Delete
