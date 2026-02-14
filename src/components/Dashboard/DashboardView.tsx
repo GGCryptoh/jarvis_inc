@@ -215,7 +215,7 @@ export default function DashboardView() {
   const topMissions = dbMissions.slice(0, 10)
 
   // Compute real stats from DB
-  const agentCount = agents.length
+  const agentCount = agents.length + (ceo ? 1 : 0)
   const activeMissions = dbMissions.filter(m => m.status === 'in_progress').length
   const doneMissions = dbMissions.filter(m => m.status === 'done').length
   const totalMissions = dbMissions.length
@@ -243,7 +243,7 @@ export default function DashboardView() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <StatCard label="Agents" value={String(agentCount)} sublabel={ceo ? `+ CEO ${ceo.name}` : 'No CEO yet'} />
+        <StatCard label="Agents" value={String(agentCount)} sublabel={ceo ? `Incl. CEO ${ceo.name}` : 'No CEO yet'} />
         <StatCard label="Active Missions" value={String(activeMissions)} sublabel={`${totalMissions} total`} />
         <StatCard label="Completed" value={String(doneMissions)} sublabel={totalMissions > 0 ? `${Math.round(doneMissions / totalMissions * 100)}% done` : 'No missions'} />
         <StatCard label="Monthly Budget" value={`$${monthlyBudget}`} sublabel="Edit in Financials" />

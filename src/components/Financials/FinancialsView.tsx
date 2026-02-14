@@ -196,8 +196,8 @@ export default function FinancialsView() {
         if (budgetSaved) setMonthlyBudget(parseFloat(budgetSaved));
         setMonthlyData(monthly);
         setCurrentSpend(spend);
-      } catch {
-        // Supabase may not be configured — leave defaults
+      } catch (err) {
+        console.warn('Financials load failed (Supabase may not be configured):', err);
       } finally {
         setLoading(false);
       }

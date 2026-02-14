@@ -3,7 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import {
   getSetting, loadCEO, getFounderInfo,
   loadConversations, saveConversation, deleteConversation, getConversation,
-  saveChatMessage, type ConversationRow,
+  updateConversation, saveChatMessage, countChatMessages, markConversationRead,
+  type ConversationRow,
 } from '../../lib/database';
 import OnboardingFlow from './OnboardingFlow';
 import ChatSidebar from './ChatSidebar';
@@ -36,8 +37,34 @@ const CEO_GREETINGS = [
   'Glad you\'re here, {founder}. What should we focus on?',
 ];
 
+const GREETING_HISTORY_KEY = 'jarvis_greeting_history';
+const GREETING_HISTORY_MAX = 10; // remember last N greetings
+
 function randomGreeting(founderName: string): string {
-  const idx = Math.floor(Math.random() * CEO_GREETINGS.length);
+  // Load recently used greeting indices from localStorage
+  let usedIndices: number[] = [];
+  try {
+    const stored = localStorage.getItem(GREETING_HISTORY_KEY);
+    if (stored) usedIndices = JSON.parse(stored);
+  } catch { /* ignore */ }
+
+  // Find available indices (ones not recently used)
+  let available = CEO_GREETINGS.map((_, i) => i).filter(i => !usedIndices.includes(i));
+  // If all exhausted, reset history
+  if (available.length === 0) {
+    usedIndices = [];
+    available = CEO_GREETINGS.map((_, i) => i);
+  }
+
+  const idx = available[Math.floor(Math.random() * available.length)];
+
+  // Record this greeting
+  usedIndices.push(idx);
+  if (usedIndices.length > GREETING_HISTORY_MAX) {
+    usedIndices = usedIndices.slice(-GREETING_HISTORY_MAX);
+  }
+  localStorage.setItem(GREETING_HISTORY_KEY, JSON.stringify(usedIndices));
+
   return CEO_GREETINGS[idx].replace(/\{founder\}/g, founderName);
 }
 
@@ -79,9 +106,34 @@ export default function ChatView() {
         return;
       }
 
-      // Default to the most recent active conversation, or first one
+      // Default to the most recent active conversation
       const active = convos.find(c => c.status === 'active');
-      setActiveConversationId(active?.id ?? convos[0]?.id ?? null);
+      if (active) {
+        setActiveConversationId(active.id);
+      } else if (convos.length > 0) {
+        // All conversations are archived — auto-create a new chat
+        const fName = founderInfo?.founderName ?? 'Founder';
+        const convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const greeting = randomGreeting(fName);
+        await saveConversation({
+          id: convId,
+          title: greeting.length > 50 ? greeting.slice(0, 50) + '...' : greeting,
+          type: 'general',
+          status: 'active',
+        });
+        await saveChatMessage({
+          id: `msg-${Date.now()}-greet`,
+          conversation_id: convId,
+          sender: 'ceo',
+          text: greeting,
+          metadata: null,
+        });
+        const refreshed = await loadConversations();
+        setConversations(refreshed);
+        setActiveConversationId(convId);
+      } else {
+        setActiveConversationId(null);
+      }
     };
     load();
   }, []);
@@ -93,6 +145,12 @@ export default function ChatView() {
       return;
     }
     getConversation(activeConversationId).then(setActiveConversation);
+
+    // Mark conversation as read so unread indicators clear
+    countChatMessages(activeConversationId).then(count => {
+      markConversationRead(activeConversationId, count);
+      window.dispatchEvent(new Event('chat-read'));
+    });
   }, [activeConversationId]);
 
   const refreshConversations = useCallback(async () => {
@@ -132,6 +190,14 @@ export default function ChatView() {
     await refreshConversations();
     setActiveConversationId(convId);
   }, [founderName, refreshConversations]);
+
+  const handleArchiveConversation = useCallback(async () => {
+    if (!activeConversationId) return;
+    await updateConversation(activeConversationId, { status: 'archived' });
+    await refreshConversations();
+    // Auto-create a new chat so the user lands on a fresh conversation
+    await handleNewChat();
+  }, [activeConversationId, refreshConversations, handleNewChat]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     await deleteConversation(id);
@@ -173,6 +239,7 @@ export default function ChatView() {
         <ChatThread
           key={activeConversation.id}
           conversation={activeConversation}
+          onArchive={handleArchiveConversation}
         />
       ) : (
         <div className="flex-1 flex items-center justify-center">

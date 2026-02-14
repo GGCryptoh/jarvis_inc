@@ -6,25 +6,40 @@ A hybrid dual-tone dashboard for commanding an autonomous AI workforce. Corporat
 
 ---
 
-## Quick Start (Demo Mode)
+## Quick Start
 
-Demo mode runs entirely in-browser — no backend, no Docker, no Supabase. Data persists in IndexedDB.
+### One Command (Full Stack)
+
+Boots Docker + Supabase + Postgres, writes configs, starts the dev server. Zero prompts.
 
 ```bash
 git clone https://github.com/GGCryptoh/jarvis_inc.git
 cd jarvis_inc
 npm install
+npm run jarvis
+```
+
+This runs `setup --auto` (generates secrets, starts Docker, waits for all services) then `npm run dev`. Open [http://localhost:5173](http://localhost:5173).
+
+### Demo Mode (No Backend)
+
+Runs entirely in-browser with sql.js + IndexedDB. No Docker, no Supabase.
+
+```bash
+npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173).
+### NPM Scripts
 
-### Production Build
-
-```bash
-npm run build        # TypeScript check + Vite build → dist/
-npm run preview      # Preview production build locally
-```
+| Command | What it does |
+|---------|-------------|
+| `npm run jarvis` | One-command full stack: auto-setup Docker + Supabase + dev server |
+| `npm run dev` | Vite dev server only (no Docker) |
+| `npm run setup` | Interactive setup — prompts for domain, SSL, passwords, Studio auth |
+| `npm run setup:check` | Health-check all running services |
+| `npm run build` | TypeScript check + Vite production build → `dist/` |
+| `npm run preview` | Preview production build locally |
 
 ### Docker (Frontend Only)
 

@@ -24,7 +24,7 @@ export async function getSetting(key: string): Promise<string | null> {
     .from('settings')
     .select('value')
     .eq('key', key)
-    .single();
+    .maybeSingle();
   return data?.value ?? null;
 }
 
@@ -74,7 +74,7 @@ export async function saveAgent(agent: Omit<AgentRow, 'desk_x' | 'desk_y'> & { d
     .from('agents')
     .select('desk_x, desk_y')
     .eq('id', agent.id)
-    .single();
+    .maybeSingle();
 
   await getSupabase()
     .from('agents')
@@ -135,6 +135,8 @@ export interface CEORow {
   backup_model: string | null;
   fallback_active: boolean;
   primary_failures: number;
+  color: string;
+  skin_tone: string;
 }
 
 export async function isCEOInitialized(): Promise<boolean> {
@@ -142,16 +144,16 @@ export async function isCEOInitialized(): Promise<boolean> {
     .from('ceo')
     .select('id')
     .limit(1)
-    .single();
+    .maybeSingle();
   return !!data;
 }
 
 export async function loadCEO(): Promise<CEORow | null> {
   const { data } = await getSupabase()
     .from('ceo')
-    .select('id, name, model, philosophy, risk_tolerance, status, desk_x, desk_y, archetype, backup_model, fallback_active, primary_failures')
+    .select('id, name, model, philosophy, risk_tolerance, status, desk_x, desk_y, archetype, backup_model, fallback_active, primary_failures, color, skin_tone')
     .limit(1)
-    .single();
+    .maybeSingle();
   return data as CEORow | null;
 }
 
@@ -192,6 +194,15 @@ export async function updateCEOFallback(fallbackActive: boolean, primaryFailures
       primary_failures: primaryFailures,
       last_primary_check: new Date().toISOString(),
     })
+    .eq('id', 'ceo');
+}
+
+export async function updateCEOAppearance(color: string, skinTone: string, name?: string): Promise<void> {
+  const update: Record<string, unknown> = { color, skin_tone: skinTone };
+  if (name) update.name = name;
+  await getSupabase()
+    .from('ceo')
+    .update(update)
     .eq('id', 'ceo');
 }
 
@@ -273,9 +284,9 @@ export async function getVaultEntryByService(service: string): Promise<VaultRow 
   const { data } = await getSupabase()
     .from('vault')
     .select('id, name, type, service, key_value, created_at, updated_at')
-    .eq('service', service)
+    .ilike('service', service)
     .limit(1)
-    .single();
+    .maybeSingle();
   return data as VaultRow | null;
 }
 
@@ -440,6 +451,20 @@ export async function getMissionReviewCount(): Promise<number> {
   return count ?? 0;
 }
 
+export async function getNewCollateralCount(): Promise<number> {
+  const lastSeen = localStorage.getItem('jarvis_collateral_last_seen');
+  let query = getSupabase()
+    .from('task_executions')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'completed')
+    .not('result', 'is', null);
+  if (lastSeen) {
+    query = query.gt('completed_at', lastSeen);
+  }
+  const { count } = await query;
+  return count ?? 0;
+}
+
 export async function loadTaskExecutions(missionId: string): Promise<any[]> {
   const { data } = await getSupabase()
     .from('task_executions')
@@ -447,6 +472,108 @@ export async function loadTaskExecutions(missionId: string): Promise<any[]> {
     .eq('mission_id', missionId)
     .order('created_at', { ascending: true });
   return data ?? [];
+}
+
+export interface AgentActivity {
+  mission?: { id: string; title: string; status: string; priority: string };
+  taskExecution?: { id: string; skill_id: string; command_name: string; status: string; started_at: string | null };
+  assignedSkills: string[];
+}
+
+export async function loadAgentActivity(agentId: string): Promise<AgentActivity> {
+  const sb = getSupabase();
+
+  // Active task executions for this agent
+  const { data: tasks } = await sb
+    .from('task_executions')
+    .select('id, skill_id, command_name, status, started_at, mission_id')
+    .eq('agent_id', agentId)
+    .in('status', ['running', 'pending'])
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  const activeTask = tasks?.[0] ?? null;
+
+  // If there's an active task, load its mission
+  let mission: AgentActivity['mission'] = undefined;
+  if (activeTask?.mission_id) {
+    const { data: m } = await sb
+      .from('missions')
+      .select('id, title, status, priority')
+      .eq('id', activeTask.mission_id)
+      .maybeSingle();
+    if (m) mission = m;
+  } else {
+    // Check for any in_progress mission assigned to this agent
+    const { data: m } = await sb
+      .from('missions')
+      .select('id, title, status, priority')
+      .eq('assignee', agentId)
+      .in('status', ['in_progress', 'review'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (m) mission = m;
+  }
+
+  // Assigned skills
+  const { data: skills } = await sb
+    .from('agent_skills')
+    .select('skill_id')
+    .eq('agent_id', agentId);
+
+  return {
+    mission,
+    taskExecution: activeTask ? {
+      id: activeTask.id,
+      skill_id: activeTask.skill_id,
+      command_name: activeTask.command_name,
+      status: activeTask.status,
+      started_at: activeTask.started_at,
+    } : undefined,
+    assignedSkills: (skills ?? []).map((s: { skill_id: string }) => s.skill_id),
+  };
+}
+
+/**
+ * Compute agent confidence score from task history.
+ * Score = weighted success rate with recency bias.
+ * New agents start at 70 (neutral), scores range 30-99.
+ */
+export async function getAgentConfidence(agentId: string): Promise<number> {
+  const sb = getSupabase();
+
+  // Load last 20 tasks for this agent
+  const { data: tasks } = await sb
+    .from('task_executions')
+    .select('status, completed_at')
+    .eq('agent_id', agentId)
+    .in('status', ['completed', 'failed'])
+    .order('completed_at', { ascending: false })
+    .limit(20);
+
+  if (!tasks || tasks.length === 0) return 70; // Default for new agents
+
+  // Apply recency weighting: recent tasks matter more
+  // Weight: most recent = 1.0, oldest = 0.3, linear interpolation
+  let weightedSuccesses = 0;
+  let totalWeight = 0;
+
+  for (let i = 0; i < tasks.length; i++) {
+    const recencyWeight = 1.0 - (i / tasks.length) * 0.7; // 1.0 → 0.3
+    totalWeight += recencyWeight;
+    if (tasks[i].status === 'completed') {
+      weightedSuccesses += recencyWeight;
+    }
+  }
+
+  const successRate = weightedSuccesses / totalWeight;
+
+  // Map to score range: 0% success → 30, 100% success → 99
+  // But bias slightly high (we're optimistic)
+  const score = Math.round(30 + successRate * 69);
+
+  return Math.max(30, Math.min(99, score));
 }
 
 export async function seedMissionsIfEmpty(missions: Array<Omit<MissionRow, 'recurring' | 'created_by' | 'created_at'> & Partial<Pick<MissionRow, 'recurring' | 'created_by' | 'created_at'>>>): Promise<void> {
@@ -516,14 +643,13 @@ export async function updateSkillModel(id: string, model: string | null): Promis
     }, { onConflict: 'id' });
 }
 
-/** Seed a skill with its full definition from the repo JSON. */
+/** Seed a skill with its full definition from the repo JSON (insert only). */
 export async function seedSkill(id: string, definition: Record<string, unknown>, category: string): Promise<void> {
-  // Only insert if doesn't exist — don't overwrite user state
   const { data: existing } = await getSupabase()
     .from('skills')
     .select('id')
     .eq('id', id)
-    .single();
+    .maybeSingle();
   if (existing) return;
 
   await getSupabase()
@@ -538,6 +664,70 @@ export async function seedSkill(id: string, definition: Record<string, unknown>,
       source: 'seed',
       updated_at: new Date().toISOString(),
     });
+}
+
+/**
+ * Delete all skills from the DB. Used for clean sync from repo.
+ */
+export async function clearAllSkills(): Promise<void> {
+  await getSupabase().from('skills').delete().neq('id', '');
+}
+
+/**
+ * Upsert a skill definition from the repo — updates the definition, category,
+ * status, and source while PRESERVING user state (enabled, model).
+ * If the skill doesn't exist yet, creates it with defaults from the JSON.
+ */
+export async function upsertSkillDefinition(
+  id: string,
+  definition: Record<string, unknown>,
+  category: string,
+  source = 'github',
+): Promise<'created' | 'updated' | 'unchanged'> {
+  const { data: existing } = await getSupabase()
+    .from('skills')
+    .select('id, definition, enabled, model')
+    .eq('id', id)
+    .maybeSingle();
+
+  const now = new Date().toISOString();
+  const status = (definition.status as string) ?? 'available';
+
+  if (!existing) {
+    // New skill — insert with defaults from repo JSON
+    const defaultModel = (definition.default_model as string) ?? null;
+    await getSupabase().from('skills').insert({
+      id,
+      enabled: false,
+      model: defaultModel,
+      definition,
+      category,
+      status,
+      source,
+      updated_at: now,
+    });
+    return 'created';
+  }
+
+  // Existing skill — check if definition changed
+  const oldVersion = (existing.definition as Record<string, unknown> | null)?.version;
+  const newVersion = definition.version;
+  if (oldVersion && newVersion && oldVersion === newVersion) {
+    return 'unchanged';
+  }
+
+  // Update definition but preserve enabled + model (user state)
+  await getSupabase()
+    .from('skills')
+    .update({
+      definition,
+      category,
+      status,
+      source,
+      updated_at: now,
+    })
+    .eq('id', id);
+  return 'updated';
 }
 
 // ---------------------------------------------------------------------------
@@ -566,7 +756,7 @@ export async function getConversation(id: string): Promise<ConversationRow | nul
     .from('conversations')
     .select('id, title, type, status, created_at, updated_at')
     .eq('id', id)
-    .single();
+    .maybeSingle();
   return data as ConversationRow | null;
 }
 
@@ -601,7 +791,7 @@ export async function getOnboardingConversation(): Promise<ConversationRow | nul
     .select('id, title, type, status, created_at, updated_at')
     .eq('type', 'onboarding')
     .limit(1)
-    .single();
+    .maybeSingle();
   return data as ConversationRow | null;
 }
 
@@ -656,6 +846,30 @@ export async function countChatMessages(conversationId: string): Promise<number>
   return count ?? 0;
 }
 
+/** Mark a conversation as read (store current message count in localStorage) */
+export function markConversationRead(conversationId: string, messageCount: number): void {
+  localStorage.setItem(`jarvis_chat_read_${conversationId}`, String(messageCount));
+}
+
+/** Get stored read count for a conversation */
+export function getConversationReadCount(conversationId: string): number {
+  const stored = localStorage.getItem(`jarvis_chat_read_${conversationId}`);
+  return stored ? parseInt(stored, 10) : 0;
+}
+
+/** Count conversations with unread messages */
+export async function getUnreadConversationCount(): Promise<number> {
+  const convos = await loadConversations();
+  const active = convos.filter(c => c.status === 'active');
+  let unread = 0;
+  await Promise.all(active.map(async (c) => {
+    const currentCount = await countChatMessages(c.id);
+    const readCount = getConversationReadCount(c.id);
+    if (currentCount > readCount) unread++;
+  }));
+  return unread;
+}
+
 export async function getLastChatMessage(conversationId: string): Promise<ChatMessageRow | null> {
   const { data } = await getSupabase()
     .from('chat_messages')
@@ -663,7 +877,7 @@ export async function getLastChatMessage(conversationId: string): Promise<ChatMe
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   return data as ChatMessageRow | null;
 }
 
@@ -696,20 +910,36 @@ export async function exportDatabaseAsJSON(): Promise<Record<string, unknown[]>>
 // Reset
 // ---------------------------------------------------------------------------
 
-export async function resetDatabase(): Promise<void> {
-  // Truncate all tables in dependency order
-  const tables = ['chat_messages', 'conversations', 'approvals', 'skills', 'vault', 'audit_log', 'missions', 'agents', 'ceo', 'settings',
-    'org_memory', 'conversation_summaries', 'mission_memory', 'agent_skills', 'scheduler_state', 'ceo_action_queue', 'task_executions', 'agent_stats'];
-  for (const table of tables) {
-    try {
-      await getSupabase().from(table).delete().neq('id', '');
-    } catch {
-      // Some tables may use different PK names (e.g., audit_log uses serial id)
-    }
+export async function resetDatabase(options?: { keepMemory?: boolean }): Promise<void> {
+  const sb = getSupabase();
+
+  // Tables with standard `id` text PK
+  const idTables = [
+    'chat_messages', 'conversations', 'approvals', 'skills', 'vault',
+    'missions', 'agents', 'ceo',
+    'mission_memory', 'agent_skills', 'scheduler_state',
+    'ceo_action_queue', 'task_executions', 'agent_stats',
+  ];
+
+  // Optionally preserve org memory
+  if (!options?.keepMemory) {
+    idTables.push('org_memory', 'conversation_summaries');
   }
-  // Also clear audit_log (bigserial PK)
+
+  for (const table of idTables) {
+    try {
+      await sb.from(table).delete().neq('id', '');
+    } catch { /* table may not exist yet */ }
+  }
+
+  // Settings table uses `key` column, not `id`
   try {
-    await getSupabase().from('audit_log').delete().gte('id', 0);
+    await sb.from('settings').delete().neq('key', '');
+  } catch { /* ignore */ }
+
+  // audit_log uses bigserial PK
+  try {
+    await sb.from('audit_log').delete().gte('id', 0);
   } catch { /* ignore */ }
 }
 

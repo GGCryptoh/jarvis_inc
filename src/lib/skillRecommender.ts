@@ -3,7 +3,7 @@ import { skills } from '../data/skillDefinitions';
 /** Maps keyword patterns (regex alternation) to skill IDs. */
 const KEYWORD_MAP: [RegExp, string[]][] = [
   // Images & Design
-  [/logo|image|design|visual|graphic|art|photo|illustration|banner|brand/i, ['create-images', 'research-web']],
+  [/logo|image|design|visual|graphic|art|photo|illustration|banner|brand/i, ['create-images-openai', 'create-images-gemini', 'research-web']],
   // Email
   [/email|mail|inbox|outreach|newsletter/i, ['read-email', 'write-email']],
   // Social / Twitter

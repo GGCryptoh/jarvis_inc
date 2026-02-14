@@ -38,6 +38,16 @@ const categoryColors: Record<string, string> = {
   preference: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
   insight: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
   reminder: 'bg-pink-500/15 text-pink-400 border-pink-500/30',
+  founder_profile: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+};
+
+const categoryLabels: Record<string, string> = {
+  fact: 'Fact',
+  decision: 'Decision',
+  preference: 'Preference',
+  insight: 'Insight',
+  reminder: 'Reminder',
+  founder_profile: 'Profile',
 };
 
 function maskKey(key: string): string {
@@ -149,6 +159,7 @@ export default function VaultView() {
     }
     setModalOpen(false);
     refresh();
+    window.dispatchEvent(new Event('vault-changed'));
   }
 
   async function handleDeleteClick(entry: VaultRow) {
@@ -164,6 +175,7 @@ export default function VaultView() {
     setDeleteTarget(null);
     setDeleteEntities([]);
     refresh();
+    window.dispatchEvent(new Event('vault-changed'));
   }
 
   function openAddChannel() {
@@ -488,7 +500,7 @@ export default function VaultView() {
             </div>
           ) : (
             <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl overflow-hidden">
-              <div className="grid grid-cols-[90px_1fr_150px_80px_120px_90px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+              <div className="grid grid-cols-[100px_1fr_150px_80px_120px_90px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.02]">
                 <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Category</span>
                 <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Content</span>
                 <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Tags</span>
@@ -498,11 +510,11 @@ export default function VaultView() {
               </div>
 
               {memories.map((mem, idx) => (
-                <div key={mem.id} className={`grid grid-cols-[90px_1fr_150px_80px_120px_90px] gap-4 px-6 py-3.5 border-b border-white/[0.04] items-center hover:bg-white/[0.03] ${idx % 2 === 1 ? 'bg-white/[0.015]' : ''}`}>
+                <div key={mem.id} className={`grid grid-cols-[100px_1fr_150px_80px_120px_90px] gap-4 px-6 py-3.5 border-b border-white/[0.04] items-center hover:bg-white/[0.03] ${idx % 2 === 1 ? 'bg-white/[0.015]' : ''}`}>
                   {/* Category badge */}
                   <div>
                     <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-md border uppercase tracking-wider ${categoryColors[mem.category] ?? 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30'}`}>
-                      {mem.category}
+                      {categoryLabels[mem.category] ?? mem.category}
                     </span>
                   </div>
 
@@ -853,7 +865,7 @@ export default function VaultView() {
               <div>
                 <label className="block text-xs font-medium text-jarvis-muted uppercase tracking-wider mb-1.5">Category</label>
                 <span className={`inline-block px-2.5 py-1 text-[11px] font-semibold rounded-md border uppercase tracking-wider ${categoryColors[editingMemory.category] ?? 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30'}`}>
-                  {editingMemory.category}
+                  {categoryLabels[editingMemory.category] ?? editingMemory.category}
                 </span>
               </div>
 

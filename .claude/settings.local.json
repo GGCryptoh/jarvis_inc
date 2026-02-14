@@ -15,7 +15,18 @@
       "WebFetch(domain:api.github.com)",
       "Bash(ls:*)",
       "Bash(git config:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker compose:*)",
+      "Bash(chmod:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:hub.docker.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:supabase.com)",
+      "Bash(gh repo view:*)",
+      "Bash(ANON_KEY=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzcwOTU5NzYzLCJleHAiOjIwODYzMTk3NjN9.UxjdMHSyjd_CJOyXeWirucZHvF_wmzX2lRxaEeibfy4\":*)",
+      "Bash(node -e:*)",
+      "Bash(git rm:*)"
     ]
   }
 }

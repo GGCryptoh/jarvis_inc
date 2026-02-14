@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Plus, Lock, Trash2, MessageSquare } from 'lucide-react';
-import { type ConversationRow, countChatMessages } from '../../lib/database';
+import { type ConversationRow, countChatMessages, getConversationReadCount } from '../../lib/database';
 import DeleteConvoDialog from './DeleteConvoDialog';
 
 interface ChatSidebarProps {
@@ -30,21 +30,37 @@ function formatDate(dateStr: string): string {
 export default function ChatSidebar({ conversations, activeConversationId, onSelect, onNewChat, onDelete }: ChatSidebarProps) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [messageCounts, setMessageCounts] = useState<Record<string, number>>({});
+  const [unreadConvos, setUnreadConvos] = useState<Set<string>>(new Set());
 
-  // Preload all message counts when conversations change
+  // Preload all message counts + detect unread when conversations change or read status changes
+  const [readVersion, setReadVersion] = useState(0);
+
+  useEffect(() => {
+    const onChatRead = () => setReadVersion(v => v + 1);
+    window.addEventListener('chat-read', onChatRead);
+    return () => window.removeEventListener('chat-read', onChatRead);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const counts: Record<string, number> = {};
+      const unread = new Set<string>();
       await Promise.all(
         conversations.map(async (conv) => {
-          counts[conv.id] = await countChatMessages(conv.id);
+          const count = await countChatMessages(conv.id);
+          counts[conv.id] = count;
+          const readCount = getConversationReadCount(conv.id);
+          if (count > readCount) unread.add(conv.id);
         })
       );
-      if (!cancelled) setMessageCounts(counts);
+      if (!cancelled) {
+        setMessageCounts(counts);
+        setUnreadConvos(unread);
+      }
     })();
     return () => { cancelled = true; };
-  }, [conversations]);
+  }, [conversations, readVersion]);
 
   return (
     <div className="w-60 flex-shrink-0 bg-jarvis-surface border-r border-white/[0.06] flex flex-col h-full">
@@ -75,16 +91,22 @@ export default function ChatSidebar({ conversations, activeConversationId, onSel
           const isOnboarding = conv.type === 'onboarding';
           const isDeleting = deleteTarget === conv.id;
           const msgCount = messageCounts[conv.id] ?? 0;
+          const isUnread = unreadConvos.has(conv.id) && !isActive;
 
           return (
             <div key={conv.id} className="relative">
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelect(conv.id)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(conv.id); } }}
                 className={[
-                  'w-full text-left px-3 py-3 transition-colors group',
+                  'w-full text-left px-3 py-3 transition-colors group cursor-pointer',
                   isActive
                     ? 'bg-emerald-500/[0.08] border-l-2 border-emerald-400'
-                    : 'border-l-2 border-transparent hover:bg-white/[0.02]',
+                    : isUnread
+                      ? 'border-l-2 border-yellow-400 bg-yellow-400/[0.04]'
+                      : 'border-l-2 border-transparent hover:bg-white/[0.02]',
                 ].join(' ')}
               >
                 <div className="flex items-start gap-2">
@@ -94,17 +116,23 @@ export default function ChatSidebar({ conversations, activeConversationId, onSel
                   <div className="flex-1 min-w-0">
                     <div className={[
                       'font-pixel text-[8px] tracking-wider truncate',
-                      isActive ? 'text-emerald-300' : 'text-zinc-300',
+                      isActive ? 'text-emerald-300' : isUnread ? 'text-yellow-300' : 'text-zinc-300',
                     ].join(' ')}>
                       {conv.title}
                     </div>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="font-pixel text-[6px] tracking-wider text-zinc-600">
+                      <span className={[
+                        'font-pixel text-[6px] tracking-wider',
+                        isUnread ? 'text-yellow-400/70' : 'text-zinc-600',
+                      ].join(' ')}>
                         {msgCount} msg{msgCount !== 1 ? 's' : ''}
                       </span>
                       <span className="font-pixel text-[6px] tracking-wider text-zinc-700">
                         {formatDate(conv.updated_at)}
                       </span>
+                      {isUnread && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0" />
+                      )}
                     </div>
                   </div>
 
@@ -118,7 +146,7 @@ export default function ChatSidebar({ conversations, activeConversationId, onSel
                     </button>
                   )}
                 </div>
-              </button>
+              </div>
 
               {/* Inline delete confirmation */}
               {isDeleting && (

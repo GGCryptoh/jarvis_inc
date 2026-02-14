@@ -1,7 +1,37 @@
 import { useState, useMemo, useCallback } from 'react';
-import { X, Play, Eye, Loader2, AlertTriangle, ChevronDown } from 'lucide-react';
+import { X, Play, Eye, Loader2, AlertTriangle, ChevronDown, Terminal } from 'lucide-react';
 import type { FullSkillDefinition, SkillCommand } from '../../lib/skillResolver';
 import { executeSkill, buildSkillPrompt } from '../../lib/skillExecutor';
+import RichResultCard, { detectRichContent } from '../Chat/RichResultCard';
+
+/** Renders text with auto-detected rich content (images, links, documents) */
+function RichResultDisplay({ text, className }: { text: string; className?: string }) {
+  const detected = detectRichContent(text);
+
+  if (detected.length === 0) {
+    return <pre className={className}>{text}</pre>;
+  }
+
+  // Strip detected URLs from text
+  let remaining = text;
+  for (const item of detected) {
+    remaining = remaining.replace(item.url, '');
+  }
+  remaining = remaining
+    .replace(/\( *\)/g, '')
+    .replace(/\[ *\]/g, '')
+    .replace(/  +/g, ' ')
+    .trim();
+
+  return (
+    <>
+      {remaining && <pre className={className}>{remaining}</pre>}
+      {detected.map((item, i) => (
+        <RichResultCard key={`rich-${i}`} item={item} />
+      ))}
+    </>
+  );
+}
 
 interface SkillTestDialogProps {
   skill: FullSkillDefinition;
@@ -86,6 +116,13 @@ export default function SkillTestDialog({ skill, open, onClose }: SkillTestDialo
       setLoading(false);
     }
   }, [skill.id, selectedCommand, buildParams]);
+
+  // Detect CLI skill (no model needed)
+  const isCLI = useMemo(() => {
+    const conn = skill.connection;
+    const connType = typeof conn === 'string' ? conn : (conn as Record<string, unknown>)?.type as string ?? '';
+    return connType === 'cli';
+  }, [skill.connection]);
 
   if (!open) return null;
 
@@ -216,11 +253,16 @@ export default function SkillTestDialog({ skill, open, onClose }: SkillTestDialo
                       ? 'border-blue-500/30 bg-blue-500/[0.06]'
                       : 'border-emerald-500/30 bg-emerald-500/[0.06]'
                   }`}>
-                    <pre className={`text-sm font-mono whitespace-pre-wrap break-words ${
-                      mode === 'dry_run' ? 'text-blue-200' : 'text-emerald-200'
-                    }`}>
-                      {result}
-                    </pre>
+                    {mode === 'dry_run' ? (
+                      <pre className="text-sm font-mono whitespace-pre-wrap break-words text-blue-200">
+                        {result}
+                      </pre>
+                    ) : (
+                      <RichResultDisplay
+                        text={result!}
+                        className="text-sm font-mono whitespace-pre-wrap break-words text-emerald-200"
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -229,18 +271,28 @@ export default function SkillTestDialog({ skill, open, onClose }: SkillTestDialo
 
           {/* Footer */}
           <div className="flex items-center justify-between px-5 py-3 border-t border-jarvis-border bg-jarvis-bg/50">
-            <div className="font-pixel text-[7px] tracking-wider text-zinc-600">
-              MODEL: {skill.model ?? skill.defaultModel ?? 'NOT SET'}
+            <div className="flex items-center gap-1.5 font-pixel text-[7px] tracking-wider text-zinc-600">
+              {isCLI ? (
+                <>
+                  <Terminal size={10} className="text-cyan-500" />
+                  <span className="text-cyan-500">HTTP / CLI</span>
+                  <span className="text-zinc-700 ml-1">— no model needed</span>
+                </>
+              ) : (
+                <>MODEL: {skill.model ?? skill.defaultModel ?? 'NOT SET'}</>
+              )}
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleDryRun}
-                disabled={loading}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-pixel text-[7px] tracking-wider text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Eye size={12} />
-                DRY RUN
-              </button>
+              {!isCLI && (
+                <button
+                  onClick={handleDryRun}
+                  disabled={loading}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-pixel text-[7px] tracking-wider text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Eye size={12} />
+                  DRY RUN
+                </button>
+              )}
               <button
                 onClick={handleExecute}
                 disabled={loading}

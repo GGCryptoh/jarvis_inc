@@ -199,7 +199,7 @@ export default function AuditView() {
           Showing {filteredLog.length} of {entries.length} entries
         </span>
         <span className="text-xs text-jarvis-muted font-mono">
-          Log integrity: SHA-256 verified
+          Audit log
         </span>
       </div>
     </div>

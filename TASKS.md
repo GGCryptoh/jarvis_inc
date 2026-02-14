@@ -1,6 +1,6 @@
 # TASKS — Jarvis Inc. Roadmap
 
-> Gap analysis + phased roadmap. Updated 2026-02-12.
+> Gap analysis + phased roadmap. Updated 2026-02-13.
 
 ---
 
@@ -37,7 +37,7 @@
 - [x] **`npm run jarvis`** — one-command setup: env gen, Docker boot, health checks, Vite env
 - [ ] Future: one-liner curl install (`curl ... | node` from GitHub raw)
 - [ ] **Passkey/WebAuthn auth verified** (GoTrue config, enrollment flow tested)
-- [ ] **Studio basic auth verified** (Caddy protecting studio subdomain)
+- [ ] **Studio basic auth verified** (Caddy protecting studio subdomain — password shown once during `setup.mjs`, login at `studio.jarvis.local`)
 - [ ] **SSL options verified** (internal self-signed, Let's Encrypt HTTP-01, or off)
 - [ ] **Dual-mode boot** (Demo vs Full mode selection screen)
 - [ ] **Founder Ceremony: system_setup phase** — CRT wizard that walks through `docker/.env` config:
@@ -59,13 +59,17 @@
 - [x] LLM streaming (Anthropic, OpenAI, Google, DeepSeek, xAI) — 5 providers via `src/lib/llm/`
 - [x] LLM abstraction layer (`src/lib/llm/`: types, chatService, providers/anthropic, providers/openai, providers/google)
 - [x] LLM fallback to scripted responses when no API key (`src/lib/ceoResponder.ts`)
+- [x] **LLM availability diagnostic logging** — `[LLM]` console.warn at each failure point in `isLLMAvailable()`
+- [x] **Case-insensitive vault service lookup** — `.ilike()` so "anthropic" matches "Anthropic"
+- [x] **LLM re-check on vault changes** — `vault-changed` event from VaultView, listener in ChatThread
+- [x] **LLM: OFFLINE badge** — amber badge in chat header when no LLM available (was silently falling back)
 - [x] Vite proxy config for OpenAI, DeepSeek, xAI API routes
 - [x] Chat persistence (conversations + messages in DB — 2 new tables)
 - [x] Chat refactored into 6 components: ChatView, ChatSidebar, ChatThread, OnboardingFlow, DeleteConvoDialog, ResearchOfferCard
 - [x] Chat sidebar (history, archive, delete, new conversation)
 - [~] Goal ingestion — mission capture + keyword skill recommendation. Missing: ongoing goal management
 - [x] **CEO scheduler** (`src/lib/ceoScheduler.ts`) — visibility-aware interval, heartbeat to DB
-- [x] **Decision engine** (`src/lib/ceoDecisionEngine.ts`) — rule-based MVP, 5 heuristic checks
+- [x] **Decision engine** (`src/lib/ceoDecisionEngine.ts`) — rule-based MVP, 6 heuristic checks + stuck task auto-fail
 - [x] **Supabase Realtime** (`src/hooks/useRealtimeSubscriptions.ts`) — 6 table subscriptions → window events
 - [x] **Organizational memory** (`src/lib/memory.ts`) — CRUD, LLM extraction, conversation summaries
 - [x] **Memory in CEO prompt** — top-20 memories injected into system prompt
@@ -73,7 +77,9 @@
 - [x] **Founder profile/soul** — `founder_profile` category, separate prompt section, always included
 - [x] **Memory extraction on conversation leave** — catches short chats (not just every-N-message batch)
 - [x] **Mission context dispatch** — conversation excerpt + relevant memories travel with dispatched tasks
-- [ ] Proactive chat (CEO initiates conversations via action queue)
+- [x] **Proactive chat** — CEO action queue (`ceo_action_queue`), surveillance popup, dismiss/later flow, localStorage-persisted dismiss state
+- [x] **Stuck task detection** — `checkStuckTasks()` in decision engine, auto-fails tasks stuck >5min, moves missions to review, posts to chat
+- [x] **Mission summary synthesis** — multi-task missions get unified CEO-generated report in collateral
 - [ ] Daily executive reports
 - [ ] Task definition model (structured objectives + constraints)
 - [ ] Task refinement (CEO refines before delegation)
@@ -86,6 +92,7 @@
 - [x] Agent CRUD (hire/edit/fire, DB persistence)
 - [x] Agent sprites (7 animation states, 60% bigger)
 - [x] CEO sprite (crown, suit, 20% bigger, status dot)
+- [ ] **Agent confidence score** — replace random seed with computed score. Rolling window over last 20 task_executions: `completed` +5, `failed` -10, mission approved by founder +8, mission rejected -15, idle >1hr -1. Founder chat sentiment: after memory extraction, if founder mentions an agent negatively ("ATLAS is slow", "fire ATLAS") → -10, positively ("ATLAS nailed it") → +5. Use keyword/name matching in extracted memories tagged with agent name. Clamp 0–100. Store in `agents` table as `confidence` INTEGER, update after each task completion, approval event, or memory extraction. CEO prompt includes agent confidence when deciding delegation ("ATLAS confidence: 82%"). Surveillance sidebar + hover tooltip show live value.
 - [ ] Agent execution engine (LLM calls + tools)
 - [ ] Agent tool access (per-agent tool sets)
 - [ ] Agent reporting (progress → CEO)
@@ -106,6 +113,20 @@
 - [x] **Skill test dialog** (`src/components/Skills/SkillTestDialog.tsx`) — command picker, param form, dry-run/execute
 - [x] **Skill-agent assignment** — HireAgentModal skill picker + `agent_skills` CRUD
 - [x] **Full skill definitions in CEO prompt** — command names, descriptions, parameters
+- [x] **Skills repo GitHub sync** — `seedSkillsFromRepo()` fetches manifest + JSON from GitHub raw URLs
+- [x] **Skills DB-backed UI** — SkillsView renders from resolved DB skills, not hardcoded array
+- [x] **SYNC REPO / CLEAN SYNC buttons** — themed dialog, fire-and-forget sync on boot + CEO scheduler hourly
+- [x] **Weather CLI skill** — `weather_cli.json` in skills_repo, `connection_type: "cli"`, 3 commands via wttr.in
+- [x] **Image Generation skill** — `image_generate.json`, `connection_type: "api_key"`, OpenAI DALL-E default, 3 commands (generate/edit/variation)
+- [x] **Skill schema v2** — added `output_type` (text/image/audio/data/mixed), `collateral` flag, `api_config`, `media_type` on returns
+- [x] **CEO Weather approval in onboarding** — second skill approval after Research Web, CLI-themed card
+- [x] **Double-dispatch fix** — removed duplicate `dispatchTaskPlan` from ChatThread (now only in chatService.ts)
+- [x] **Skill checksums** — `scripts/skill_checksums.sh` generates SHA-256 for each skill JSON, populates manifest `checksum` field
+- [ ] **Skill output rendering** — image results shown in chat (inline preview), test dialog (image display), collateral (thumbnail + full view)
+- [ ] **Skill execution → collateral push** — edge function reads `output_type` + `collateral` from skill definition, stores image URLs/base64 as artifacts
+- [ ] **ChatThread Realtime listener** — subscribe to `chat_messages` for current conversation, show edge function completion messages live
+- [ ] **CLI gateway** — Docker sidecar or edge function that executes CLI skills (curl, etc.) securely
+- [ ] **Image generation edge function** — `execute-skill` handles `api_key` connection type, calls OpenAI Images API directly
 - [ ] GitHub sync (manifest-based, checksum diffing)
 - [ ] OAuth connection type (PKCE flow)
 
@@ -143,7 +164,8 @@
 
 - [x] Budget editing UI (CRT-themed, persisted)
 - [x] Bar chart + data table
-- [ ] **Token & cost tracking** (`llm_usage` table — per-call input/output tokens, estimated cost, context tags)
+- [~] **Token & cost tracking** — `llm_usage` table exists, CEO chat logs costs, but `skillExecutor.ts` does NOT call `logUsage()` (skill execution costs missing from financials)
+- [ ] **Skill execution cost logging** — wire `logUsage()` into `skillExecutor.ts` and `execute-skill` edge function
 - [ ] Real cost tracking (token/API costs per agent)
 - [ ] Budget enforcement (pause on exceeded)
 - [ ] Budget override flow (CEO requests, human approves)
@@ -165,6 +187,7 @@
 - [x] Working screen glow fixed (subtle radial gradient, not solid green block)
 - [x] Real-time CEO status (chatting/working/idle via window events, status colors)
 - [x] Typing hands animation (Police Quest-style pixel hands when working)
+- [ ] **Agent sprite rework** — fix hand position (currently at feet), more animated working state (bouncing/humming), thought bubbles, desks facing multiple directions
 - [ ] Blocked state visualization
 - [ ] Agent reporting lines
 - [ ] Advanced floor planner (drag-and-drop, snap-to-grid)
@@ -194,18 +217,21 @@
 - [ ] REVIEW column (between In Progress and Done — for ceo_review + founder_review)
 - [ ] Mission cards: round badge (⟳ R3), CEO score, cumulative cost
 
-### Mission Detail Page (`/missions/:id`) — NEW
-- [ ] Route + layout (back button, round indicator, status/priority/agent header)
-- [ ] Stats cards (agent, cost, tokens, duration — per round)
+### Mission Detail Page (`/missions/:id`)
+- [x] Route + layout (back button, status/priority/agent header)
+- [x] Stats cards (agent, cost, tokens, duration)
+- [x] Results tab (task output rendered as markdown)
+- [x] Approve / Archive / Discard / Cancel / Rerun / Delete actions
+- [x] **Auto-close on approve** — dialog with "Auto-close mission log on Approve" checkbox, persisted in `settings`
+- [x] **Navigate back** — archive and approve both return user to `/missions`
 - [ ] CEO Scorecard component (quality/completeness/efficiency/overall bars + grade + review text)
 - [ ] Tab bar: RESULTS | DELIVERABLES | ACTIVITY | ROUNDS
-- [ ] Results tab (agent output rendered as markdown)
 - [ ] Deliverables tab (file/artifact browser with preview + download)
 - [ ] Activity tab (pre-filtered audit log for this mission only)
 - [ ] Rounds tab (timeline of all attempts with stats + rejection reasons)
 
 ### Accept / Reject Flow
-- [ ] ACCEPT MISSION button → status `done`, audit log, agent celebrates
+- [x] ACCEPT MISSION (LOOKS GOOD) — status `done`, audit log, from chat + missions
 - [ ] REJECT & REDO modal:
   - Rejection reason (required text area)
   - Redo strategy radio: "Include all collateral" (default) vs "Start fresh"
@@ -261,6 +287,15 @@
 - [x] **Onboarding state persistence** — step + messages survive route navigation
 - [x] Streaming text with blinking cursor
 - [x] Resume greeting on conversation switch
+- [x] **Chat archive button** — forces new chat after archive
+- [x] **Unread conversation indicators** — yellow dot + border in sidebar, localStorage-based read tracking, `chat-read` events
+- [x] **Chat action buttons** — LOOKS GOOD / REVIEW MISSION / VIEW COLLATERAL on mission complete messages
+- [x] **Action button persistence** — LOOKS GOOD state saved to localStorage + chat message metadata, survives navigation
+- [x] **Task status in chat** — ToolCallBlock shows live status from `task_executions`, scoped by `mission_id`
+- [x] **Collateral link in chat** — CEO completion messages include "Full results in Collateral" + VIEW COLLATERAL button
+- [x] **Fix duplicate greetings** — greeting dedup via localStorage history (tracks last 10, cycles through all 20)
+- [ ] **Auto-new-chat on archived return** — if active conversation is archived, auto-create fresh chat on next visit
+- [ ] **CEO inline answers** — CEO should answer simple questions directly (weather, time, opinions) instead of always creating missions
 
 ---
 
@@ -348,6 +383,49 @@
 55. ~~Personality-aware memory extraction~~ ✅ — archetype weights categories (Wall Street → financial, MIT → technical)
 56. ~~Founder profile/soul~~ ✅ — `founder_profile` memory category, separate system prompt section, always included
 57. ~~Mission context dispatch~~ ✅ — CEO passes conversation excerpt + relevant memories + founder profile to agents
+
+### Phase 3.7 — Skills Pipeline & Chat Fixes
+
+58. ~~Skills repo GitHub sync~~ ✅ — auto-seed on boot + CEO scheduler hourly
+59. ~~Skills DB-backed UI~~ ✅ — renders from resolved DB, SYNC/CLEAN buttons, themed dialogs
+60. ~~Weather CLI skill~~ ✅ — `weather_cli.json`, 3 commands, CEO onboarding approval
+61. ~~Image Generation skill~~ ✅ — `image_generate.json`, OpenAI DALL-E, output_type: image
+62. ~~Skill schema v2~~ ✅ — `output_type`, `collateral`, `api_config`, `media_type` on returns
+63. ~~Double-dispatch fix~~ ✅ — removed duplicate `dispatchTaskPlan` from ChatThread
+64. ~~Skill checksums~~ ✅ — `scripts/skill_checksums.sh` + manifest populated
+65. Image/media rendering in chat + test dialog + collateral
+66. Skill execution → collateral push (edge function reads output_type)
+67. ChatThread Realtime listener (live skill completion messages)
+68. CLI gateway (Docker sidecar for CLI-based skills)
+69. Image generation in edge function (OpenAI Images API)
+70. ~~Chat archive button~~ ✅
+71. Agent sprite rework (hands, thought bubbles, desk directions)
+72. Skill execution cost logging (wire `logUsage()` into executor)
+
+### Phase 3.8 — UX Fixes & Collateral ✅ DONE
+
+73. ~~Unread chat indicators~~ ✅ — yellow dot/border, localStorage read tracking
+74. ~~Mission approve auto-close~~ ✅ — dialog + checkbox preference + navigate back
+75. ~~Toast deduplication~~ ✅ — pre-seed refs, seeded guard, 2-min cutoff
+76. ~~CEO popup dismiss persistence~~ ✅ — localStorage-backed, 30-min recency filter
+77. ~~Chat task status scoping~~ ✅ — ToolCallBlock queries by mission_id
+78. ~~Stuck task detection~~ ✅ — 5-min auto-fail in decision engine
+79. ~~Task dispatcher timeout~~ ✅ — 15s edge function fallback to browser
+80. ~~Collateral markdown~~ ✅ — tables, horizontal rules, full markdown rendering
+81. ~~Collateral export~~ ✅ — PDF (print) + Markdown (.md), zero dependencies
+82. ~~Collateral NEW tag~~ ✅ — clears on click, thicker green border
+83. ~~Collateral grouping~~ ✅ — group by skill toggle, compact cards
+84. ~~Chat action buttons~~ ✅ — LOOKS GOOD persists, dismisses CEO queue
+85. ~~Mission summary synthesis~~ ✅ — LLM combines multi-task results into unified report
+
+### Phase D — CEO LLM Fix & Chat Polish ✅ DONE
+
+86. ~~LLM diagnostic logging~~ ✅ — `[LLM]` console.warn at each `isLLMAvailable()` failure point
+87. ~~Case-insensitive vault lookup~~ ✅ — `.ilike()` for service field matching
+88. ~~LLM re-check on vault changes~~ ✅ — `vault-changed` event + ChatThread listener
+89. ~~LLM: OFFLINE badge~~ ✅ — amber badge when no API key available
+90. ~~Skill checksums script~~ ✅ — `scripts/skill_checksums.sh` populates SHA-256 in manifest
+91. ~~Greeting dedup~~ ✅ — localStorage history, cycles through all 20 greetings
 
 ### Phase 4 — CEO Autonomy & Agent Runtime
 

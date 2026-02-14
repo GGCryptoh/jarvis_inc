@@ -1,0 +1,3 @@
+[submodule "skills_repo"]
+	path = skills_repo
+	url = https://github.com/GGCryptoh/jarvis_inc_skills.git

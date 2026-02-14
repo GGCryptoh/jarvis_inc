@@ -2,6 +2,7 @@ import {
   Mail,
   Send,
   Image,
+  Sparkles,
   Twitter,
   Globe,
   MessageCircle,
@@ -17,6 +18,8 @@ import {
   Eye,
   BookOpen,
   Languages,
+  ServerCrash,
+  Network,
 } from 'lucide-react';
 
 export interface SkillDefinition {
@@ -132,17 +135,45 @@ export const skills: SkillDefinition[] = [
     serviceType: 'llm',
     defaultModel: 'Claude Opus 4.6',
   },
+  {
+    id: 'whois-lookup',
+    name: 'WHOIS Lookup',
+    description: 'Look up domain registration details, registrar, nameservers, and expiration via RDAP',
+    icon: ServerCrash,
+    category: 'research',
+    status: 'available',
+    serviceType: 'fixed',
+  },
+  {
+    id: 'dns-lookup',
+    name: 'DNS Lookup',
+    description: 'Query DNS records — A, AAAA, MX, NS, TXT, CNAME, SOA via Cloudflare DoH',
+    icon: Network,
+    category: 'research',
+    status: 'available',
+    serviceType: 'fixed',
+  },
 
   // Creation
   {
-    id: 'create-images',
-    name: 'Create Images',
-    description: 'Generate images using AI image models (DALL-E, Midjourney)',
+    id: 'create-images-openai',
+    name: 'Image Generation — OpenAI',
+    description: 'Generate images using DALL-E 3 (OpenAI)',
     icon: Image,
     category: 'creation',
     status: 'available',
     serviceType: 'fixed',
     fixedService: 'OpenAI',
+  },
+  {
+    id: 'create-images-gemini',
+    name: 'Image Generation — Gemini',
+    description: 'Generate images using Gemini Nano Banana (Google)',
+    icon: Sparkles,
+    category: 'creation',
+    status: 'available',
+    serviceType: 'fixed',
+    fixedService: 'Google',
   },
   {
     id: 'generate-video',

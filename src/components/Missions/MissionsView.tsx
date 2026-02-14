@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Plus, RefreshCw, Pencil, Trash2, X, ChevronRight, ChevronLeft } from 'lucide-react'
+import { useNavigate, Link } from 'react-router-dom'
+import { Plus, RefreshCw, Pencil, Trash2, X, ChevronRight, ChevronLeft, Search, Eye, EyeOff } from 'lucide-react'
 import { loadMissions, saveMission, updateMission, updateMissionStatus, deleteMission, logAudit, loadAgents, loadCEO, loadTaskExecutions, saveConversation, saveChatMessage, getFounderInfo, type MissionRow } from '../../lib/database'
 
 const priorityColor: Record<string, string> = {
@@ -10,36 +10,44 @@ const priorityColor: Record<string, string> = {
   low: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
 }
 
-type ColumnKey = 'backlog' | 'in_progress' | 'review' | 'done'
+type ColumnKey = 'backlog' | 'scheduled' | 'in_progress' | 'review' | 'done' | 'archived'
 
 const columns: { key: ColumnKey; label: string }[] = [
   { key: 'backlog', label: 'BACKLOG' },
+  { key: 'scheduled', label: 'SCHEDULED' },
   { key: 'in_progress', label: 'IN PROGRESS' },
   { key: 'review', label: 'REVIEW' },
   { key: 'done', label: 'DONE' },
+  { key: 'archived', label: 'ARCHIVED' },
 ]
 
 const columnAccent: Record<ColumnKey, string> = {
   backlog: 'border-zinc-600',
+  scheduled: 'border-blue-500',
   in_progress: 'border-emerald-500',
   review: 'border-yellow-500',
   done: 'border-slate-500',
+  archived: 'border-zinc-700',
 }
 
 const countBadge: Record<ColumnKey, string> = {
   backlog: 'bg-zinc-700/60 text-zinc-400',
+  scheduled: 'bg-blue-500/20 text-blue-400',
   in_progress: 'bg-emerald-500/20 text-emerald-400',
   review: 'bg-yellow-500/20 text-yellow-400',
   done: 'bg-slate-500/20 text-slate-400',
+  archived: 'bg-zinc-700/60 text-zinc-500',
 }
 
 const PRIORITIES = ['critical', 'high', 'medium', 'low'] as const
-const STATUSES: ColumnKey[] = ['backlog', 'in_progress', 'review', 'done']
+const STATUSES: ColumnKey[] = ['backlog', 'scheduled', 'in_progress', 'review', 'done', 'archived']
 const STATUS_LABELS: Record<ColumnKey, string> = {
   backlog: 'Backlog',
+  scheduled: 'Scheduled',
   in_progress: 'In Progress',
   review: 'Review',
   done: 'Done',
+  archived: 'Archived',
 }
 
 function RecurringBadge({ cron }: { cron: string }) {
@@ -83,7 +91,13 @@ function MissionCard({
   return (
     <div className="bg-jarvis-bg border border-jarvis-border rounded-lg p-3 hover:border-white/[0.12] hover:bg-white/[0.02] transition-all duration-150 group">
       <h3 className="text-sm font-medium text-zinc-200 leading-snug mb-2 flex items-center gap-1.5">
-        {mission.title}
+        <Link
+          to={`/missions/${mission.id}`}
+          className="hover:text-emerald-400 transition-colors"
+          onClick={e => e.stopPropagation()}
+        >
+          {mission.title}
+        </Link>
         {mission.recurring && <RecurringBadge cron={mission.recurring} />}
       </h3>
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -460,24 +474,44 @@ export default function MissionsView() {
   const [dbMissions, setDbMissions] = useState<MissionRow[]>([])
   const [dialogState, setDialogState] = useState<{ mission: MissionRow | null; defaultStatus: ColumnKey } | null>(null)
   const [reviewMission, setReviewMission] = useState<MissionRow | null>(null)
-
-  useEffect(() => { loadMissions().then(setDbMissions) }, [])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
 
   const refresh = useCallback(() => { loadMissions().then(setDbMissions) }, [])
 
+  // Load on mount + listen for missions-changed / task-executions-changed events
+  useEffect(() => {
+    refresh()
+    window.addEventListener('missions-changed', refresh)
+    window.addEventListener('task-executions-changed', refresh)
+    return () => {
+      window.removeEventListener('missions-changed', refresh)
+      window.removeEventListener('task-executions-changed', refresh)
+    }
+  }, [refresh])
+
+  // Filter missions by search query
+  const filtered = searchQuery.trim()
+    ? dbMissions.filter(m => m.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    : dbMissions
+
   const grouped: Record<ColumnKey, MissionRow[]> = {
     backlog: [],
+    scheduled: [],
     in_progress: [],
     review: [],
     done: [],
+    archived: [],
   }
 
-  for (const mission of dbMissions) {
+  for (const mission of filtered) {
     const status = mission.status as ColumnKey
     if (grouped[status]) {
       grouped[status].push(mission)
     }
   }
+
+  const visibleColumns = showArchived ? columns : columns.filter(c => c.key !== 'archived')
 
   function handleCreate(status: ColumnKey) {
     setDialogState({ mission: null, defaultStatus: status })
@@ -581,16 +615,44 @@ export default function MissionsView() {
   }
 
   return (
-    <div className="p-6 h-full flex flex-col max-w-[1600px] mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-white tracking-wide">MISSION CONTROL</h1>
-        <p className="text-sm text-jarvis-muted mt-0.5">Task Management</p>
+    <div className="p-6 h-full flex flex-col max-w-[1800px] mx-auto">
+      {/* Header + Search + Archived Toggle */}
+      <div className="flex items-center justify-between mb-4 gap-4">
+        <div className="shrink-0">
+          <h1 className="text-xl font-bold text-white tracking-wide">MISSION CONTROL</h1>
+          <p className="text-sm text-jarvis-muted mt-0.5">Task Management</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Search */}
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search missions..."
+              className="bg-jarvis-surface border border-jarvis-border rounded-lg pl-8 pr-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors w-56"
+            />
+          </div>
+          {/* Archived Toggle */}
+          <button
+            onClick={() => setShowArchived(prev => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+              showArchived
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                : 'border-jarvis-border bg-jarvis-surface text-zinc-500 hover:text-zinc-300 hover:border-white/[0.12]'
+            }`}
+            title={showArchived ? 'Hide archived column' : 'Show archived column'}
+          >
+            {showArchived ? <Eye size={13} /> : <EyeOff size={13} />}
+            ARCHIVED
+          </button>
+        </div>
       </div>
 
       {/* Kanban Board */}
-      <div className="grid grid-cols-4 gap-4 flex-1 min-h-0">
-        {columns.map((col) => {
+      <div className={`grid gap-4 flex-1 min-h-0 ${showArchived ? 'grid-cols-6' : 'grid-cols-5'}`}>
+        {visibleColumns.map((col) => {
           const items = grouped[col.key]
           return (
             <div key={col.key} className="flex flex-col min-h-0">
@@ -607,7 +669,7 @@ export default function MissionsView() {
                   >
                     {items.length}
                   </span>
-                  {(col.key === 'backlog' || col.key === 'in_progress') && (
+                  {(col.key === 'backlog' || col.key === 'scheduled') && (
                     <button
                       onClick={() => handleCreate(col.key)}
                       className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
@@ -622,7 +684,7 @@ export default function MissionsView() {
               {/* Column Body */}
               <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                 {items.length === 0 ? (
-                  (col.key === 'backlog' || col.key === 'in_progress') ? (
+                  (col.key === 'backlog' || col.key === 'scheduled') ? (
                     <button
                       onClick={() => handleCreate(col.key)}
                       className="flex items-center justify-center h-24 w-full rounded-lg border border-dashed border-white/[0.06] text-xs text-zinc-600 hover:border-white/[0.12] hover:text-zinc-400 transition-colors"

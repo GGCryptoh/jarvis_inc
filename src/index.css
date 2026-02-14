@@ -274,9 +274,9 @@
     animation: agent-walk 0.4s steps(2) infinite;
   }
 
-  /* Working/typing animation - subtle bob */
+  /* Working/typing animation - lively bounce + head bob */
   .agent-typing {
-    animation: agent-type 0.6s ease-in-out infinite;
+    animation: agent-type 0.8s ease-in-out infinite;
   }
 
   /* Idle animation - slow breathing/bob */
@@ -352,6 +352,91 @@
     border: 3px solid transparent;
     border-top-color: #3a3a5a;
   }
+
+  /* Humming sway — subtle side-to-side when working */
+  .agent-humming {
+    animation: agent-humming 2.5s ease-in-out infinite;
+  }
+
+  /* Override: when both typing + humming, combine via wrapper */
+  .agent-typing.agent-humming {
+    animation:
+      agent-type 0.8s ease-in-out infinite,
+      agent-humming 2.5s ease-in-out infinite;
+  }
+
+  /* Thought bubble container — 3 ascending dots above head */
+  .agent-thought-bubble {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    margin-bottom: 2px;
+    z-index: 10;
+  }
+
+  /* Ascending dots (comic-style thought trail) */
+  .agent-thought-dots {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 1px;
+  }
+
+  .agent-thought-dot {
+    display: block;
+    background: #50fa7b;
+    border-radius: 50%;
+    box-shadow: 0 0 2px rgba(80, 250, 123, 0.4);
+  }
+
+  .agent-thought-dot:nth-child(1) {
+    width: 2px;
+    height: 2px;
+    animation: thought-dot-fade 1.8s ease-in-out infinite 0s;
+  }
+
+  .agent-thought-dot:nth-child(2) {
+    width: 3px;
+    height: 3px;
+    animation: thought-dot-fade 1.8s ease-in-out infinite 0.3s;
+  }
+
+  .agent-thought-dot:nth-child(3) {
+    width: 4px;
+    height: 4px;
+    animation: thought-dot-fade 1.8s ease-in-out infinite 0.6s;
+  }
+
+  /* Thought label — tiny pixel text */
+  .agent-thought-label {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 5px;
+    color: #50fa7b;
+    white-space: nowrap;
+    text-shadow: 0 0 3px rgba(80, 250, 123, 0.3);
+    background: rgba(26, 26, 46, 0.85);
+    border: 1px solid #3a3a5a;
+    padding: 1px 4px;
+    border-radius: 2px;
+    animation: thought-label-fade 3s ease-in-out infinite;
+  }
+
+  /* Arm animations for typing pose */
+  .agent-arm-left {
+    animation: arm-type-left 0.5s steps(3) infinite;
+    transform-origin: top center;
+  }
+
+  .agent-arm-right {
+    animation: arm-type-right 0.5s steps(3) infinite 0.15s;
+    transform-origin: top center;
+  }
 }
 
 /* ---------- Animation Keyframes ---------- */
@@ -392,11 +477,17 @@
   0%, 100% {
     transform: translateY(0);
   }
+  15% {
+    transform: translateY(-1.5px);
+  }
   30% {
+    transform: translateY(0);
+  }
+  50% {
     transform: translateY(-1px);
   }
-  60% {
-    transform: translateY(0);
+  65% {
+    transform: translateY(0.5px);
   }
   80% {
     transform: translateY(-0.5px);
@@ -707,6 +798,61 @@
 
 .typing-hands {
   animation: typing-hands 0.4s steps(4) infinite;
+}
+
+/* Humming sway keyframe — very subtle side-to-side */
+@keyframes agent-humming {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(1px);
+  }
+  75% {
+    transform: translateX(-1px);
+  }
+}
+
+/* Thought bubble dot fade — sequential pulse */
+@keyframes thought-dot-fade {
+  0%, 100% {
+    opacity: 0.2;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Thought label gentle fade */
+@keyframes thought-label-fade {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Arm typing — left arm slight inward reach */
+@keyframes arm-type-left {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+
+/* Arm typing — right arm slight inward reach (mirrored) */
+@keyframes arm-type-right {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-4deg);
+  }
 }
 
 /* Pixel font loaded via index.html <link> tag */

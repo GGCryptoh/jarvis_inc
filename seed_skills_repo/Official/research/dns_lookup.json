@@ -1,0 +1,42 @@
+{
+  "id": "dns-lookup",
+  "title": "DNS Lookup",
+  "description": "Query DNS records for a domain — A, AAAA, MX, NS, TXT, CNAME, SOA and more via Cloudflare DoH",
+  "version": "1.0.0",
+  "author": "Jarvis Inc",
+  "category": "research",
+  "icon": "Globe",
+  "tags": ["dns", "domain", "records", "mx", "nameserver", "lookup"],
+  "status": "available",
+  "connection_type": "cli",
+  "models": [],
+  "default_model": null,
+  "fixed_service": null,
+  "service_type": null,
+  "oauth_config": null,
+  "curl_example": "curl -H 'accept: application/dns-json' 'https://cloudflare-dns.com/dns-query?name=example.com&type=A'",
+  "cli_config": {
+    "base_url": "https://cloudflare-dns.com/dns-query",
+    "auth": null
+  },
+  "output_type": "text",
+  "commands": [
+    {
+      "name": "query",
+      "description": "Query a specific DNS record type for a domain",
+      "parameters": [
+        { "name": "domain", "type": "string", "required": true, "description": "Domain name to query (e.g. example.com)" },
+        { "name": "type", "type": "string", "required": false, "description": "Record type: A, AAAA, MX, NS, TXT, CNAME, SOA, SRV, CAA, PTR", "default": "A" }
+      ],
+      "returns": { "type": "text", "description": "DNS records matching the query" }
+    },
+    {
+      "name": "full_report",
+      "description": "Get all common DNS records for a domain (A, AAAA, MX, NS, TXT, SOA)",
+      "parameters": [
+        { "name": "domain", "type": "string", "required": true, "description": "Domain name to query" }
+      ],
+      "returns": { "type": "text", "description": "Complete DNS report with all record types" }
+    }
+  ]
+}

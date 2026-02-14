@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import ResetDBDialog from './ResetDBDialog'
-import { loadCEO, getPendingApprovalCount, getMissionReviewCount } from '../../lib/database'
+import { loadCEO, getPendingApprovalCount, getMissionReviewCount, getNewCollateralCount, getUnreadConversationCount } from '../../lib/database'
 
 interface NavItem {
   label: string
@@ -47,7 +47,7 @@ const statusColorMap: Record<CeoStatus, string> = {
 }
 
 interface NavigationRailProps {
-  onResetDB: () => Promise<void>
+  onResetDB: (options?: { keepMemory?: boolean }) => Promise<void>
   onFireCEO: () => void
 }
 
@@ -59,6 +59,8 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
   const [ceoStatus, setCeoStatus] = useState<CeoStatus>('nominal')
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [reviewCount, setReviewCount] = useState(0)
+  const [collateralCount, setCollateralCount] = useState(0)
+  const [ceoActionCount, setCeoActionCount] = useState(0)
 
   // Load CEO + approvals count from DB on mount
   useEffect(() => {
@@ -97,6 +99,34 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
     return () => {
       clearInterval(interval)
       window.removeEventListener('missions-changed', load)
+    }
+  }, [])
+
+  // Refresh collateral new items count periodically + on custom event
+  useEffect(() => {
+    const load = async () => {
+      try { setCollateralCount(await getNewCollateralCount()); } catch { /* ignore */ }
+    }
+    load()
+    const interval = setInterval(load, 5000)
+    window.addEventListener('task-executions-changed', load)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('task-executions-changed', load)
+    }
+  }, [])
+
+  // Refresh unread chat count periodically + on custom events
+  useEffect(() => {
+    const refresh = () => { getUnreadConversationCount().then(setCeoActionCount).catch(() => {}); }
+    refresh()
+    window.addEventListener('chat-messages-changed', refresh)
+    window.addEventListener('chat-read', refresh)
+    const interval = setInterval(refresh, 8000)
+    return () => {
+      window.removeEventListener('chat-messages-changed', refresh)
+      window.removeEventListener('chat-read', refresh)
+      clearInterval(interval)
     }
   }, [])
 
@@ -165,6 +195,20 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
                       </span>
                     )}
 
+                    {/* Collateral new items badge */}
+                    {item.label === 'Collateral' && collateralCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-black px-1">
+                        {collateralCount}
+                      </span>
+                    )}
+
+                    {/* Unread chat conversations badge */}
+                    {item.label === 'Chat' && ceoActionCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-yellow-400 text-[9px] font-bold text-black px-1">
+                        {ceoActionCount}
+                      </span>
+                    )}
+
                     {/* Tooltip */}
                     {hoveredItem === item.label && (
                       <div className="absolute left-full ml-3 px-2.5 py-1.5 bg-zinc-800 border border-white/[0.08] rounded-md text-xs text-zinc-200 whitespace-nowrap z-50 shadow-lg pointer-events-none">
@@ -223,9 +267,9 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
       <ResetDBDialog
         open={resetDialogOpen}
         onClose={() => setResetDialogOpen(false)}
-        onResetDB={async () => {
+        onResetDB={async (options) => {
           setResetDialogOpen(false)
-          await onResetDB()
+          await onResetDB(options)
         }}
         onFireCEO={() => {
           setResetDialogOpen(false)

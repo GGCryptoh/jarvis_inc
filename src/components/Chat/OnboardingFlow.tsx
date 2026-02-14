@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Send, ClipboardCheck, Cctv } from 'lucide-react';
+import { Send, ClipboardCheck, Cctv, CloudRain } from 'lucide-react';
 import {
   loadCEO, getFounderInfo, getSetting, setSetting, saveMission,
   saveSkill, loadSkills, loadApprovals, saveApproval, updateApprovalStatus,
@@ -27,6 +27,10 @@ interface ChatMessage {
     skillDescription: string;
     skillIcon: React.ElementType;
   };
+  weatherCard?: {
+    skillName: string;
+    skillDescription: string;
+  };
   researchOffer?: boolean;
 }
 
@@ -37,6 +41,9 @@ type ConvoStep =
   | 'waiting_skill_approve'
   | 'waiting_test_input'
   | 'testing_skill'
+  // Weather CLI skill offer
+  | 'offering_weather'
+  | 'waiting_weather_approve'
   // Market research offer
   | 'offering_research'
   | 'waiting_research_decision'
@@ -50,9 +57,10 @@ type ConvoStep =
 // ---------------------------------------------------------------------------
 
 const FIRST_SKILL_ID = 'research-web';
+const SECOND_SKILL_ID = 'weather-cli';
 
 function getRequiredService(skill: SkillDefinition, model: string | null): string | null {
-  if (skill.serviceType === 'fixed') return skill.fixedService ?? null;
+  if (skill.serviceType === 'fixed' || skill.fixedService) return skill.fixedService ?? null;
   if (model) return getServiceForModel(model);
   return null;
 }
@@ -92,6 +100,8 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const approvalIdRef = useRef<string | null>(null);
   const skillApprovedRef = useRef(false);
+  const weatherApprovalIdRef = useRef<string | null>(null);
+  const weatherApprovedRef = useRef(false);
   const stepRef = useRef<ConvoStep>('welcome');
 
   // Wrap setStep to persist to DB
@@ -385,6 +395,53 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     setStep('waiting_research_decision');
   }, [typeWithDelay]);
 
+  // Offer Weather CLI skill (after first skill test, before market research)
+  const offerWeatherSkill = useCallback(async () => {
+    // Check if weather-cli exists in DB (synced from repo)
+    const allSkills = await loadSkills();
+    const weatherRow = allSkills.find(s => s.id === SECOND_SKILL_ID);
+
+    if (!weatherRow) {
+      // Not synced yet — skip to market research
+      await offerMarketResearch();
+      return;
+    }
+
+    if (weatherRow.enabled) {
+      await typeWithDelay(`I see Weather CLI is already online — nice.`, 1500);
+      await offerMarketResearch();
+      return;
+    }
+
+    setStep('offering_weather');
+
+    // Create approval
+    const approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    await saveApproval({
+      id: approvalId,
+      type: 'skill_enable',
+      title: 'Enable Skill: Weather CLI',
+      description: `CEO ${ceoName} recommends enabling "Weather CLI" — real-time weather data, no API key required`,
+      status: 'pending',
+      metadata: { skillId: SECOND_SKILL_ID, skillName: 'Weather CLI', connectionType: 'cli' },
+    });
+    window.dispatchEvent(new Event('approvals-changed'));
+    weatherApprovalIdRef.current = approvalId;
+
+    await typeWithDelay(
+      `One more — I found a Weather CLI tool in our skills repo. Real-time forecasts from wttr.in, no API key needed. Quick approvals like this keep our toolkit sharp.`,
+      2500,
+      {
+        weatherCard: {
+          skillName: 'Weather CLI',
+          skillDescription: 'Real-time weather forecasts, current conditions, and moon phases — powered by wttr.in, zero config required',
+        },
+      },
+    );
+
+    setStep('waiting_weather_approve');
+  }, [typeWithDelay, offerMarketResearch, ceoName]);
+
   // Create post-onboarding missions
   const createPostOnboardingMissions = useCallback(async (cName: string, oName: string, researchAccepted: boolean, researchContext: string) => {
     const existing = await loadMissions();
@@ -590,7 +647,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           setStreamingText(null);
           setTyping(false);
           addCeoMessage(fullText);
-          offerMarketResearch();
+          offerWeatherSkill();
         },
         onError: (error) => {
           setStreamingText(null);
@@ -634,7 +691,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       await finalizeMeeting(missionTextRef.current, true, researchContextRef.current);
       setStep('done');
     }
-  }, [input, step, typeWithDelay, orgName, ceoName, offerMarketResearch, finalizeMeeting, addCeoMessage]);
+  }, [input, step, typeWithDelay, orgName, ceoName, offerMarketResearch, offerWeatherSkill, finalizeMeeting, addCeoMessage]);
 
   // Handle APPROVE click in chat
   const handleApproveSkill = useCallback(async () => {
@@ -699,7 +756,47 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       1500,
     );
 
-    // Still offer market research
+    // Still offer weather, then market research
+    await offerWeatherSkill();
+  }, [step, typeWithDelay, offerWeatherSkill]);
+
+  // Handle APPROVE for Weather CLI skill
+  const handleApproveWeather = useCallback(async () => {
+    if (step !== 'waiting_weather_approve') return;
+    weatherApprovedRef.current = true;
+
+    // Enable in DB (no model needed — CLI tool)
+    await saveSkill(SECOND_SKILL_ID, true, null);
+
+    if (weatherApprovalIdRef.current) {
+      await updateApprovalStatus(weatherApprovalIdRef.current, 'approved');
+    }
+    window.dispatchEvent(new Event('approvals-changed'));
+    window.dispatchEvent(new Event('skills-changed'));
+
+    await typeWithDelay(
+      `Weather CLI is live. Now our agents can pull real-time forecasts — useful for logistics, events, or just checking if it's going to snow.`,
+      2000,
+    );
+
+    await offerMarketResearch();
+  }, [step, typeWithDelay, offerMarketResearch]);
+
+  // Handle LATER for Weather CLI skill
+  const handleSkipWeather = useCallback(async () => {
+    if (step !== 'waiting_weather_approve') return;
+    weatherApprovedRef.current = true;
+
+    if (weatherApprovalIdRef.current) {
+      await updateApprovalStatus(weatherApprovalIdRef.current, 'dismissed');
+    }
+    window.dispatchEvent(new Event('approvals-changed'));
+
+    await typeWithDelay(
+      `No worries — it'll be in the Skills page whenever you need it.`,
+      1500,
+    );
+
     await offerMarketResearch();
   }, [step, typeWithDelay, offerMarketResearch]);
 
@@ -846,6 +943,16 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                   models={modelOptions}
                   selectedModel={selectedModel}
                   onModelChange={setSelectedModel}
+                />
+              )}
+
+              {msg.weatherCard && (
+                <CLISkillApproval
+                  skillName={msg.weatherCard.skillName}
+                  skillDescription={msg.weatherCard.skillDescription}
+                  onApprove={handleApproveWeather}
+                  onSkip={handleSkipWeather}
+                  disabled={weatherApprovedRef.current || step !== 'waiting_weather_approve'}
                 />
               )}
 
@@ -1034,6 +1141,77 @@ function SingleSkillApproval({
           <button
             onClick={onApprove}
             className="retro-button !text-[8px] !py-1.5 !px-4 tracking-widest hover:!text-emerald-400"
+          >
+            APPROVE
+          </button>
+        </div>
+      )}
+
+      {disabled && (
+        <div className="flex items-center justify-center px-3 py-2 border-t border-emerald-500/20 bg-emerald-500/[0.04]">
+          <span className="font-pixel text-[10px] tracking-wider text-emerald-400">
+            {'\u2713'} ENABLED
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Simplified approval card for CLI skills (no model selector needed) */
+function CLISkillApproval({
+  skillName,
+  skillDescription,
+  onApprove,
+  onSkip,
+  disabled,
+}: {
+  skillName: string;
+  skillDescription: string;
+  onApprove: () => void;
+  onSkip: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-cyan-400/30 bg-cyan-400/[0.04] overflow-hidden">
+      <div className="px-3 py-2 border-b border-cyan-400/20 bg-cyan-400/[0.06]">
+        <div className="font-pixel text-[11px] tracking-widest text-cyan-300">
+          {'\u265B'} ENABLE CLI TOOL
+        </div>
+      </div>
+
+      <div className="px-3 py-3 flex items-start gap-2.5">
+        <CloudRain size={14} className="text-cyan-400 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <div className="font-pixel text-[10px] tracking-wider text-zinc-200">
+            {skillName}
+          </div>
+          <div className="font-pixel text-[10px] tracking-wider text-zinc-500 leading-relaxed mt-0.5">
+            {skillDescription}
+          </div>
+        </div>
+      </div>
+
+      <div className="px-3 py-2 border-t border-cyan-400/10">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-cyan-400" />
+          <span className="font-pixel text-[9px] tracking-wider text-cyan-400/70">
+            CLI TOOL — NO API KEY REQUIRED
+          </span>
+        </div>
+      </div>
+
+      {!disabled && (
+        <div className="flex items-center justify-between px-3 py-2.5 border-t border-cyan-400/20 bg-cyan-400/[0.03]">
+          <button
+            onClick={onSkip}
+            className="font-pixel text-[10px] tracking-wider text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            LATER
+          </button>
+          <button
+            onClick={onApprove}
+            className="retro-button !text-[8px] !py-1.5 !px-4 tracking-widest hover:!text-cyan-400"
           >
             APPROVE
           </button>

@@ -5,6 +5,7 @@ import { fireCEO as fireCEOFromDB } from './lib/database'
 import AppLayout from './components/Layout/AppLayout'
 import DashboardView from './components/Dashboard/DashboardView'
 import MissionsView from './components/Missions/MissionsView'
+import MissionDetailPage from './components/Missions/MissionDetailPage'
 import SurveillanceView from './components/Surveillance/SurveillanceView'
 import SurveillanceModule from './components/Surveillance/SurveillanceModule'
 import VaultView from './components/Vault/VaultView'
@@ -86,6 +87,7 @@ export default function App() {
         <Route path="/chat" element={<ChatView />} />
         <Route path="/approvals" element={<ApprovalsView />} />
         <Route path="/missions" element={<MissionsView />} />
+        <Route path="/missions/:id" element={<MissionDetailPage />} />
         <Route path="/surveillance" element={<SurveillanceView />} />
         <Route path="/skills" element={<SkillsView />} />
         <Route path="/vault" element={<VaultView />} />

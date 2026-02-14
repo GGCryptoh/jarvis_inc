@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { hasSupabaseConfig, initSupabase, pingSupabase, clearSupabaseConfig } from '../lib/supabase';
 import { isFounderInitialized, isCEOInitialized, resetDatabase } from '../lib/database';
+import { seedSkillsFromRepo } from '../lib/skillResolver';
 
 interface DatabaseState {
   ready: boolean;
@@ -61,6 +62,11 @@ export function useDatabase() {
           ceoInitialized: ceoReady,
           error: null,
         });
+
+        // Background: sync skills from GitHub repo on boot
+        seedSkillsFromRepo().catch((err) =>
+          console.warn('[useDatabase] Background skill seed failed:', err),
+        );
       } catch (err) {
         setState({
           ready: false,
@@ -74,9 +80,9 @@ export function useDatabase() {
   }, []);
 
   // Reset DB → truncate all tables, re-check
-  const reset = useCallback(async () => {
+  const reset = useCallback(async (options?: { keepMemory?: boolean }) => {
     setState({ ready: false, initialized: false, ceoInitialized: false, error: null });
-    await resetDatabase();
+    await resetDatabase(options);
     setState({ ready: true, initialized: false, ceoInitialized: false, error: null });
   }, []);
 

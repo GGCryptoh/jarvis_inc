@@ -20,6 +20,8 @@ interface PixelOfficeProps {
   ceoArchetype?: string | null;
   /** CEO risk tolerance level */
   ceoRiskTolerance?: string | null;
+  /** Active task executions (pending/running) */
+  activeTasks?: Array<{ skill: string; status: string; agent: string }>;
 }
 
 export default function PixelOffice({
@@ -33,6 +35,7 @@ export default function PixelOffice({
   priorities = [],
   ceoArchetype,
   ceoRiskTolerance,
+  activeTasks = [],
 }: PixelOfficeProps) {
   const [hoverExtinguisher, setHoverExtinguisher] = useState(false);
   const floorImage = FLOOR_IMAGES[roomTier];
@@ -101,6 +104,7 @@ export default function PixelOffice({
             top: '4%',
           }}
         >
+          {/* Priorities */}
           <div
             className="px-5 py-4 rounded-sm"
             style={{
@@ -120,6 +124,35 @@ export default function PixelOffice({
               )}
             </div>
           </div>
+
+          {/* Active Tasks */}
+          {activeTasks.length > 0 && (
+            <div
+              className="px-5 py-3 rounded-sm mt-2"
+              style={{
+                background: 'linear-gradient(180deg, rgba(0,200,255,0.08) 0%, rgba(0,200,255,0.03) 100%)',
+                border: '1px solid rgba(0,200,255,0.25)',
+                boxShadow: '0 0 10px rgba(0,200,255,0.06), inset 0 0 6px rgba(0,200,255,0.02)',
+              }}
+            >
+              <div className="font-pixel text-[7px] text-cyan-300/80 tracking-widest mb-1.5">ACTIVE TASKS</div>
+              <div className="font-pixel text-[6px] tracking-wider leading-[11px] space-y-1">
+                {activeTasks.slice(0, 4).map((t, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <span className={`w-1 h-1 rounded-full flex-shrink-0 ${
+                      t.status === 'running' ? 'bg-cyan-400 animate-pulse' : 'bg-yellow-400/60'
+                    }`} />
+                    <span className="text-cyan-200/70 truncate" style={{ maxWidth: '140px' }}>
+                      {t.skill}
+                    </span>
+                    <span className="text-gray-500/60 ml-auto flex-shrink-0">
+                      {t.agent}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -163,12 +196,13 @@ export default function PixelOffice({
       ))}
 
       {/* ---- Agent Sprites ---- */}
-      {agents.map(agent => (
+      {agents.map((agent, idx) => (
         <AgentSprite
           key={agent.id}
           agent={agent}
           onClick={() => onAgentClick(agent)}
           floorPlannerActive={floorPlannerActive}
+          facing={idx % 2 === 0 ? 'right' : 'left'}
         />
       ))}
 

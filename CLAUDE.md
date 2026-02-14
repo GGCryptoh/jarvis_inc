@@ -23,6 +23,7 @@ Detailed architecture docs live in the `AI/` directory. **Read these before maki
 | [`AI/Ceremonies.md`](AI/Ceremonies.md) | All ceremony flows: Founder, CEO, Walk-in, Agent Hire — state machines, triggers, settings, sound, door animations |
 | [`AI/CEO-Designate.md`](AI/CEO-Designate.md) | CEO personality config: 8 archetypes (Wharton MBA, Wall Street, MIT, etc.), risk tolerance thresholds, philosophy tone mapping, combined prompt assembly |
 | [`AI/CEO/CEO-Prompts.md`](AI/CEO/CEO-Prompts.md) | Every prompt template: CEO system/evaluation/delegation prompts, agent system/task prompts, JSON action schema, approval card metadata, conversation persistence |
+| [`AI/Workspace-Gateway.md`](AI/Workspace-Gateway.md) | Docker gateway service: workspace filesystem, artifact serving, CLI execution, dynamic nginx for web apps, port registry, Collateral integration |
 
 ## Tech Stack
 - **React 18** + **TypeScript** + **Vite 6**
@@ -122,7 +123,11 @@ State machine: `welcome → waiting_input → acknowledging → waiting_skill_ap
 - Skill-agent assignment: CEO assigns specific skills per agent, NOT global
 - Skills page: grid with toggles, model selectors
 - Skill recommender: keyword matching mission text → skill IDs
-- Seed repo: `seed_skills_repo/` mirrors https://github.com/GGCryptoh/jarvis_inc_skills
+- **`skills_repo/`** = git submodule → https://github.com/GGCryptoh/jarvis_inc_skills — **this is the canonical repo**, new skills go here, push to GitHub to sync
+- `seed_skills_repo/` = local reference copy inside jarvis_inc repo (for knowledge only, not synced by the app)
+- The app's `skillResolver.ts` fetches from the GitHub repo on seed — so `skills_repo/` → push → GitHub → app syncs → DB
+- Skill JSON includes `execution_handler` field that maps to named API handler functions in `skillExecutor.ts`
+- Schema: `skills_repo/schema/skill.schema.json` — defines all valid fields for skill JSON
 
 ### CEO Autonomy → See `AI/CEO-Agent-System.md` + `AI/CEO-Communication-Loop.md`
 - Scheduler: 5 options documented (Option B for demo, Option E for Supabase full mode)
@@ -198,12 +203,15 @@ jarvis_inc/
 │   ├── Data-Layer.md              # DB schema, dual-mode, DataService
 │   ├── Surveillance.md            # Pixel office, sprites, floors, animations
 │   └── Ceremonies.md              # All ceremony state machines
-├── seed_skills_repo/          # Mirrors https://github.com/GGCryptoh/jarvis_inc_skills
-│   ├── Official/              # 18 skill JSON files in 4 category folders
+├── skills_repo/               # Git submodule → https://github.com/GGCryptoh/jarvis_inc_skills (CANONICAL)
+│   ├── Official/              # Skill JSON files organized by category
 │   ├── Marketplace/           # Community-contributed (empty)
-│   ├── schema/skill.schema.json
+│   ├── schema/skill.schema.json  # JSON Schema for skill definitions
+│   └── manifest.json          # Skill manifest (paths + checksums)
+├── seed_skills_repo/          # Local reference copy (knowledge only, not app-synced)
+│   ├── Official/              # 19 skill JSON files in 4 category folders
 │   ├── manifest.json          # Test version
-│   └── real-manifest.json     # Complete manifest with checksums
+│   └── other-manifest.json    # Complete manifest
 ├── public/
 │   ├── sql-wasm.wasm          # sql.js WebAssembly binary
 │   ├── favicon.png            # App favicon

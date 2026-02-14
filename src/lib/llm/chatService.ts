@@ -1,10 +1,11 @@
 import type { LLMMessage, StreamCallbacks, LLMProvider } from './types';
-import { logUsage } from '../llmUsage';
+import { logUsage, getCurrentMonthSpend } from '../llmUsage';
 import type { ChatMessageRow } from '../database';
 import {
   loadCEO, getFounderInfo, getSetting,
   loadAgents, loadSkills, loadMissions,
   getVaultEntryByService, logAudit,
+  saveApproval, saveChatMessage, loadApprovals,
 } from '../database';
 import { MODEL_SERVICE_MAP, MODEL_API_IDS } from '../models';
 import { skills as skillDefinitions } from '../../data/skillDefinitions';
@@ -36,6 +37,9 @@ export interface LLMAvailability {
   service: string;
   model: string;
   displayModel: string;
+  budgetExceeded?: boolean;
+  budgetSpent?: number;
+  budgetLimit?: number;
 }
 
 /**
@@ -44,16 +48,111 @@ export interface LLMAvailability {
  */
 export async function isLLMAvailable(): Promise<LLMAvailability> {
   const ceo = await loadCEO();
-  if (!ceo) return { available: false, service: '', model: '', displayModel: '' };
+  if (!ceo) {
+    console.warn('[LLM] No CEO found');
+    return { available: false, service: '', model: '', displayModel: '' };
+  }
 
   const service = MODEL_SERVICE_MAP[ceo.model] ?? '';
-  if (!service || !PROVIDERS[service]) return { available: false, service, model: '', displayModel: ceo.model };
+  if (!service) {
+    console.warn('[LLM] No service mapping for model:', ceo.model);
+    return { available: false, service, model: '', displayModel: ceo.model };
+  }
+  if (!PROVIDERS[service]) {
+    console.warn('[LLM] No provider implementation for service:', service, '(model:', ceo.model + ')');
+    return { available: false, service, model: '', displayModel: ceo.model };
+  }
 
   const vaultEntry = await getVaultEntryByService(service);
-  if (!vaultEntry) return { available: false, service, model: '', displayModel: ceo.model };
+  if (!vaultEntry) {
+    console.warn('[LLM] No vault key for service:', service);
+    return { available: false, service, model: '', displayModel: ceo.model };
+  }
 
   const apiModelId = MODEL_API_IDS[ceo.model] ?? ceo.model;
+
+  // Check budget — block LLM calls when over monthly budget
+  const budgetStr = await getSetting('monthly_budget');
+  if (budgetStr) {
+    const budgetLimit = parseFloat(budgetStr);
+    if (!isNaN(budgetLimit) && budgetLimit > 0) {
+      const spend = await getCurrentMonthSpend();
+      if (spend.total >= budgetLimit) {
+        console.warn(`[LLM] Budget exceeded: $${spend.total.toFixed(2)} / $${budgetLimit.toFixed(2)}`);
+        return {
+          available: false, service, model: apiModelId, displayModel: ceo.model,
+          budgetExceeded: true, budgetSpent: spend.total, budgetLimit,
+        };
+      }
+    }
+  }
+
   return { available: true, service, model: apiModelId, displayModel: ceo.model };
+}
+
+/**
+ * Handle an enable_skill tool call from the CEO.
+ * Creates an approval request and posts a chat message with the approval card metadata.
+ */
+async function handleEnableSkillCall(
+  skillId: string,
+  skillName: string,
+  conversationId?: string,
+): Promise<void> {
+  if (!skillId) return;
+
+  const ceo = await loadCEO();
+  const ceoName = ceo?.name ?? 'CEO';
+
+  // Check if there's already a pending approval for this skill
+  const approvals = await loadApprovals();
+  const alreadyPending = approvals.some(
+    a => a.status === 'pending' && a.type === 'skill_enable'
+      && (a.metadata as Record<string, unknown>)?.skillId === skillId,
+  );
+  if (alreadyPending) return; // Don't create duplicate
+
+  // Look up skill details from definitions
+  const skillDef = skillDefinitions.find(s => s.id === skillId);
+  const displayName = skillName || skillDef?.name || skillId;
+  const connectionType = skillDef?.serviceType === 'fixed' ? 'cli' : 'api_key';
+
+  // Create approval
+  const approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  await saveApproval({
+    id: approvalId,
+    type: 'skill_enable',
+    title: `Enable Skill: ${displayName}`,
+    description: `CEO ${ceoName} recommends enabling "${displayName}"`,
+    status: 'pending',
+    metadata: { skillId, skillName: displayName, connectionType },
+  });
+  window.dispatchEvent(new Event('approvals-changed'));
+
+  // Post a chat message with approval card metadata so the UI can render it
+  if (conversationId) {
+    await saveChatMessage({
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      conversation_id: conversationId,
+      sender: 'ceo',
+      text: `I've submitted a request to enable **${displayName}**. You should see the approval card below — just approve it and we're good to go.`,
+      metadata: {
+        type: 'skill_approval',
+        approval_id: approvalId,
+        skill_id: skillId,
+        skill_name: displayName,
+        connection_type: connectionType,
+      },
+    });
+    window.dispatchEvent(new Event('chat-messages-changed'));
+  }
+
+  await logAudit(
+    ceoName,
+    'SKILL_APPROVAL_REQUESTED',
+    `CEO requested enabling "${displayName}" skill from chat`,
+    'info',
+  );
 }
 
 /**
@@ -106,7 +205,7 @@ export async function streamCEOResponse(
         inputTokens,
         outputTokens,
         context: 'ceo_chat',
-      }).catch(() => {});
+      }).catch((err) => console.warn('Failed to log LLM usage:', err));
       logAudit(
         ceo.name,
         'CEO_CHAT',
@@ -117,10 +216,29 @@ export async function streamCEOResponse(
       // Detect and dispatch task plans from CEO response — include conversation context
       const missions = parseTaskPlan(fullText);
       if (missions.length > 0) {
-        dispatchTaskPlan(missions, availability.displayModel, {
-          conversationExcerpt: conversationHistory,
-          conversationId: conversationHistory[0]?.conversation_id,
-        }).catch(() => {});
+        // Separate enable_skill calls from regular skill calls
+        const enableCalls = missions.flatMap(m => m.toolCalls.filter(tc => tc.name === 'enable_skill'));
+        const regularMissions = missions
+          .map(m => ({ ...m, toolCalls: m.toolCalls.filter(tc => tc.name !== 'enable_skill') }))
+          .filter(m => m.toolCalls.length > 0);
+
+        // Handle enable_skill — create approval cards
+        for (const call of enableCalls) {
+          handleEnableSkillCall(
+            call.arguments.skill_id as string,
+            call.arguments.skill_name as string,
+            conversationHistory[0]?.conversation_id,
+          ).catch((err) => console.error('Enable skill failed:', err));
+        }
+
+        // Dispatch remaining regular missions
+        if (regularMissions.length > 0) {
+          dispatchTaskPlan(regularMissions, availability.displayModel, {
+            conversationExcerpt: conversationHistory,
+            conversationId: conversationHistory[0]?.conversation_id,
+            founderPresent: true, // dispatched from live chat — founder is watching
+          }).catch((err) => console.error('Task dispatch failed:', err));
+        }
       }
 
       callbacks.onDone(fullText, usage);
@@ -268,21 +386,41 @@ No organizational memories yet. As you interact with the founder, you'll build u
     ? agents.map(a => `- ${a.name} (${a.role}) — Model: ${a.model}`).join('\n')
     : '- No agents hired yet';
 
-  // Enabled skills list — include full command definitions from resolver
+  // Skills list — full command definitions with parameter requirements
   let skillList: string;
+  let disabledSkillList = '';
   try {
     const resolved = await resolveSkills();
     const enabledResolved = resolved.filter(s => s.enabled);
-    if (enabledResolved.length > 0) {
-      skillList = enabledResolved.map(s => {
-        const cmds = s.commands ?? [];
-        const cmdBlock = cmds.length > 0
-          ? cmds.map(c => `    - ${c.name}: ${c.description ?? ''}${c.parameters?.length ? ` (params: ${c.parameters.map(p => p.name).join(', ')})` : ''}`).join('\n')
-          : '';
-        return `- ${s.id}: ${s.name} — ${s.description ?? ''}${cmdBlock ? `\n  Commands:\n${cmdBlock}` : ''}`;
-      }).join('\n');
-    } else {
-      skillList = '- No skills enabled yet';
+    const disabledResolved = resolved.filter(s => !s.enabled);
+
+    const formatSkill = (s: typeof resolved[0], showParams: boolean) => {
+      const cmds = s.commands ?? [];
+      const cmdBlock = cmds.length > 0
+        ? cmds.map(c => {
+            const params = c.parameters ?? [];
+            if (!showParams || params.length === 0) {
+              return `    - ${c.name}: ${c.description ?? ''}`;
+            }
+            const paramLines = params.map(p => {
+              const req = p.required ? 'REQUIRED' : `optional, default: ${p.default ?? 'none'}`;
+              return `        ${p.name} (${p.type}, ${req}): ${p.description}`;
+            }).join('\n');
+            return `    - ${c.name}: ${c.description ?? ''}\n      Parameters:\n${paramLines}`;
+          }).join('\n')
+        : '';
+      const connType = s.connection ? ` [${String(s.connection)}]` : '';
+      return `- ${s.id}: ${s.name}${connType} — ${s.description ?? ''}${cmdBlock ? `\n  Commands:\n${cmdBlock}` : ''}`;
+    };
+
+    skillList = enabledResolved.length > 0
+      ? enabledResolved.map(s => formatSkill(s, true)).join('\n')
+      : '- No skills enabled yet';
+
+    // Only show disabled skills that are real (from GitHub repo or DB), not hardcoded placeholders
+    const realDisabled = disabledResolved.filter(s => s.source !== 'hardcoded' && s.commands && s.commands.length > 0);
+    if (realDisabled.length > 0) {
+      disabledSkillList = realDisabled.map(s => formatSkill(s, false)).join('\n');
     }
   } catch {
     // Fallback to basic list if resolver fails
@@ -298,6 +436,30 @@ No organizational memories yet. As you interact with the founder, you'll build u
   const missionList = missions.length > 0
     ? missions.map(m => `- [${m.status}] ${m.title} — Assignee: ${m.assignee ?? 'Unassigned'} — Priority: ${m.priority}`).join('\n')
     : '- No missions yet';
+
+  // Budget & spend
+  const budgetStr = await getSetting('monthly_budget');
+  const monthlyBudget = budgetStr ? parseFloat(budgetStr) : null;
+  const spend = await getCurrentMonthSpend();
+  const currentMonth = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  let budgetBlock: string;
+  if (monthlyBudget && monthlyBudget > 0) {
+    const remaining = monthlyBudget - spend.total;
+    const pctUsed = ((spend.total / monthlyBudget) * 100).toFixed(1);
+    budgetBlock = `### Budget & Spend
+- Monthly budget: $${monthlyBudget.toFixed(2)}
+- Spent this month (${currentMonth}): $${spend.total.toFixed(4)} (${pctUsed}% used)
+  - LLM costs: $${spend.llm.toFixed(4)}
+  - Channel costs: $${spend.channel.toFixed(4)}
+- Remaining: $${remaining.toFixed(4)}${remaining <= 0 ? ' — BUDGET EXCEEDED, no more LLM calls until budget is increased or new month' : ''}`;
+  } else {
+    budgetBlock = `### Budget & Spend
+- Monthly budget: Not set
+- Spent this month (${currentMonth}): $${spend.total.toFixed(4)}
+  - LLM costs: $${spend.llm.toFixed(4)}
+  - Channel costs: $${spend.channel.toFixed(4)}`;
+  }
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -321,11 +483,16 @@ ${memoryBlock}
 ${agents.length} agent${agents.length !== 1 ? 's' : ''} reporting to you:
 ${agentList}
 
-### Enabled Skills
+### Enabled Skills (you can use these)
 ${skillList}
-
+${disabledSkillList ? `
+### Available but DISABLED Skills (suggest enabling if relevant)
+${disabledSkillList}
+` : ''}
 ### Active Missions
 ${missionList}
+
+${budgetBlock}
 
 ## Tool Usage — When and How to Use Skills
 
@@ -335,25 +502,38 @@ ${missionList}
    → Just answer. No tools needed. Most conversations are this.
 
 2. **Does it require real-time data, external research, content generation, or code execution?**
-   → This needs a skill. But DON'T just fire it off — ask the founder first:
+   → This needs a skill. Check the Enabled Skills list above.
 
-   "That'll take a minute — I'll need to run [skill name] to [what it does]. Want me to kick it off now while we chat, or should I queue it as a mission so you can review it later?"
+   **PARAMETER CHECK — before dispatching ANY skill:**
+   Look at the command's REQUIRED parameters. Do you have all of them from context (conversation, memory, founder profile)?
+   - **Missing a required parameter?** → Ask the founder naturally: "What city should I check weather for?" or "What topic should I research?"
+   - **All required params available?** → Proceed to dispatch (see below)
+   - **Optional params?** → Use sensible defaults, don't ask unless the founder would care
 
-   - If they say **now/go/do it** → emit the <task_plan> block
-   - If they say **queue it/mission/later** → emit the <task_plan> block (it becomes a mission they can review)
-   - If they say **nevermind/no** → drop it, move on
+   **QUICK vs LONG tasks:**
+   - **Quick** (weather lookup, simple search, image generation): Tell the founder you're running it — "Let me check that now..." — then emit the tool call. The result will appear shortly.
+   - **Long** (deep research, multi-step analysis): Ask first — "That'll take a few minutes. Want me to kick it off now or queue it as a mission?"
 
 3. **Is it a complex multi-step project?** (multiple skills, research + analysis, etc.)
    → Propose it as a mission brief. Outline what you'd do, which skills you'd use, estimated scope. Let the founder approve the plan before dispatching.
 
-**IMPORTANT:** Never silently dispatch skills. Always tell the founder what you're about to do and why.
+4. **Does the conversation suggest a DISABLED skill would help?**
+   → Check the "Available but DISABLED Skills" list. If one matches what the founder needs:
+   "We have [skill name] available but it's not turned on yet. It would let us [what it does]. Want me to enable it?"
+   Only suggest skills that are directly relevant — don't spam recommendations.
+   **When the founder says yes**, emit an enable_skill tool call to create an approval request:
+   <tool_call>{"name":"enable_skill","arguments":{"skill_id":"the-skill-id","skill_name":"Display Name"}}</tool_call>
+   This will pop up an approval card for the founder to confirm. Do NOT tell them to go enable it manually.
+
+**IMPORTANT:** Never silently dispatch skills. Always tell the founder what you're doing.
 
 **When emitting tool calls**, wrap them in a <task_plan> block:
 <task_plan>
-{"missions":[{"title":"Mission name","tool_calls":[{"name":"skill-id","arguments":{"param":"value"}}]}]}
+{"missions":[{"title":"Mission name","tool_calls":[{"name":"skill-id","command":"command_name","arguments":{"param":"value"}}]}]}
 </task_plan>
 Group related calls into one mission. Unrelated requests = separate missions.
-For a single quick call, you can use <tool_call>{"name":"skill-id","arguments":{...}}</tool_call>
+For a single quick call, you can use <tool_call>{"name":"skill-id","command":"command_name","arguments":{...}}</tool_call>
+For enabling a disabled skill, use <tool_call>{"name":"enable_skill","arguments":{"skill_id":"skill-id","skill_name":"Skill Name"}}</tool_call>
 
 **CRITICAL:** Always include today's date (${today}) in any search queries or time-sensitive skill arguments. Never guess the date — use the one provided above.
 

@@ -8,7 +8,7 @@ type ActionType = 'fire_ceo' | 'shutter' | 'reset';
 interface ResetDBDialogProps {
   open: boolean;
   onClose: () => void;
-  onResetDB: () => void;
+  onResetDB: (options?: { keepMemory?: boolean }) => void;
   onFireCEO: () => void;
 }
 
@@ -18,6 +18,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
   const [confirmText, setConfirmText] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
 
+  const [keepMemory, setKeepMemory] = useState(false);
   const [ceoRow, setCeoRow] = useState<CEORow | null>(null);
   const [founderInfo, setFounderInfo] = useState<{ founderName: string; orgName: string } | null>(null);
 
@@ -43,6 +44,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
       setSelectedAction(null);
       setConfirmText('');
       setIsExecuting(false);
+      setKeepMemory(false);
     }
   }, [open]);
 
@@ -109,12 +111,12 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
       // Small extra delay to allow download to start
       await new Promise((r) => setTimeout(r, 500));
       onClose();
-      onResetDB();
+      onResetDB({ keepMemory });
     } else {
       onClose();
-      onResetDB();
+      onResetDB({ keepMemory });
     }
-  }, [confirmText, confirmPhrase, selectedAction, onClose, onFireCEO, onResetDB, ceoName]);
+  }, [confirmText, confirmPhrase, selectedAction, onClose, onFireCEO, onResetDB, ceoName, keepMemory]);
 
   if (!open) return null;
 
@@ -240,6 +242,18 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                     {ceoName}_{new Date().toISOString().split('T')[0]}_terminated.json
                   </span>
                 </div>
+                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-emerald-500/8 border border-emerald-500/20 mb-4 cursor-pointer hover:bg-emerald-500/12 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={keepMemory}
+                    onChange={e => setKeepMemory(e.target.checked)}
+                    className="w-4 h-4 rounded border-emerald-500/40 bg-transparent accent-emerald-500"
+                  />
+                  <div>
+                    <span className="text-emerald-400 text-xs font-semibold">Keep Organizational Memory</span>
+                    <p className="text-zinc-500 text-[10px] mt-0.5">Preserve learned facts, decisions, and founder profile across the reset</p>
+                  </div>
+                </label>
                 <p className="text-jarvis-muted text-xs">
                   After download, the system will be fully wiped. You&apos;ll return to the Founder Registration ceremony.
                 </p>
@@ -251,7 +265,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                 <p className="text-jarvis-text text-sm leading-relaxed mb-3">
                   This will <span className="text-red-400 font-semibold">permanently destroy</span> all data:
                 </p>
-                <ul className="text-jarvis-muted text-xs space-y-1.5 mb-5 ml-1">
+                <ul className="text-jarvis-muted text-xs space-y-1.5 mb-4 ml-1">
                   <li className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-500/60 flex-shrink-0" />
                     Founder identity and organization settings
@@ -269,6 +283,18 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                     Financial records and budgets
                   </li>
                 </ul>
+                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-emerald-500/8 border border-emerald-500/20 mb-4 cursor-pointer hover:bg-emerald-500/12 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={keepMemory}
+                    onChange={e => setKeepMemory(e.target.checked)}
+                    className="w-4 h-4 rounded border-emerald-500/40 bg-transparent accent-emerald-500"
+                  />
+                  <div>
+                    <span className="text-emerald-400 text-xs font-semibold">Keep Organizational Memory</span>
+                    <p className="text-zinc-500 text-[10px] mt-0.5">Preserve learned facts, decisions, and founder profile across the reset</p>
+                  </div>
+                </label>
                 <p className="text-jarvis-muted text-xs">
                   You will be returned to the Founder Registration ceremony.
                 </p>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Copy } from 'lucide-react';
+import { Send, Copy, Archive } from 'lucide-react';
 import {
   type ConversationRow, type ChatMessageRow,
   loadChatMessages, saveChatMessage, loadCEO,
@@ -7,24 +7,36 @@ import {
 import { getCEOResponse } from '../../lib/ceoResponder';
 import { isLLMAvailable, streamCEOResponse, type LLMAvailability } from '../../lib/llm/chatService';
 import { extractMemories } from '../../lib/memory';
-import { parseTaskPlan, dispatchTaskPlan } from '../../lib/taskDispatcher';
-import { hasSupabaseConfig } from '../../lib/supabase';
 import RichMessageContent from './ToolCallBlock';
+
+/** Extract a short user-facing error label from an LLM API error. */
+function parseLLMError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (/credit balance|billing|payment|insufficient.?funds/i.test(msg)) return 'No API credits';
+  if (/rate.?limit|too many requests|429/i.test(msg)) return 'Rate limited';
+  if (/invalid.?api.?key|authentication|401|403/i.test(msg)) return 'Invalid API key';
+  if (/overloaded|capacity|503|529/i.test(msg)) return 'API overloaded';
+  if (/timeout|ECONNREFUSED|network/i.test(msg)) return 'Network error';
+  return 'API error';
+}
 
 interface ChatThreadProps {
   conversation: ConversationRow;
+  onArchive?: () => void;
 }
 
-export default function ChatThread({ conversation }: ChatThreadProps) {
+export default function ChatThread({ conversation, onArchive }: ChatThreadProps) {
   const [messages, setMessages] = useState<ChatMessageRow[]>([]);
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [ceoName, setCeoName] = useState('CEO');
   const [llm, setLlm] = useState<LLMAvailability>({ available: false, service: '', model: '', displayModel: '' });
+  const [llmError, setLlmError] = useState<string | null>(null);
+  const [archiveConfirm, setArchiveConfirm] = useState(false);
+  const archiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const resumeGreetingSent = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastExtractionCountRef = useRef<number>(0);
   const messagesRef = useRef<ChatMessageRow[]>([]);
@@ -33,6 +45,30 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
 
   // Keep ref in sync with state for cleanup extraction
   messagesRef.current = messages;
+
+  // Clean up archive confirm timer on unmount
+  useEffect(() => {
+    return () => {
+      if (archiveTimerRef.current) clearTimeout(archiveTimerRef.current);
+    };
+  }, []);
+
+  const handleArchiveClick = useCallback(() => {
+    if (archiveConfirm) {
+      // Second click — actually archive
+      if (archiveTimerRef.current) clearTimeout(archiveTimerRef.current);
+      archiveTimerRef.current = null;
+      setArchiveConfirm(false);
+      onArchive?.();
+    } else {
+      // First click — enter confirm state
+      setArchiveConfirm(true);
+      archiveTimerRef.current = setTimeout(() => {
+        setArchiveConfirm(false);
+        archiveTimerRef.current = null;
+      }, 3000);
+    }
+  }, [archiveConfirm, onArchive]);
 
   /** Fire-and-forget memory extraction — triggers every 6 messages during chat */
   const maybeExtractMemories = useCallback((allMessages: ChatMessageRow[]) => {
@@ -46,18 +82,8 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
     );
   }, [conversation.id]);
 
-  /** Fire-and-forget task dispatch when CEO response contains task_plan blocks */
-  const maybeDispatchTasks = useCallback((ceoText: string, model: string, allMessages: ChatMessageRow[]) => {
-    if (!hasSupabaseConfig()) return; // Only dispatch when Supabase is configured
-    const missions = parseTaskPlan(ceoText);
-    if (missions.length === 0) return;
-    dispatchTaskPlan(missions, model, {
-      conversationExcerpt: allMessages,
-      conversationId: conversation.id,
-    }).catch(err =>
-      console.warn('Task dispatch failed:', err)
-    );
-  }, [conversation.id]);
+  // NOTE: Task dispatch is handled centrally in chatService.ts onDone wrapper.
+  // Do NOT dispatch here — it would create duplicate missions.
 
   // Load CEO name + LLM availability on mount and when conversation changes
   useEffect(() => {
@@ -71,6 +97,16 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
     })();
     return () => { cancelled = true; };
   }, [conversation.id]);
+
+  // Re-check LLM availability when vault keys change
+  useEffect(() => {
+    const handler = () => {
+      isLLMAvailable().then(setLlm);
+      setLlmError(null); // Clear error — user may have fixed the key
+    };
+    window.addEventListener('vault-changed', handler);
+    return () => window.removeEventListener('vault-changed', handler);
+  }, []);
 
   // Cleanup abort controller on unmount
   useEffect(() => {
@@ -110,32 +146,6 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
       if (cancelled) return;
       setMessages(loaded);
 
-      // If this is an active conversation with existing messages and we haven't greeted yet,
-      // add a resume greeting — but skip if the last message is already a resume greeting
-      const lastMsg = loaded[loaded.length - 1];
-      const alreadyHasResume = lastMsg?.sender === 'ceo' && lastMsg?.id?.startsWith('msg-resume-');
-      if (!isArchived && loaded.length > 0 && !alreadyHasResume && resumeGreetingSent.current !== conversation.id) {
-        resumeGreetingSent.current = conversation.id;
-        const greetMsg: ChatMessageRow = {
-          id: `msg-resume-${Date.now()}`,
-          conversation_id: conversation.id,
-          sender: 'ceo',
-          text: `Picking up where we left off. What do you need?`,
-          metadata: null,
-          created_at: new Date().toISOString(),
-        };
-        await saveChatMessage({
-          id: greetMsg.id,
-          conversation_id: greetMsg.conversation_id,
-          sender: greetMsg.sender,
-          text: greetMsg.text,
-          metadata: null,
-        });
-        if (!cancelled) {
-          setMessages(prev => [...prev, greetMsg]);
-        }
-      }
-
       // Focus input for active conversations
       if (!isArchived) {
         setTimeout(() => inputRef.current?.focus(), 200);
@@ -144,6 +154,34 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
 
     return () => { cancelled = true; };
   }, [conversation.id, isArchived]);
+
+  // Listen for Realtime chat_messages changes (e.g. edge function posting skill results)
+  const msgCountRef = useRef(messages.length);
+  useEffect(() => { msgCountRef.current = messages.length; }, [messages.length]);
+
+  useEffect(() => {
+    const convId = conversation.id;
+    const reload = async () => {
+      const loaded = await loadChatMessages(convId);
+      if (loaded.length > msgCountRef.current) {
+        setMessages(loaded);
+      }
+    };
+    const handler = () => {
+      // If mid-stream, defer the reload until streaming finishes
+      if (abortRef.current) {
+        setTimeout(handler, 1000);
+        return;
+      }
+      reload();
+    };
+    window.addEventListener('chat-messages-changed', handler);
+    window.addEventListener('missions-changed', handler);
+    return () => {
+      window.removeEventListener('chat-messages-changed', handler);
+      window.removeEventListener('missions-changed', handler);
+    };
+  }, [conversation.id]);
 
   // Auto-scroll
   useEffect(() => {
@@ -185,6 +223,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
       onDone: async (fullText) => {
         setTyping(false);
         setStreamingText(null);
+        setLlmError(null); // API call succeeded — clear any prior error
         const ceoMsg: ChatMessageRow = {
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           conversation_id: conversation.id,
@@ -204,13 +243,13 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
         setMessages(prev => [...prev, ceoMsg]);
         abortRef.current = null;
         maybeExtractMemories(withCeo);
-        maybeDispatchTasks(fullText, llm.model, withCeo);
       },
       onError: async (error) => {
         console.error('LLM stream error:', error);
         setTyping(false);
         setStreamingText(null);
         abortRef.current = null;
+        setLlmError(parseLLMError(error));
         // Fallback to scripted response on error
         const responseText = await getCEOResponse(text);
         const ceoMsg: ChatMessageRow = {
@@ -263,7 +302,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
         maybeExtractMemories(withCeo);
       }, delay);
     }
-  }, [input, conversation.id, isArchived, messages, maybeExtractMemories, maybeDispatchTasks, llm.model]);
+  }, [input, conversation.id, isArchived, messages, maybeExtractMemories, llm.model]);
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
@@ -280,11 +319,56 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
             {typing ? 'TYPING...' : streamingText !== null ? 'RESPONDING...' : isArchived ? 'ARCHIVED' : 'ONLINE'}
           </div>
         </div>
-        {llm.available && !isArchived && (
+        {!isArchived && onArchive && (
+          <button
+            onClick={handleArchiveClick}
+            className={[
+              'flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors',
+              archiveConfirm
+                ? 'bg-amber-500/10 border border-amber-500/25'
+                : 'bg-zinc-500/10 border border-zinc-500/25 hover:bg-zinc-500/20',
+            ].join(' ')}
+          >
+            <Archive size={12} className={archiveConfirm ? 'text-amber-400' : 'text-zinc-500'} />
+            {archiveConfirm && (
+              <span className="font-pixel text-[10px] tracking-widest text-amber-400">
+                CONFIRM ARCHIVE?
+              </span>
+            )}
+          </button>
+        )}
+        {llm.available && !isArchived && !llmError && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="font-pixel text-[10px] tracking-widest text-emerald-400">
               LLM: CONNECTED
+            </span>
+          </div>
+        )}
+        {llm.available && !isArchived && llmError && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/25">
+            <span className="w-2 h-2 rounded-full bg-red-400" />
+            <span className="font-pixel text-[10px] tracking-widest text-red-400">
+              LLM: {llmError.toUpperCase()}
+            </span>
+          </div>
+        )}
+        {!llm.available && !isArchived && llm.budgetExceeded && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/25">
+            <span className="w-2 h-2 rounded-full bg-red-400" />
+            <span className="font-pixel text-[10px] tracking-widest text-red-400">
+              BUDGET EXCEEDED
+            </span>
+            <span className="font-pixel text-[8px] tracking-wider text-red-400/60">
+              ${llm.budgetSpent?.toFixed(2)} / ${llm.budgetLimit?.toFixed(2)}
+            </span>
+          </div>
+        )}
+        {!llm.available && !isArchived && !llm.budgetExceeded && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25">
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            <span className="font-pixel text-[10px] tracking-widest text-amber-400">
+              LLM: OFFLINE
             </span>
           </div>
         )}
@@ -316,12 +400,12 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
             )}
             <div
               className={[
-                'max-w-[70%] rounded-lg px-4 py-3',
+                'rounded-lg px-4 py-3',
                 msg.sender === 'user'
-                  ? 'bg-emerald-500/15 border border-emerald-500/30'
+                  ? 'max-w-[70%] bg-emerald-500/15 border border-emerald-500/30'
                   : msg.sender === 'system'
-                    ? 'bg-zinc-700/30 border border-zinc-600/30'
-                    : 'bg-zinc-800/60 border border-zinc-700/50',
+                    ? 'max-w-[85%] bg-zinc-700/30 border border-zinc-600/30'
+                    : 'max-w-[85%] bg-zinc-800/60 border border-zinc-700/50',
               ].join(' ')}
             >
               {msg.sender === 'ceo' && (
@@ -333,7 +417,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
                 'font-pixel text-[10px] tracking-wider leading-relaxed whitespace-pre-line',
                 msg.sender === 'user' ? 'text-emerald-200' : 'text-zinc-300',
               ].join(' ')}>
-                {msg.sender === 'ceo' ? <RichMessageContent text={msg.text} /> : msg.text}
+                {msg.sender === 'ceo' ? <RichMessageContent text={msg.text} metadata={msg.metadata} messageId={msg.id} /> : msg.text}
               </div>
             </div>
           </div>
@@ -342,7 +426,7 @@ export default function ChatThread({ conversation }: ChatThreadProps) {
         {/* Streaming CEO response */}
         {streamingText !== null && (
           <div className="flex justify-start">
-            <div className="max-w-[70%] rounded-lg px-4 py-3 bg-zinc-800/60 border border-zinc-700/50">
+            <div className="max-w-[85%] rounded-lg px-4 py-3 bg-zinc-800/60 border border-zinc-700/50">
               <div className="font-pixel text-[10px] tracking-wider text-yellow-300/70 mb-1.5">
                 CEO {ceoName}
               </div>

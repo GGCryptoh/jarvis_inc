@@ -3,10 +3,10 @@ _format_version: "1.1"
 consumers:
   - username: anon
     keyauth_credentials:
-      - key: ${SUPABASE_ANON_KEY}
+      - key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzcwOTU5NzYzLCJleHAiOjIwODYzMTk3NjN9.UxjdMHSyjd_CJOyXeWirucZHvF_wmzX2lRxaEeibfy4
   - username: service_role
     keyauth_credentials:
-      - key: ${SUPABASE_SERVICE_KEY}
+      - key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3NzA5NTk3NjMsImV4cCI6MjA4NjMxOTc2M30.X8Vb8a7EAZ8db-DU-zD1Tz5bLc4Ju6-9zyLYgDIQS_8
 
 acls:
   - consumer: anon
@@ -74,3 +74,14 @@ services:
           allow:
             - admin
             - anon
+
+  # ─── Edge Functions (Deno runtime) ───────────────────────
+  - name: functions-v1
+    url: http://supabase-functions:9000/
+    routes:
+      - name: functions-v1-all
+        strip_path: true
+        paths:
+          - /functions/v1/
+    plugins:
+      - name: cors

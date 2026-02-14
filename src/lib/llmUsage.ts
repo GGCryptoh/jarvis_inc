@@ -12,12 +12,14 @@ export interface UsageEntry {
   missionId?: string;
   agentId?: string;
   conversationId?: string;
+  /** Override estimated cost (e.g. DALL-E fixed per-image pricing) */
+  costOverride?: number;
 }
 
 export async function logUsage(entry: UsageEntry): Promise<void> {
-  const cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
+  const cost = entry.costOverride ?? estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
   const id = `usage-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  await getSupabase().from('llm_usage').insert({
+  const { error } = await getSupabase().from('llm_usage').insert({
     id,
     provider: entry.provider,
     model: entry.model,
@@ -29,12 +31,17 @@ export async function logUsage(entry: UsageEntry): Promise<void> {
     agent_id: entry.agentId ?? null,
     conversation_id: entry.conversationId ?? null,
   });
+  if (error) {
+    console.warn('logUsage insert failed:', error.message, error.details);
+    throw error;
+  }
 }
 
 export async function getTotalUsage(): Promise<{ totalTokens: number; totalCost: number }> {
-  const { data } = await getSupabase()
+  const { data, error } = await getSupabase()
     .from('llm_usage')
     .select('input_tokens, output_tokens, estimated_cost');
+  if (error) console.warn('getTotalUsage query failed:', error.message);
   if (!data || data.length === 0) return { totalTokens: 0, totalCost: 0 };
   return {
     totalTokens: data.reduce((sum, r) => sum + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0),
@@ -43,10 +50,11 @@ export async function getTotalUsage(): Promise<{ totalTokens: number; totalCost:
 }
 
 export async function getUsageByContext(context: UsageContext): Promise<{ totalTokens: number; totalCost: number }> {
-  const { data } = await getSupabase()
+  const { data, error } = await getSupabase()
     .from('llm_usage')
     .select('input_tokens, output_tokens, estimated_cost')
     .eq('context', context);
+  if (error) console.warn('getUsageByContext query failed:', error.message);
   if (!data || data.length === 0) return { totalTokens: 0, totalCost: 0 };
   return {
     totalTokens: data.reduce((sum, r) => sum + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0),
@@ -55,13 +63,15 @@ export async function getUsageByContext(context: UsageContext): Promise<{ totalT
 }
 
 export async function getMonthlyUsage(): Promise<{ month: string; llmCost: number; channelCost: number }[]> {
-  const { data: llm } = await getSupabase()
+  const { data: llm, error: llmErr } = await getSupabase()
     .from('llm_usage')
     .select('created_at, estimated_cost');
+  if (llmErr) console.warn('getMonthlyUsage llm query failed:', llmErr.message);
 
-  const { data: channels } = await getSupabase()
+  const { data: channels, error: chanErr } = await getSupabase()
     .from('channel_usage')
     .select('created_at, cost');
+  if (chanErr) console.warn('getMonthlyUsage channel query failed:', chanErr.message);
 
   // Group by month (YYYY-MM format)
   const months: Record<string, { llm: number; channel: number }> = {};
@@ -88,15 +98,17 @@ export async function getCurrentMonthSpend(): Promise<{ llm: number; channel: nu
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
 
-  const { data: llm } = await getSupabase()
+  const { data: llm, error: llmErr } = await getSupabase()
     .from('llm_usage')
     .select('estimated_cost')
     .gte('created_at', startOfMonth.toISOString());
+  if (llmErr) console.warn('getCurrentMonthSpend llm query failed:', llmErr.message);
 
-  const { data: channels } = await getSupabase()
+  const { data: channels, error: chanErr } = await getSupabase()
     .from('channel_usage')
     .select('cost')
     .gte('created_at', startOfMonth.toISOString());
+  if (chanErr) console.warn('getCurrentMonthSpend channel query failed:', chanErr.message);
 
   const llmTotal = (llm ?? []).reduce((s, r) => s + (r.estimated_cost ?? 0), 0);
   const channelTotal = (channels ?? []).reduce((s, r) => s + (r.cost ?? 0), 0);
@@ -105,10 +117,11 @@ export async function getCurrentMonthSpend(): Promise<{ llm: number; channel: nu
 }
 
 export async function getAgentUsage(agentId: string): Promise<{ totalTokens: number; totalCost: number; taskCount: number }> {
-  const { data } = await getSupabase()
+  const { data, error } = await getSupabase()
     .from('llm_usage')
     .select('input_tokens, output_tokens, estimated_cost')
     .eq('agent_id', agentId);
+  if (error) console.warn('getAgentUsage query failed:', error.message);
 
   if (!data || data.length === 0) return { totalTokens: 0, totalCost: 0, taskCount: 0 };
   return {

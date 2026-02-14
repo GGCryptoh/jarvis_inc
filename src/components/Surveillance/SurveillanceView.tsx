@@ -11,7 +11,7 @@ import {
   generateDeskPositions,
   getDeskCountWithSpare,
 } from '../../lib/positionGenerator';
-import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions, logAudit, assignSkillToAgent } from '../../lib/database';
+import { loadAgents, saveAgent, deleteAgent as dbDeleteAgent, loadCEO, getSetting, setSetting, saveAgentDeskPosition, saveCEODeskPosition, getVaultEntryByService, saveApproval, loadMissions, logAudit, assignSkillToAgent, updateCEOAppearance, getAgentConfidence } from '../../lib/database';
 import type { AgentRow } from '../../lib/database';
 import { getServiceForModel } from '../../lib/models';
 import CRTFrame from './CRTFrame';
@@ -19,7 +19,10 @@ import PixelOffice from './PixelOffice';
 import HireAgentModal from './HireAgentModal';
 import type { AgentConfig } from './HireAgentModal';
 import { playSuccessJingle } from '../../lib/sounds';
-import { Pencil, Trash2, Zap, PlusCircle } from 'lucide-react';
+import { loadPendingActions, markActionSeen, type CEOAction } from '../../lib/ceoActionQueue';
+import { Pencil, Trash2, Zap, PlusCircle, MessageSquare } from 'lucide-react';
+import { loadAgentActivity, type AgentActivity } from '../../lib/database';
+import QuickChatPanel from './QuickChatPanel';
 
 type CeremonyStage = 'entering' | 'celebrating' | 'walking_to_desk' | 'seated' | null;
 
@@ -34,7 +37,7 @@ const DEFAULT_TASKS = [
   'Optimizing parameters...',
 ];
 
-function rowToAgent(row: AgentRow, pos: Position, index: number): Agent {
+function rowToAgent(row: AgentRow, pos: Position, index: number, confidence?: number): Agent {
   return {
     id: row.id,
     name: row.name,
@@ -45,7 +48,7 @@ function rowToAgent(row: AgentRow, pos: Position, index: number): Agent {
     position: { ...pos },
     targetPosition: { ...pos },
     currentTask: DEFAULT_TASKS[index % DEFAULT_TASKS.length],
-    confidence: 70 + Math.floor(Math.random() * 25),
+    confidence: confidence ?? 70,
     costSoFar: parseFloat((Math.random() * 0.5).toFixed(2)),
     model: row.model,
   };
@@ -58,12 +61,17 @@ export default function SurveillanceView() {
   const [hireModalOpen, setHireModalOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
+  const [quickChatOpen, setQuickChatOpen] = useState(false);
+
   const [ceoAgent, setCeoAgent] = useState<Agent | null>(null);
   const [ceoArchetype, setCeoArchetype] = useState<string | null>(null);
   const [ceoRiskTolerance, setCeoRiskTolerance] = useState<string | null>(null);
 
   // Mission priorities for holographic board
   const [priorities, setPriorities] = useState<string[]>([]);
+
+  // Active tasks for holographic board
+  const [activeTasks, setActiveTasks] = useState<Array<{ skill: string; status: string; agent: string }>>([]);
 
   // Floor planner state
   const [floorPlannerActive, setFloorPlannerActive] = useState(false);
@@ -79,9 +87,17 @@ export default function SurveillanceView() {
   // ---- Approval notification state ----
   const [showApproval, setShowApproval] = useState(false);
 
+  // ---- CEO proactive action notifications ----
+  const [ceoActions, setCeoActions] = useState<CEOAction[]>([]);
+  const dismissedAtRef = useRef<string | null>(localStorage.getItem('jarvis_ceo_dismissed_at'));
+
   // Hire ceremony: tracks which agent is being ceremonially introduced
   const [hireCeremony, setHireCeremony] = useState<{ agentId: string; stage: CeremonyStage; deskPos: Position } | null>(null);
   const hireCeremonyRef = useRef<typeof hireCeremony>(null);
+
+  // Ref for agents (used in confidence refresh to avoid dependency loops)
+  const agentsRef = useRef(agents);
+  useEffect(() => { agentsRef.current = agents; }, [agents]);
 
   // Keep refs in sync
   useEffect(() => { ceoStageRef.current = ceoStage; }, [ceoStage]);
@@ -96,13 +112,14 @@ export default function SurveillanceView() {
       // Fallback desks for agents beyond the tier presets
       const fallbackDesks = generateDeskPositions(getDeskCountWithSpare(rows.length));
 
-      const loaded = rows.map((row, i) => {
+      const loaded = await Promise.all(rows.map(async (row, i) => {
         // Use DB position if set, otherwise tier preset, otherwise generated fallback
         const pos: Position = (row.desk_x != null && row.desk_y != null)
           ? { x: row.desk_x, y: row.desk_y }
           : tierPresets[i] ?? fallbackDesks[i] ?? { x: 30 + (i % 3) * 20, y: 40 + Math.floor(i / 3) * 20 };
-        return rowToAgent(row, pos, i);
-      });
+        const confidence = await getAgentConfidence(row.id);
+        return rowToAgent(row, pos, i, confidence);
+      }));
       setAgents(loaded);
 
       // CEO walk-in on first visit
@@ -115,6 +132,11 @@ export default function SurveillanceView() {
           ? { x: ceoRow.desk_x, y: ceoRow.desk_y }
           : TIER_CEO_POSITION[tier];
 
+        const ceoColor = ceoRow.color ?? '#f1fa8c';
+        const ceoSkin = ceoRow.skin_tone ?? '#ffcc99';
+
+        const ceoConfidence = await getAgentConfidence('ceo');
+
         const walkedIn = await getSetting('ceo_walked_in');
         if (!walkedIn) {
           setCeoStage('entering');
@@ -122,13 +144,13 @@ export default function SurveillanceView() {
             id: 'ceo',
             name: ceoRow.name,
             role: 'Chief Executive Officer',
-            color: '#f1fa8c',
-            skinTone: '#ffcc99',
+            color: ceoColor,
+            skinTone: ceoSkin,
             status: 'walking',
             position: { ...ENTRANCE_POSITION },
             targetPosition: { ...CENTER_STAGE },
             currentTask: `Philosophy: ${ceoRow.philosophy}`,
-            confidence: 99,
+            confidence: ceoConfidence,
             costSoFar: 0,
             model: ceoRow.model,
           });
@@ -137,13 +159,13 @@ export default function SurveillanceView() {
             id: 'ceo',
             name: ceoRow.name,
             role: 'Chief Executive Officer',
-            color: '#f1fa8c',
-            skinTone: '#ffcc99',
+            color: ceoColor,
+            skinTone: ceoSkin,
             status: 'working',
             position: { ...ceoPos },
             targetPosition: { ...ceoPos },
             currentTask: `Philosophy: ${ceoRow.philosophy}`,
-            confidence: 99,
+            confidence: ceoConfidence,
             costSoFar: 0,
             model: ceoRow.model,
           });
@@ -220,6 +242,29 @@ export default function SurveillanceView() {
     };
   }, [ceoAgent?.id, ceoStage]);
 
+  // ---- Refresh confidence scores when tasks complete ----
+  useEffect(() => {
+    const refreshConfidence = async () => {
+      const currentAgents = agentsRef.current;
+      const updatedAgents = await Promise.all(
+        currentAgents.map(async a => {
+          const conf = await getAgentConfidence(a.id);
+          return conf !== a.confidence ? { ...a, confidence: conf } : a;
+        })
+      );
+      // Only update if any confidence actually changed
+      if (updatedAgents.some((a, i) => a.confidence !== currentAgents[i]?.confidence)) {
+        setAgents(updatedAgents);
+      }
+      // CEO
+      const ceoConf = await getAgentConfidence('ceo');
+      setCeoAgent(prev => prev && prev.confidence !== ceoConf ? { ...prev, confidence: ceoConf } : prev);
+    };
+
+    window.addEventListener('task-executions-changed', refreshConfidence);
+    return () => window.removeEventListener('task-executions-changed', refreshConfidence);
+  }, []);
+
   // ---- Load missions for priorities board ----
   useEffect(() => {
     const refreshPriorities = async () => {
@@ -243,6 +288,63 @@ export default function SurveillanceView() {
     refreshPriorities();
     const interval = setInterval(refreshPriorities, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // ---- Load active task executions for holographic board ----
+  useEffect(() => {
+    const refreshTasks = async () => {
+      try {
+        const { getSupabase } = await import('../../lib/supabase');
+        const { data } = await getSupabase()
+          .from('task_executions')
+          .select('skill_id, status, agent_id')
+          .in('status', ['pending', 'running'])
+          .order('created_at', { ascending: false })
+          .limit(5);
+        setActiveTasks((data ?? []).map(t => ({
+          skill: t.skill_id,
+          status: t.status,
+          agent: t.agent_id === 'ceo' ? (ceoAgent?.name ?? 'CEO') : (agents.find(a => a.id === t.agent_id)?.name ?? t.agent_id),
+        })));
+      } catch { setActiveTasks([]); }
+    };
+    refreshTasks();
+    window.addEventListener('task-executions-changed', refreshTasks);
+    window.addEventListener('missions-changed', refreshTasks);
+    const interval = setInterval(refreshTasks, 5000);
+    return () => {
+      window.removeEventListener('task-executions-changed', refreshTasks);
+      window.removeEventListener('missions-changed', refreshTasks);
+      clearInterval(interval);
+    };
+  }, [ceoAgent?.name, agents]);
+
+  // ---- Load pending CEO proactive actions (only recent + not dismissed) ----
+  useEffect(() => {
+    const refresh = async () => {
+      try {
+        const actions = await loadPendingActions();
+        // Only show actions created after the last dismiss (if any)
+        const cutoff = dismissedAtRef.current;
+        const filtered = cutoff
+          ? actions.filter(a => a.created_at > cutoff)
+          : actions;
+        // Only show actions from the last 30 minutes
+        const recency = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        setCeoActions(filtered.filter(a => a.created_at > recency));
+      } catch {
+        setCeoActions([]);
+      }
+    };
+    refresh();
+    window.addEventListener('ceo-actions-changed', refresh);
+    window.addEventListener('task-executions-changed', refresh);
+    const interval = setInterval(refresh, 8000);
+    return () => {
+      window.removeEventListener('ceo-actions-changed', refresh);
+      window.removeEventListener('task-executions-changed', refresh);
+      clearInterval(interval);
+    };
   }, []);
 
   // ---- CEO ceremony stage effects ----
@@ -365,31 +467,47 @@ export default function SurveillanceView() {
   const handleEdit = useCallback(async (config: AgentConfig) => {
     if (!editingAgent) return;
 
-    await saveAgent({
-      id: editingAgent.id,
-      name: config.name,
-      role: config.role,
-      color: config.color,
-      skin_tone: config.skinTone,
-      model: config.model,
-    });
+    if (editingAgent.id === 'ceo') {
+      // CEO: update appearance in ceo table
+      await updateCEOAppearance(config.color, config.skinTone, config.name);
+      setCeoAgent(prev => prev ? {
+        ...prev,
+        name: config.name,
+        color: config.color,
+        skinTone: config.skinTone,
+      } : prev);
+      setSelectedAgent(prev =>
+        prev && prev.id === 'ceo'
+          ? { ...prev, name: config.name, color: config.color, skinTone: config.skinTone }
+          : prev,
+      );
+    } else {
+      await saveAgent({
+        id: editingAgent.id,
+        name: config.name,
+        role: config.role,
+        color: config.color,
+        skin_tone: config.skinTone,
+        model: config.model,
+      });
 
-    setAgents(prev =>
-      prev.map(a =>
-        a.id === editingAgent.id
-          ? { ...a, name: config.name, role: config.role, color: config.color, skinTone: config.skinTone, model: config.model }
-          : a,
-      ),
-    );
+      setAgents(prev =>
+        prev.map(a =>
+          a.id === editingAgent.id
+            ? { ...a, name: config.name, role: config.role, color: config.color, skinTone: config.skinTone, model: config.model }
+            : a,
+        ),
+      );
 
-    setSelectedAgent(prev =>
-      prev && prev.id === editingAgent.id
-        ? { ...prev, name: config.name, role: config.role, color: config.color, skinTone: config.skinTone, model: config.model }
-        : prev,
-    );
+      setSelectedAgent(prev =>
+        prev && prev.id === editingAgent.id
+          ? { ...prev, name: config.name, role: config.role, color: config.color, skinTone: config.skinTone, model: config.model }
+          : prev,
+      );
+    }
 
     setEditingAgent(null);
-    await logAudit(config.name, 'AGENT_EDITED', `Edited agent "${config.name}" (${config.role})`, 'info');
+    await logAudit(config.name, 'AGENT_EDITED', `Edited ${editingAgent.id === 'ceo' ? 'CEO' : 'agent'} "${config.name}"`, 'info');
   }, [editingAgent]);
 
   // ---- Fire (delete) an agent (persists to DB) ----
@@ -537,7 +655,7 @@ export default function SurveillanceView() {
 
   return (
     <div className="flex h-full">
-      <div className="flex-1 flex flex-col p-4 min-w-0">
+      <div className="flex-1 flex flex-col p-4 min-w-0 relative">
         {/* ---- Header: Live indicator + top menu + hire button ---- */}
         <div className="flex items-center justify-between mb-2">
           <div className="font-pixel text-pixel-green text-[9px] flex items-center gap-2 tracking-wider">
@@ -592,12 +710,18 @@ export default function SurveillanceView() {
             ceo={ceoAgent}
             roomTier={roomTier}
             priorities={priorities}
+            activeTasks={activeTasks}
             floorPlannerActive={floorPlannerActive}
             onFloorClick={handleFloorClick}
             ceoArchetype={ceoArchetype}
             ceoRiskTolerance={ceoRiskTolerance}
           />
         </CRTFrame>
+
+        {/* Quick Chat Panel */}
+        {quickChatOpen && (
+          <QuickChatPanel onClose={() => setQuickChatOpen(false)} />
+        )}
       </div>
 
       {selectedAgent && (
@@ -606,6 +730,7 @@ export default function SurveillanceView() {
           onClose={() => setSelectedAgent(null)}
           onEdit={(agent) => setEditingAgent(agent)}
           onFire={(agent) => handleFire(agent.id)}
+          onQuickChat={() => setQuickChatOpen(true)}
           isCEO={selectedAgent.id === 'ceo'}
         />
       )}
@@ -655,6 +780,61 @@ export default function SurveillanceView() {
           </div>
         </div>
       )}
+
+      {/* ---- CEO Proactive Actions ---- */}
+      {ceoActions.length > 0 && !showApproval && !quickChatOpen && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center pb-8 pointer-events-none">
+          <div
+            className="pointer-events-auto retro-window max-w-sm w-full animate-slide-up"
+            style={{ animation: 'slide-up 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards' }}
+          >
+            <div className="retro-window-title !text-[8px] !py-2 !px-3">
+              <span className="flex items-center gap-2">
+                <MessageSquare size={10} className="text-yellow-300" />
+                CEO WANTS TO CHAT
+              </span>
+            </div>
+            <div className="retro-window-body !m-2 flex flex-col items-center gap-3 py-3">
+              <div className="text-center">
+                <div className="font-pixel text-[9px] tracking-wider text-zinc-200 leading-relaxed">
+                  <span className="text-yellow-300">{ceoAgent?.name ?? 'CEO'}</span> says:
+                </div>
+                <div className="font-pixel text-[8px] tracking-wider text-zinc-400 leading-relaxed mt-1">
+                  {ceoActions[0].message}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="retro-button !text-[9px] !py-2 !px-6 tracking-widest hover:!text-emerald-400 !border-emerald-500/30"
+                  onClick={async () => {
+                    const action = ceoActions[0];
+                    setCeoActions([]);
+                    await markActionSeen(action.id);
+                    navigate('/chat');
+                  }}
+                >
+                  OPEN CHAT
+                </button>
+                <button
+                  className="retro-button !text-[8px] !py-2 !px-4 tracking-widest hover:!text-zinc-300"
+                  onClick={async () => {
+                    // Dismiss in DB + immediately clear from UI + persist across navigation
+                    const action = ceoActions[0];
+                    const now = new Date().toISOString();
+                    dismissedAtRef.current = now;
+                    localStorage.setItem('jarvis_ceo_dismissed_at', now);
+                    setCeoActions([]);
+                    const { dismissAction } = await import('../../lib/ceoActionQueue');
+                    await dismissAction(action.id);
+                  }}
+                >
+                  LATER
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -668,11 +848,28 @@ interface AgentDetailSidebarProps {
   onClose: () => void;
   onEdit: (agent: Agent) => void;
   onFire: (agent: Agent) => void;
+  onQuickChat: () => void;
   isCEO?: boolean;
 }
 
-function AgentDetailSidebar({ agent, onClose, onEdit, onFire, isCEO }: AgentDetailSidebarProps) {
+function AgentDetailSidebar({ agent, onClose, onEdit, onFire, onQuickChat, isCEO }: AgentDetailSidebarProps) {
   const [confirmFire, setConfirmFire] = useState(false);
+  const [activity, setActivity] = useState<AgentActivity | null>(null);
+  const [realCost, setRealCost] = useState<{ totalCost: number; taskCount: number } | null>(null);
+
+  // Load live activity + real cost for this agent
+  useEffect(() => {
+    let cancelled = false;
+    loadAgentActivity(agent.id).then(a => {
+      if (!cancelled) setActivity(a);
+    }).catch(() => {});
+    import('../../lib/llmUsage').then(({ getAgentUsage }) => {
+      getAgentUsage(agent.id).then(u => {
+        if (!cancelled) setRealCost(u);
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [agent.id]);
 
   const confidenceColor =
     agent.confidence >= 85
@@ -764,23 +961,104 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire, isCEO }: AgentDeta
         <div>
           <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">COST SO FAR</div>
           <div className="font-pixel text-[12px] text-pixel-yellow tracking-wider">
-            ${agent.costSoFar.toFixed(2)}
+            ${(realCost?.totalCost ?? agent.costSoFar).toFixed(4)}
           </div>
+          {realCost && realCost.taskCount > 0 && (
+            <div className="font-pixel text-[6px] text-gray-500 tracking-wider mt-0.5">
+              {realCost.taskCount} TASK{realCost.taskCount !== 1 ? 'S' : ''} EXECUTED
+            </div>
+          )}
         </div>
+
+        {/* Live Activity */}
+        {activity && (
+          <>
+            <div className="border-t border-pixel-crt-border" />
+            <div>
+              <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">ACTIVE MISSION</div>
+              {activity.mission ? (
+                <div className="retro-inset p-2">
+                  <div className="font-pixel text-[7px] text-pixel-green tracking-wider leading-relaxed">
+                    {activity.mission.title}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`font-pixel text-[6px] tracking-wider px-1 py-0.5 rounded-sm ${
+                      activity.mission.status === 'in_progress' ? 'bg-pixel-green/20 text-pixel-green'
+                        : activity.mission.status === 'review' ? 'bg-pixel-orange/20 text-pixel-orange'
+                        : 'bg-gray-600/20 text-gray-400'
+                    }`}>
+                      {activity.mission.status.toUpperCase().replace('_', ' ')}
+                    </span>
+                    <span className={`font-pixel text-[6px] tracking-wider ${
+                      activity.mission.priority === 'critical' ? 'text-red-400'
+                        : activity.mission.priority === 'high' ? 'text-pixel-orange'
+                        : 'text-gray-500'
+                    }`}>
+                      {activity.mission.priority.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="font-pixel text-[7px] text-gray-500 tracking-wider">
+                  No active mission
+                </div>
+              )}
+            </div>
+
+            {activity.taskExecution && (
+              <div>
+                <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">EXECUTING</div>
+                <div className="retro-inset p-2 flex items-center gap-2">
+                  <Zap size={8} className="text-pixel-cyan flex-shrink-0" />
+                  <div>
+                    <div className="font-pixel text-[7px] text-pixel-cyan tracking-wider">
+                      {activity.taskExecution.skill_id}
+                    </div>
+                    <div className="font-pixel text-[6px] text-gray-500 tracking-wider">
+                      {activity.taskExecution.command_name} — {activity.taskExecution.status}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!activity.taskExecution && !activity.mission && (
+              <div>
+                <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">ACTIVITY</div>
+                <div className="font-pixel text-[7px] text-gray-500 tracking-wider italic">
+                  Idle — waiting for assignment
+                </div>
+              </div>
+            )}
+
+            {activity.assignedSkills.length > 0 && (
+              <div>
+                <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">SKILLS ({activity.assignedSkills.length})</div>
+                <div className="flex flex-wrap gap-1">
+                  {activity.assignedSkills.map(s => (
+                    <span key={s} className="font-pixel text-[6px] tracking-wider px-1.5 py-0.5 rounded-sm bg-pixel-cyan/10 text-pixel-cyan border border-pixel-cyan/20">
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
 
         <div className="flex-1" />
 
         <div className="flex flex-col gap-1">
+          <button
+            className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-cyan flex items-center justify-center gap-2"
+            onClick={() => onEdit(agent)}
+          >
+            <Pencil size={10} />
+            EDIT LOOK
+          </button>
+
           {!isCEO && (
             <>
-              <button
-                className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-cyan flex items-center justify-center gap-2"
-                onClick={() => onEdit(agent)}
-              >
-                <Pencil size={10} />
-                EDIT SPRITE
-              </button>
-
               {!confirmFire ? (
                 <button
                   className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-pink flex items-center justify-center gap-2"
@@ -807,6 +1085,14 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire, isCEO }: AgentDeta
               )}
             </>
           )}
+
+          <button
+            className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-cyan flex items-center justify-center gap-2"
+            onClick={onQuickChat}
+          >
+            <MessageSquare size={10} />
+            QUICK CHAT
+          </button>
 
           <button
             className="retro-button w-full !text-[9px] !py-2 text-center tracking-widest hover:!text-pixel-orange"

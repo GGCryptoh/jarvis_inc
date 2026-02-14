@@ -8,12 +8,52 @@ import {
   Search,
   RefreshCw,
   FlaskConical,
+  Trash2,
+  // Lucide icons for skill rendering
+  Mail,
+  Send,
+  Image,
+  Globe,
+  MessageCircle,
+  FileText,
+  Code,
+  BarChart3,
+  Calendar,
+  Rss,
+  Monitor,
+  ScanSearch,
+  Video,
+  Eye,
+  BookOpen,
+  Languages,
+  Blocks,
+  CloudRain,
+  Terminal,
+  Twitter,
+  Sparkles,
 } from 'lucide-react';
-import { loadSkills, saveSkill, updateSkillModel, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService, loadVaultEntries, logAudit } from '../../lib/database';
+import { loadSkills, saveSkill, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService, loadVaultEntries, logAudit } from '../../lib/database';
 import { MODEL_OPTIONS, getServiceForModel } from '../../lib/models';
-import { skills, type SkillDefinition } from '../../data/skillDefinitions';
-import { resolveSkills, type FullSkillDefinition } from '../../lib/skillResolver';
+import { resolveSkills, seedSkillsFromRepo, cleanSeedSkillsFromRepo, SKILLS_REPO_INFO, type FullSkillDefinition } from '../../lib/skillResolver';
 import SkillTestDialog from './SkillTestDialog';
+
+// ---------------------------------------------------------------------------
+// Icon name → React component map (for rendering resolved skill icons)
+// ---------------------------------------------------------------------------
+
+const ICON_MAP: Record<string, React.ElementType> = {
+  Mail, Send, Image, Sparkles, Globe, MessageCircle, FileText, Code, BarChart3,
+  Calendar, Search, Rss, Monitor, ScanSearch, Video, Eye, BookOpen,
+  Languages, Blocks, CloudRain, Terminal, Twitter,
+};
+
+function resolveIcon(iconName: string): React.ElementType {
+  return ICON_MAP[iconName] ?? Blocks;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const categoryLabels: Record<string, string> = {
   communication: 'COMMUNICATION',
@@ -34,8 +74,13 @@ interface SkillConfig {
   model: string | null;
 }
 
-function getRequiredService(skill: SkillDefinition, model: string | null): string | null {
-  if (skill.serviceType === 'fixed') return skill.fixedService ?? null;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function getRequiredService(skill: { serviceType: string; fixedService?: string }, model: string | null): string | null {
+  if (skill.serviceType === 'fixed' || skill.serviceType === 'api_key') return skill.fixedService ?? null;
+  if (skill.fixedService) return skill.fixedService;
   if (model) return getServiceForModel(model);
   return null;
 }
@@ -64,10 +109,8 @@ async function ensureApproval(service: string, skillName: string, model: string 
   }
 }
 
-/** Check if a pending approval for a service is still needed by any enabled skill. If not, dismiss it. */
-async function cleanupStaleApproval(oldService: string, allConfigs: Map<string, SkillConfig>): Promise<void> {
-  // Check if any other enabled skill still needs this service
-  const stillNeeded = skills.some(s => {
+async function cleanupStaleApproval(oldService: string, allConfigs: Map<string, SkillConfig>, allSkills: FullSkillDefinition[]): Promise<void> {
+  const stillNeeded = allSkills.some(s => {
     if (s.status === 'coming_soon') return false;
     const cfg = allConfigs.get(s.id);
     if (!cfg?.enabled) return false;
@@ -75,11 +118,8 @@ async function cleanupStaleApproval(oldService: string, allConfigs: Map<string, 
     return svc === oldService;
   });
   if (stillNeeded) return;
-
-  // Also check if the key now exists (user may have provided it)
   if (await hasApiKey(oldService)) return;
 
-  // Find and dismiss the pending approval for this service
   const pending = await loadApprovals();
   for (const a of pending) {
     try {
@@ -91,7 +131,6 @@ async function cleanupStaleApproval(oldService: string, allConfigs: Map<string, 
   }
 }
 
-/** Check if a pending approval exists for a given service. */
 async function hasPendingApproval(service: string): Promise<boolean> {
   const pending = await loadApprovals();
   return pending.some(a => {
@@ -102,7 +141,6 @@ async function hasPendingApproval(service: string): Promise<boolean> {
   });
 }
 
-/** Check if a dismissed approval exists for a given service (key was never provided). */
 async function hasDismissedApproval(service: string): Promise<boolean> {
   const all = await loadAllApprovals();
   return all.some(a => {
@@ -114,34 +152,65 @@ async function hasDismissedApproval(service: string): Promise<boolean> {
   });
 }
 
+// ===========================================================================
+// Main Component
+// ===========================================================================
+
 export default function SkillsView() {
   const navigate = useNavigate();
   const [skillConfigs, setSkillConfigs] = useState<Map<string, SkillConfig>>(new Map());
 
-  // Cache of services that have API keys in the vault (for synchronous render-time checks)
+  // Resolved skills from DB — the single source of truth for the grid
+  const [resolvedSkills, setResolvedSkills] = useState<FullSkillDefinition[]>([]);
+  const [resolvedMap, setResolvedMap] = useState<Map<string, FullSkillDefinition>>(new Map());
+
+  // Cache of services that have API keys in the vault
   const [vaultServices, setVaultServices] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    loadSkills().then(rows => {
-      const map = new Map<string, SkillConfig>();
-      for (const row of rows) {
-        map.set(row.id, { enabled: !!row.enabled, model: row.model });
-      }
-      setSkillConfigs(map);
-    });
-    loadVaultEntries().then(entries => {
-      setVaultServices(new Set(entries.map(e => e.service)));
-    });
+  // Reload function — shared between mount, event listener, and refresh
+  const reloadSkills = useCallback(async () => {
+    const [rows, all] = await Promise.all([loadSkills(), resolveSkills()]);
+
+    const configMap = new Map<string, SkillConfig>();
+    for (const row of rows) {
+      configMap.set(row.id, { enabled: !!row.enabled, model: row.model });
+    }
+    setSkillConfigs(configMap);
+
+    // Only show skills that have DB backing (synced from repo)
+    // Fall back to all resolved skills if DB is empty (pre-sync state)
+    const dbBacked = all.filter(s => configMap.has(s.id));
+    const displaySkills = dbBacked.length > 0 ? dbBacked : all;
+    setResolvedSkills(displaySkills);
+
+    const map = new Map<string, FullSkillDefinition>();
+    for (const s of all) map.set(s.id, s);
+    setResolvedMap(map);
   }, []);
 
-  /** Refresh the vault services cache after mutations */
+  useEffect(() => {
+    // Auto-sync from GitHub repo on mount, then load skills + vault
+    (async () => {
+      await seedSkillsFromRepo();
+      await reloadSkills();
+      const entries = await loadVaultEntries();
+      setVaultServices(new Set(entries.map(e => e.service)));
+    })();
+  }, [reloadSkills]);
+
+  // Listen for skills-changed events (from auto-seed, CEO scheduler, etc.)
+  useEffect(() => {
+    const handler = () => reloadSkills();
+    window.addEventListener('skills-changed', handler);
+    return () => window.removeEventListener('skills-changed', handler);
+  }, [reloadSkills]);
+
   const refreshVaultCache = useCallback(() => {
     loadVaultEntries().then(entries => {
       setVaultServices(new Set(entries.map(e => e.service)));
     });
   }, []);
 
-  /** Synchronous check against cached vault data for render-time use */
   const hasApiKeyCached = useCallback((service: string): boolean => {
     return vaultServices.has(service);
   }, [vaultServices]);
@@ -151,47 +220,34 @@ export default function SkillsView() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Disable confirmation dialog state
-  const [disableConfirm, setDisableConfirm] = useState<SkillDefinition | null>(null);
+  const [disableConfirm, setDisableConfirm] = useState<FullSkillDefinition | null>(null);
+
+  // Clean sync dialog
+  const [cleanConfirmOpen, setCleanConfirmOpen] = useState(false);
 
   // Skill test dialog state
   const [testSkill, setTestSkill] = useState<FullSkillDefinition | null>(null);
-  const [resolvedSkills, setResolvedSkills] = useState<Map<string, FullSkillDefinition>>(new Map());
-
-  // Load resolved skills (for test dialog — includes commands from DB definition)
-  useEffect(() => {
-    resolveSkills().then(all => {
-      const map = new Map<string, FullSkillDefinition>();
-      for (const s of all) map.set(s.id, s);
-      setResolvedSkills(map);
-    });
-  }, [skillConfigs]);
 
   // Skill refresh state
-  const [refreshStatus, setRefreshStatus] = useState<'idle' | 'refreshing' | 'done' | 'no_repo'>('idle');
+  const [refreshStatus, setRefreshStatus] = useState<'idle' | 'refreshing' | 'done' | 'error'>('idle');
+  const [refreshMessage, setRefreshMessage] = useState('');
 
-  // Filtered skills
+  // Filtered skills — from resolved (DB-backed) skills
   const filteredSkills = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    return skills.filter(s => {
-      // Filter by status
-      if (filter === 'enabled') {
-        const cfg = skillConfigs.get(s.id);
-        if (!cfg?.enabled) return false;
-      } else if (filter === 'disabled') {
-        const cfg = skillConfigs.get(s.id);
-        if (cfg?.enabled) return false;
-      }
-      // Filter by search query (matches name or description)
+    return resolvedSkills.filter(s => {
+      if (filter === 'enabled' && !s.enabled) return false;
+      if (filter === 'disabled' && s.enabled) return false;
       if (q) {
         return s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
       }
       return true;
     });
-  }, [filter, searchQuery, skillConfigs]);
+  }, [filter, searchQuery, resolvedSkills]);
 
   const getConfig = (id: string): SkillConfig => skillConfigs.get(id) ?? { enabled: false, model: null };
 
-  const doDisable = useCallback(async (skill: SkillDefinition) => {
+  const doDisable = useCallback(async (skill: FullSkillDefinition) => {
     const current = getConfig(skill.id);
     await saveSkill(skill.id, false, current.model);
     setSkillConfigs(prev => {
@@ -199,17 +255,18 @@ export default function SkillsView() {
       next.set(skill.id, { enabled: false, model: current.model });
       return next;
     });
+    // Update the resolved skills list in-place for immediate UI feedback
+    setResolvedSkills(prev => prev.map(s => s.id === skill.id ? { ...s, enabled: false } : s));
     setDisableConfirm(null);
     await logAudit(null, 'SKILL_OFF', `Disabled skill "${skill.name}"`, 'info');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillConfigs]);
 
-  const toggleSkill = useCallback(async (skill: SkillDefinition) => {
+  const toggleSkill = useCallback(async (skill: FullSkillDefinition) => {
     const current = getConfig(skill.id);
     const newEnabled = !current.enabled;
 
     if (newEnabled) {
-      // Turning ON — set default model for LLM skills
       let model = current.model;
       if (skill.serviceType === 'llm' && !model && skill.defaultModel) {
         model = skill.defaultModel;
@@ -217,7 +274,6 @@ export default function SkillsView() {
 
       await saveSkill(skill.id, true, model);
 
-      // Check vault for required service
       const service = getRequiredService(skill, model);
       if (service && !(await hasApiKey(service))) {
         await ensureApproval(service, skill.name, model);
@@ -229,15 +285,15 @@ export default function SkillsView() {
         next.set(skill.id, { enabled: true, model });
         return next;
       });
+      setResolvedSkills(prev => prev.map(s => s.id === skill.id ? { ...s, enabled: true, model } : s));
       await logAudit(null, 'SKILL_ON', `Enabled skill "${skill.name}"${model ? ` with ${model}` : ''}`, 'info');
     } else {
-      // Turning OFF — show confirmation
       setDisableConfirm(skill);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillConfigs]);
 
-  const handleModelChange = useCallback(async (skill: SkillDefinition, newModel: string) => {
+  const handleModelChange = useCallback(async (skill: FullSkillDefinition, newModel: string) => {
     const current = getConfig(skill.id);
     const enabled = current.enabled;
     const oldModel = current.model;
@@ -246,34 +302,67 @@ export default function SkillsView() {
 
     await saveSkill(skill.id, enabled, newModel);
 
-    // Update local state first so cleanup sees the new config
     const updatedConfigs = new Map(skillConfigs);
     updatedConfigs.set(skill.id, { enabled, model: newModel });
     setSkillConfigs(updatedConfigs);
+    setResolvedSkills(prev => prev.map(s => s.id === skill.id ? { ...s, model: newModel } : s));
 
     if (enabled) {
-      // If the service changed, clean up old approval if no longer needed
       if (oldService && oldService !== newService) {
-        await cleanupStaleApproval(oldService, updatedConfigs);
+        await cleanupStaleApproval(oldService, updatedConfigs, resolvedSkills);
       }
-
-      // Ensure approval for new service if needed
       if (!(await hasApiKey(newService))) {
         await ensureApproval(newService, skill.name, newModel);
       }
-
       window.dispatchEvent(new Event('approvals-changed'));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillConfigs]);
+  }, [skillConfigs, resolvedSkills]);
 
-  const handleOpenTest = useCallback((e: React.MouseEvent, skill: SkillDefinition) => {
+  const handleOpenTest = useCallback((e: React.MouseEvent, skill: FullSkillDefinition) => {
     e.stopPropagation();
-    const resolved = resolvedSkills.get(skill.id);
+    const resolved = resolvedMap.get(skill.id);
     if (resolved) setTestSkill(resolved);
-  }, [resolvedSkills]);
+  }, [resolvedMap]);
+
+  const handleSync = useCallback(async () => {
+    setRefreshStatus('refreshing');
+    setRefreshMessage('');
+    try {
+      const result = await seedSkillsFromRepo();
+      if (result.total === 0) {
+        setRefreshStatus('error');
+        setRefreshMessage('NO SKILLS IN MANIFEST');
+      } else {
+        setRefreshStatus('done');
+        setRefreshMessage(`${result.created} NEW, ${result.updated} UPDATED`);
+        await reloadSkills();
+      }
+    } catch {
+      setRefreshStatus('error');
+      setRefreshMessage('FETCH FAILED');
+    }
+    setTimeout(() => { setRefreshStatus('idle'); setRefreshMessage(''); }, 4000);
+  }, [reloadSkills]);
+
+  const handleCleanSync = useCallback(async () => {
+    setCleanConfirmOpen(false);
+    setRefreshStatus('refreshing');
+    setRefreshMessage('CLEAN SYNC...');
+    try {
+      const result = await cleanSeedSkillsFromRepo();
+      setRefreshStatus('done');
+      setRefreshMessage(`FRESH: ${result.created} SKILLS`);
+      await reloadSkills();
+    } catch {
+      setRefreshStatus('error');
+      setRefreshMessage('CLEAN SYNC FAILED');
+    }
+    setTimeout(() => { setRefreshStatus('idle'); setRefreshMessage(''); }, 4000);
+  }, [reloadSkills]);
 
   const categories = ['communication', 'research', 'creation', 'analysis'] as const;
+  void refreshVaultCache; // used by approval flow
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto no-scrollbar p-6">
@@ -287,32 +376,37 @@ export default function SkillsView() {
             CONFIGURE CAPABILITIES FOR YOUR AGENTS. TOGGLE SKILLS AND ASSIGN AI MODELS TO POWER THEM.
           </p>
         </div>
-        <button
-          onClick={() => {
-            setRefreshStatus('refreshing');
-            // Simulate checking for a repo — no repo configured yet
-            setTimeout(() => {
-              setRefreshStatus('no_repo');
-              setTimeout(() => setRefreshStatus('idle'), 3000);
-            }, 1200);
-          }}
-          disabled={refreshStatus === 'refreshing'}
-          className={`flex items-center gap-1.5 px-3 py-2 font-pixel text-[7px] tracking-wider border rounded-md transition-colors flex-shrink-0 ${
-            refreshStatus === 'refreshing'
-              ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
-              : refreshStatus === 'no_repo'
-                ? 'border-amber-500/30 text-amber-400 bg-amber-500/10'
-                : 'border-zinc-700/50 text-zinc-400 hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10'
-          }`}
-        >
-          <RefreshCw size={10} className={refreshStatus === 'refreshing' ? 'animate-spin' : ''} />
-          {refreshStatus === 'refreshing' ? 'CHECKING...' : refreshStatus === 'no_repo' ? 'NO REPO CONFIGURED' : 'REFRESH FROM REPO'}
-        </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <button
+            onClick={handleSync}
+            disabled={refreshStatus === 'refreshing'}
+            className={`flex items-center gap-1.5 px-3 py-2 font-pixel text-[7px] tracking-wider border rounded-md transition-colors ${
+              refreshStatus === 'refreshing'
+                ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                : refreshStatus === 'done'
+                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                  : refreshStatus === 'error'
+                    ? 'border-amber-500/30 text-amber-400 bg-amber-500/10'
+                    : 'border-zinc-700/50 text-zinc-400 hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10'
+            }`}
+          >
+            <RefreshCw size={10} className={refreshStatus === 'refreshing' ? 'animate-spin' : ''} />
+            {refreshStatus === 'refreshing' ? 'SYNCING...' : refreshMessage || 'SYNC REPO'}
+          </button>
+          <button
+            onClick={() => setCleanConfirmOpen(true)}
+            disabled={refreshStatus === 'refreshing'}
+            className="flex items-center gap-1 px-2 py-2 font-pixel text-[7px] tracking-wider border border-red-500/30 text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+            title="Clear all skills and re-sync fresh from repo"
+          >
+            <Trash2 size={9} />
+            CLEAN
+          </button>
+        </div>
       </div>
 
       {/* Search + Filter Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-6">
-        {/* Search */}
         <div className="relative flex-1 min-w-0 w-full sm:max-w-xs">
           <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
           <input
@@ -324,7 +418,6 @@ export default function SkillsView() {
           />
         </div>
 
-        {/* Filter Toggle */}
         <div className="flex items-center rounded-lg border border-zinc-700/50 overflow-hidden flex-shrink-0">
           {(['all', 'enabled', 'disabled'] as const).map(f => (
             <button
@@ -365,13 +458,12 @@ export default function SkillsView() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {catSkills.map(skill => {
-                const Icon = skill.icon;
-                const config = getConfig(skill.id);
-                const isEnabled = config.enabled;
+                const Icon = resolveIcon(skill.icon);
+                const isEnabled = skill.enabled;
                 const isComingSoon = skill.status === 'coming_soon';
 
                 // Determine status
-                const service = isEnabled ? getRequiredService(skill, config.model) : null;
+                const service = isEnabled ? getRequiredService(skill, skill.model) : null;
                 const keyPresent = service ? hasApiKeyCached(service) : false;
                 const needsKey = isEnabled && service && !keyPresent;
 
@@ -412,6 +504,13 @@ export default function SkillsView() {
                     className={`relative rounded-lg border p-4 transition-all duration-200 ${isComingSoon ? 'opacity-60' : 'cursor-pointer'} group ${cardBorder} ${cardBg} ${!isComingSoon ? 'hover:border-zinc-600' : ''}`}
                     onClick={() => !isComingSoon && toggleSkill(skill)}
                   >
+                    {/* Source badge */}
+                    {skill.source === 'github' && (
+                      <span className="absolute top-2 right-2 font-pixel text-[5px] tracking-widest text-cyan-500/60">
+                        REPO
+                      </span>
+                    )}
+
                     {/* Icon + Title + Toggle row */}
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2.5">
@@ -442,12 +541,11 @@ export default function SkillsView() {
                     {/* Bottom row: Model selector / Service badge + Status */}
                     {!isComingSoon && (
                       <div className="flex items-center justify-between gap-2 min-h-[20px]">
-                        {/* Model dropdown or service badge */}
                         {isEnabled ? (
                           skill.serviceType === 'llm' ? (
                             <div className="relative" onClick={e => e.stopPropagation()}>
                               <select
-                                value={config.model ?? ''}
+                                value={skill.model ?? ''}
                                 onChange={e => handleModelChange(skill, e.target.value)}
                                 className="appearance-none font-pixel text-[7px] tracking-wider bg-zinc-900 border border-zinc-700 rounded px-2 py-1 pr-5 text-zinc-300 focus:outline-none focus:border-emerald-500/40 cursor-pointer"
                               >
@@ -458,6 +556,10 @@ export default function SkillsView() {
                               </select>
                               <ChevronDown size={8} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                             </div>
+                          ) : skill.serviceType === 'cli' ? (
+                            <span className="font-pixel text-[7px] tracking-wider px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-cyan-400">
+                              CLI TOOL
+                            </span>
                           ) : (
                             <span className="font-pixel text-[7px] tracking-wider px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-400">
                               {skill.fixedService} API
@@ -470,8 +572,7 @@ export default function SkillsView() {
                         {/* Status indicator + Test button */}
                         {isEnabled && (
                           <div className="flex items-center gap-1.5">
-                            {/* Test button — visible when enabled and has commands */}
-                            {resolvedSkills.get(skill.id)?.commands && resolvedSkills.get(skill.id)!.commands!.length > 0 && (
+                            {skill.commands && skill.commands.length > 0 && (
                               <button
                                 onClick={e => handleOpenTest(e, skill)}
                                 className="font-pixel text-[6px] tracking-wider text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded px-1.5 py-0.5 transition-colors"
@@ -490,7 +591,7 @@ export default function SkillsView() {
                               </span>
                             ) : (
                               <span className="font-pixel text-[6px] tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.5">
-                                {skill.serviceType === 'llm' && config.model ? getServiceForModel(config.model) : skill.fixedService}
+                                {skill.serviceType === 'llm' && skill.model ? getServiceForModel(skill.model) : skill.serviceType === 'cli' ? 'CLI' : skill.fixedService}
                               </span>
                             )}
                           </div>
@@ -511,10 +612,12 @@ export default function SkillsView() {
           <div className="text-center">
             <Search size={24} className="text-zinc-700 mx-auto mb-3" />
             <p className="font-pixel text-[9px] tracking-wider text-zinc-500 mb-1">
-              NO SKILLS FOUND
+              {resolvedSkills.length === 0 ? 'NO SKILLS SYNCED' : 'NO SKILLS FOUND'}
             </p>
             <p className="font-pixel text-[7px] tracking-wider text-zinc-600">
-              {searchQuery ? 'Try a different search term' : `No ${filter} skills`}
+              {resolvedSkills.length === 0
+                ? 'Click SYNC REPO to load skills from GitHub'
+                : searchQuery ? 'Try a different search term' : `No ${filter} skills`}
             </p>
           </div>
         </div>
@@ -523,21 +626,29 @@ export default function SkillsView() {
       {/* Footer note */}
       <div className="mt-auto pt-6 border-t border-zinc-800">
         <p className="font-pixel text-[7px] tracking-wider text-zinc-600 leading-relaxed">
-          {skills.length} SKILLS LOADED ({skills.filter(s => s.status === 'available').length} AVAILABLE, {skills.filter(s => s.status === 'coming_soon').length} COMING SOON).
+          {resolvedSkills.length} SKILL{resolvedSkills.length !== 1 ? 'S' : ''} FROM DB ({resolvedSkills.filter(s => s.enabled).length} ENABLED).
           <br />
-          CONFIGURE A GITHUB REPO TO SYNC CUSTOM SKILLS VIA THE REFRESH BUTTON.
+          REPO: <span className="text-zinc-500">{SKILLS_REPO_INFO.owner}/{SKILLS_REPO_INFO.name}</span> ({SKILLS_REPO_INFO.branch}) — AUTO-SYNCED ON BOOT + CEO SCHEDULER.
         </p>
       </div>
 
       {/* Disable Confirmation Dialog */}
       {disableConfirm && <DisableSkillDialog
         skill={disableConfirm}
-        config={getConfig(disableConfirm.id)}
         onConfirm={() => doDisable(disableConfirm)}
         onCancel={() => setDisableConfirm(null)}
         onGoApprovals={() => { setDisableConfirm(null); navigate('/approvals'); }}
         onGoVault={() => { setDisableConfirm(null); navigate('/vault'); }}
       />}
+
+      {/* Clean Sync Confirmation Dialog */}
+      {cleanConfirmOpen && (
+        <CleanSyncDialog
+          onConfirm={handleCleanSync}
+          onCancel={() => setCleanConfirmOpen(false)}
+          skillCount={resolvedSkills.length}
+        />
+      )}
 
       {/* Skill Test Dialog */}
       {testSkill && (
@@ -551,18 +662,21 @@ export default function SkillsView() {
   );
 }
 
-/** Inline dialog for confirming skill disable */
+// ===========================================================================
+// Dialogs
+// ===========================================================================
+
+/** Themed dialog for confirming skill disable */
 function DisableSkillDialog({
-  skill, config, onConfirm, onCancel, onGoApprovals, onGoVault,
+  skill, onConfirm, onCancel, onGoApprovals, onGoVault,
 }: {
-  skill: SkillDefinition;
-  config: SkillConfig;
+  skill: FullSkillDefinition;
   onConfirm: () => void;
   onCancel: () => void;
   onGoApprovals: () => void;
   onGoVault: () => void;
 }) {
-  const service = getRequiredService(skill, config.model);
+  const service = getRequiredService(skill, skill.model);
   const [keyPresent, setKeyPresent] = useState(true);
   const [pendingExists, setPendingExists] = useState(false);
   const [dismissedExists, setDismissedExists] = useState(false);
@@ -641,6 +755,58 @@ function DisableSkillDialog({
               className="px-4 py-2 text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded transition-colors"
             >
               DISABLE
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Themed dialog for confirming clean sync */
+function CleanSyncDialog({
+  onConfirm, onCancel, skillCount,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  skillCount: number;
+}) {
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative z-10 w-full max-w-sm mx-4">
+        <div className="bg-jarvis-surface border border-red-500/30 rounded-lg shadow-lg overflow-hidden">
+          <div className="flex items-center gap-3 px-5 py-4 bg-red-500/[0.06] border-b border-red-500/20">
+            <AlertTriangle size={18} className="text-red-400 flex-shrink-0" />
+            <div>
+              <h2 className="text-red-300 font-semibold text-sm tracking-wide">CLEAN SYNC</h2>
+              <p className="text-zinc-500 text-xs mt-0.5">Wipe + re-sync from GitHub</p>
+            </div>
+          </div>
+
+          <div className="px-5 py-4">
+            <p className="text-jarvis-text text-sm leading-relaxed mb-3">
+              This will <span className="text-red-300 font-semibold">delete all {skillCount} skill configs</span> from the database and re-sync fresh from the GitHub repo.
+            </p>
+            <div className="p-3 rounded-lg bg-red-500/[0.06] border border-red-500/20">
+              <p className="text-red-300/80 text-xs leading-relaxed">
+                All enabled/disabled states and model selections will be reset. Only skills in the repo manifest will remain.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 px-5 py-3 border-t border-jarvis-border bg-jarvis-bg/50">
+            <button
+              onClick={onCancel}
+              className="px-4 py-2 text-xs text-jarvis-muted hover:text-jarvis-text border border-jarvis-border rounded transition-colors"
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={onConfirm}
+              className="px-4 py-2 text-xs text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded transition-colors"
+            >
+              WIPE + SYNC
             </button>
           </div>
         </div>

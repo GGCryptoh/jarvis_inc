@@ -98,7 +98,7 @@ export default function CEOSprite({ agent, onClick, archetype, riskTolerance }: 
         <div className="w-0 h-0 mx-auto border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-jarvis-border" />
       </div>
 
-      {/* Sprite body — scaled up 20% */}
+      {/* Sprite body — 1.2× scale of AgentSprite, same structure */}
       <div className={`relative ${animationClass}`}>
         {/* Gold hover glow */}
         <div
@@ -108,7 +108,7 @@ export default function CEOSprite({ agent, onClick, archetype, riskTolerance }: 
 
         {/* Status dot — to the left of the head */}
         <div
-          className="absolute top-[12px] -left-[14px] w-[9px] h-[9px] rounded-full z-10"
+          className="absolute top-[18px] -left-[10px] w-[9px] h-[9px] rounded-full z-10"
           style={{
             backgroundColor: statusColor,
             border: `2px solid ${gold}`,
@@ -116,83 +116,80 @@ export default function CEOSprite({ agent, onClick, archetype, riskTolerance }: 
           }}
         />
 
-        {/* Crown */}
-        <div className="text-center" style={{ fontSize: '18px', lineHeight: '20px', color: gold, textShadow: `0 0 6px ${gold}66` }}>
+        {/* Crown — centered above hair */}
+        <div className="text-center" style={{ fontSize: '16px', lineHeight: '18px', color: gold, textShadow: `0 0 6px ${gold}66` }}>
           ♛
         </div>
 
-        {/* Hair / hat */}
+        {/* Hair */}
         <div
-          className="mx-auto w-[29px] h-[10px] rounded-t-sm"
+          className="mx-auto w-[29px] h-[12px] rounded-t-sm"
           style={{ backgroundColor: agent.color }}
         />
 
-        {/* Head — larger with pixel eyes and mouth */}
+        {/* Head with pixel eyes */}
         <div
-          className="mx-auto w-[29px] h-[25px] rounded-sm relative"
+          className="mx-auto w-[29px] h-[23px] rounded-sm relative"
           style={{ backgroundColor: agent.skinTone }}
         >
-          {/* Left eye */}
           <div className="absolute top-[7px] left-[6px] w-[4px] h-[4px] bg-black rounded-[0.5px]" />
-          {/* Right eye */}
           <div className="absolute top-[7px] right-[6px] w-[4px] h-[4px] bg-black rounded-[0.5px]" />
-          {/* Mouth */}
           <div className="absolute bottom-[4px] left-1/2 -translate-x-1/2 w-[7px] h-[2px] bg-black/40 rounded-full" />
         </div>
 
-        {/* Body with suit lapels and tie */}
-        <div className="relative mx-auto flex">
+        {/* Body — arms + torso, all same width as head */}
+        <div className="relative mx-auto flex justify-center">
           {/* Left arm */}
           <div
-            className="w-[7px] h-[22px] rounded-b-sm mt-[4px]"
-            style={{ backgroundColor: agent.color }}
+            className={`w-[6px] rounded-b-sm mt-[2px] ${isSeated ? 'agent-arm-left' : ''}`}
+            style={{
+              backgroundColor: agent.color,
+              height: isSeated ? '17px' : '22px',
+              transformOrigin: 'top center',
+              filter: 'brightness(0.85)',
+            }}
           />
-          {/* Torso */}
+
+          {/* Torso — same width as head for alignment */}
           <div
-            className="w-[36px] h-[29px] rounded-sm relative"
+            className="w-[29px] h-[29px] rounded-sm relative"
             style={{ backgroundColor: agent.color }}
           >
-            {/* Suit lapels — darker inner rect */}
+            {/* Suit lapels */}
             <div
               className="absolute inset-x-[6px] top-0 bottom-[4px] rounded-sm"
               style={{ backgroundColor: 'rgba(0,0,0,0.15)' }}
             />
-            {/* Tie — thin contrasting stripe */}
+            {/* Tie */}
             <div
               className="absolute left-1/2 -translate-x-1/2 top-0 w-[4px] h-[22px]"
               style={{ backgroundColor: gold }}
             />
           </div>
+
           {/* Right arm */}
           <div
-            className="w-[7px] h-[22px] rounded-b-sm mt-[4px]"
-            style={{ backgroundColor: agent.color }}
+            className={`w-[6px] rounded-b-sm mt-[2px] ${isSeated ? 'agent-arm-right' : ''}`}
+            style={{
+              backgroundColor: agent.color,
+              height: isSeated ? '17px' : '22px',
+              transformOrigin: 'top center',
+              filter: 'brightness(0.85)',
+            }}
           />
         </div>
 
-        {/* Typing hands - visible when working (seated at desk) */}
-        {agent.status === 'working' && (
-          <div className="typing-hands flex justify-center -mt-[2px]">
-            <div className="flex gap-[10px]">
-              {/* Left hand */}
-              <div className="w-[8px] h-[6px] rounded-[1px]" style={{ backgroundColor: agent.skinTone }} />
-              {/* Right hand */}
-              <div className="w-[8px] h-[6px] rounded-[1px]" style={{ backgroundColor: agent.skinTone }} />
-            </div>
-          </div>
-        )}
-
-        {/* Legs */}
-        <div className="flex justify-center gap-[5px]">
-          <div className={`w-[11px] h-[14px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob' : ''}`} />
-          <div className={`w-[11px] h-[14px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob [animation-delay:0.2s]' : ''}`} />
+        {/* Legs — clearly separated with dark pants */}
+        <div className="flex justify-center gap-[6px]">
+          <div className={`w-[12px] h-[17px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob' : ''}`} />
+          <div className={`w-[12px] h-[17px] rounded-b-sm bg-slate-700 ${agent.status === 'walking' ? 'animate-bob [animation-delay:0.2s]' : ''}`} />
         </div>
       </div>
 
-      {/* Working screen glow — subtle reflected light */}
-      {agent.status === 'working' && (
+      {/* Working screen glow */}
+      {isSeated && (
         <div
-          className="absolute top-[29px] left-1/2 -translate-x-1/2 w-[18px] h-[14px] rounded-sm animate-screen-flicker pointer-events-none"
+          className="absolute top-[36px] left-1/2 -translate-x-1/2 w-[18px] h-[14px] rounded-sm animate-screen-flicker pointer-events-none"
           style={{ background: 'radial-gradient(ellipse, rgba(0,255,136,0.2) 0%, transparent 70%)' }}
         />
       )}

@@ -174,6 +174,8 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
       risk_tolerance: riskTolerance,
       status: 'nominal',
       archetype: archetype,
+      color: '#f1fa8c',
+      skin_tone: '#ffcc99',
     });
     // Seed milestone mission
     const fInfo = await getFounderInfo();
