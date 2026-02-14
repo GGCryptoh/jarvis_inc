@@ -1,312 +1,348 @@
-# CEO Communication Loop — Design Reference
+# CEO Communication Loop
 
-> Committed project documentation. Defines how the CEO proactively detects events,
-> initiates conversations with the founder, and drives mission execution through
-> an ongoing cycle of evaluation, communication, and follow-up.
+> How the CEO detects events, evaluates org state, queues actions,
+> and communicates with the founder through persistent chat.
 
-### Implementation Status (2026-02-12)
-- **Shipped**: Chat persistence (`conversations` + `chat_messages` tables), sidebar, onboarding state machine, LLM streaming with 5 providers, scripted fallback
-- **Not yet built**: Proactive evaluation loop (heartbeat), CEO-initiated conversations, background processing, action cards in chat
-- **Prerequisite**: CEO scheduler (Phase 2) — this doc describes the loop that runs inside the scheduler tick
+### Implementation Status (2026-02-13)
+
+| Area | Status | Key File(s) |
+|------|--------|-------------|
+| CEO Scheduler (Option B) | **SHIPPED** | `src/lib/ceoScheduler.ts` |
+| Decision Engine (heuristic) | **SHIPPED** | `src/lib/ceoDecisionEngine.ts` |
+| CEO Action Queue | **SHIPPED** | `src/lib/ceoActionQueue.ts` |
+| Chat Persistence (conversations + messages) | **SHIPPED** | `src/lib/database.ts`, `src/components/Chat/ChatView.tsx` |
+| LLM Streaming (5 providers) | **SHIPPED** | `src/lib/llm/chatService.ts` |
+| System Prompt (13 sections) | **SHIPPED** | `src/lib/llm/chatService.ts` → `buildCEOSystemPrompt()` |
+| Memory Injection (org + founder profile) | **SHIPPED** | `src/lib/memory.ts` |
+| Task Plan Parsing + Dispatch | **SHIPPED** | `src/lib/taskDispatcher.ts` |
+| Supabase Realtime Subscriptions | **SHIPPED** | `src/hooks/useRealtimeSubscriptions.ts` |
+| QuickChatPanel on Surveillance | **SHIPPED** | `src/components/Surveillance/QuickChatPanel.tsx` |
+| Mission Review Flow (nav badge) | **SHIPPED** | `src/components/Missions/MissionDetailPage.tsx` |
+| CEO-initiated proactive chat | NOT BUILT | CEO responds but does not initiate conversations |
+| Rich action cards in chat (hire, budget, etc.) | NOT BUILT | Only skill approval cards exist |
+| Budget warnings / threshold alerts | NOT BUILT | Budget is tracked and enforced, but no proactive warnings |
+| "Hey founder we need to chat!" flow | NOT BUILT | No attention-request message type |
+| Cross-tab / cross-device notifications | NOT BUILT | Single-tab only (Option B scheduler) |
+| Edge Function + pg_cron (Option E) | NOT BUILT | Using browser-side Option B |
 
 ---
 
 ## Overview
 
-The CEO is not a passive chatbot waiting for input. It's an **autonomous agent** that:
-- Detects when something needs attention (task complete, agent blocked, mission stale)
-- Proactively initiates conversations ("Hey {FOUNDER}, we need to chat!")
-- Works on ideas in the background ("I have some ideas, I'm going to work on them")
-- Follows up after approvals, task completions, and milestone events
+The CEO operates in two modes:
 
-This loop runs continuously — either via browser-side polling (demo mode) or Supabase Edge Function + pg_cron (full mode).
+1. **Reactive** (shipped): The founder sends a message in Chat. The CEO's LLM processes it with full org context (system prompt), streams a response, and optionally dispatches skill-backed tasks via `<task_plan>` blocks.
+
+2. **Background evaluation** (shipped): The CEO Scheduler runs a heuristic decision engine every 30 seconds. It detects org-level issues (unassigned missions, idle agents, stale approvals, stuck tasks) and writes lightweight notifications to the `ceo_action_queue` table. The UI picks these up via Supabase Realtime.
+
+The CEO does **not** currently initiate conversations. It evaluates state and queues notifications, but all chat messages originate from the founder or from task completion events.
 
 ---
 
 ## The Loop
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                  CEO HEARTBEAT TICK                    │
-│  (every 30-60 seconds, demo: setInterval, full: cron) │
-└──────────────┬───────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│              CEO SCHEDULER TICK (every 30s)              │
+│  CEOScheduler class — visibility-aware setInterval       │
+│  Pauses when tab hidden, resumes + immediate tick on     │
+│  tab visible. Writes heartbeat to scheduler_state table. │
+└──────────────┬──────────────────────────────────────────┘
                │
         ┌──────▼──────┐
-        │  LOAD STATE  │  ← missions, agents, skills, approvals, vault, chat history
+        │  LOAD STATE  │  ← loadAgents(), loadMissions(), loadSkills(),
+        │              │    loadApprovals(), loadCEO()
         └──────┬──────┘
                │
-        ┌──────▼──────┐
-        │  EVALUATE    │  ← What changed? What needs attention?
-        └──────┬──────┘
+        ┌──────▼──────────────┐
+        │  HEURISTIC CHECKS   │  ← 6 rule-based checks (no LLM)
+        └──────┬──────────────┘
                │
         ┌──────▼──────┐     ┌─────────────────────┐
-        │  DECIDE      │────→│ No action needed     │ → sleep until next tick
-        └──────┬──────┘     └─────────────────────┘
-               │
+        │  FILTER      │────→│ Deduplicate against  │
+        │  (dedup)     │     │ existing pending/     │
+        │              │     │ recently dismissed    │
+        └──────┬──────┘     │ entries (2hr cooldown)│
+               │             └─────────────────────┘
         ┌──────▼──────┐
-        │  ACT         │  ← Create chat messages, approvals, action queue entries
+        │  INSERT      │  ← New actions → ceo_action_queue table
         └──────┬──────┘
                │
         ┌──────▼──────┐
-        │  NOTIFY      │  ← Dispatch events → UI updates
+        │  PRUNE       │  ← Delete dismissed/seen entries older than 2 hours
+        └──────┬──────┘
+               │
+        ┌──────▼──────┐
+        │  SKILL SYNC  │  ← seedSkillsFromRepo() — throttled to once per hour
+        └──────┬──────┘
+               │
+        ┌──────▼──────┐
+        │  RETURN      │  ← CycleResult { timestamp, actions, checks }
+        │  DIAGNOSTICS │    Written to scheduler_state.last_cycle_result
         └─────────────┘
 ```
 
 ---
 
-## Trigger Types
+## Heuristic Checks (What the Engine Evaluates Each Tick)
 
-### What the CEO Evaluates Each Tick
+All checks are pure heuristics — no LLM calls. The engine reads org state from Supabase and applies simple rules.
 
-| Trigger | Detection | CEO Response |
-|---------|-----------|-------------|
-| **Founder sent a chat message** | New row in `chat_messages` from sender='user' | Parse intent, plan work, respond |
-| **Task completed by agent** | `task_executions.status = 'completed'` since last tick | Review results, update mission, report to founder |
-| **Agent waiting for approval** | `task_executions.status = 'waiting_approval'` | Remind founder, or escalate if stale |
-| **Approval resolved** | `approvals.status` changed from 'pending' | Resume blocked agent, or acknowledge |
-| **Unassigned missions in backlog** | `missions` with status='backlog', no assignee | Assign to idle agent, or recommend hire |
-| **All agents busy, work piling up** | Agent utilization > 80%, backlog growing | Recommend hiring |
-| **Missing skill for a task** | Mission keywords match disabled skill | Ask founder to enable it |
-| **Budget threshold reached** | Token spend approaching daily/monthly limit | Warn founder, request override |
-| **Stale pending approvals** | Approvals pending > N hours | Nudge founder |
-| **No activity for extended period** | No changes in any table for > N minutes | Check in, suggest next steps |
+| Check | Detection Logic | Action Produced | Priority |
+|-------|----------------|-----------------|----------|
+| **Unassigned missions** | Missions with status `active` or `in_progress` and no `assignee` | `assign_mission` — pairs each unassigned mission with an idle agent | 3 |
+| **Idle agents** | Agents not assigned to any active/in_progress mission | `send_message` with topic `idle_workforce` | 6 |
+| **Stale approvals** | Approvals with `status = 'pending'` older than 24 hours | `send_message` with topic `stale_approvals` | 4 |
+| **No agents hired** | Zero agents but 1+ missions exist | `send_message` with topic `no_agents` — suggests hiring | 2 |
+| **Skills gap** | 1+ missions exist but zero skills enabled | `send_message` with topic `skills_gap` | 5 |
+| **Stuck tasks** | `task_executions` in `pending`/`running` status for > 5 minutes | Auto-fails the task, moves mission to `review` if all siblings terminal, posts chat message with action buttons, triggers `synthesizeMissionSummary()` for multi-task missions | N/A (direct DB mutation) |
 
----
+### Not Yet Evaluated (Aspirational)
 
-## Proactive Communication Patterns
+These triggers are described in the original design but not implemented:
 
-### 1. "I have ideas, going to work on them"
-
-When the CEO evaluates state and finds actionable items that don't need approval:
-
-```
-CEO: "I've been reviewing our backlog. I see 3 research tasks that need attention.
-I'm going to assign SCOUT to the market analysis and handle the competitor review
-myself. Check back — I may need approvals for some actions."
-```
-
-Actions:
-- Assign agent to mission (`mission.assignee = agent.id`)
-- Create `task_executions` entry
-- Update agent status to 'working' (reflected in surveillance)
-- Log to audit
-
-### 2. "Hey {FOUNDER}, we need to chat!"
-
-When something requires founder input:
-
-```
-CEO: "Hey ATLAS, we need to chat! I've got a hire recommendation and two pending
-approvals that are blocking our agents. When you have a moment, let's go over them."
-```
-
-Implementation:
-1. Insert `chat_messages` row with type='attention_request'
-2. Dispatch `ceo-wants-to-chat` event
-3. NavigationRail shows badge on Chat tab
-4. If founder is on another page, a subtle notification appears
-5. Clicking navigates to `/chat` where the CEO's messages are waiting
-
-### 3. "Task complete — here's what happened"
-
-After an agent finishes work:
-
-```
-CEO: "SCOUT just completed the market analysis for Project Alpha. Here's the summary:
-[embedded result card]
-The findings look solid. I've moved the mission to 'review'. Want me to proceed
-with the next phase, or would you like to review the full report first?"
-```
-
-### 4. "We're running low on budget"
-
-```
-CEO: "Heads up — we've used 82% of today's token budget ($4.10 of $5.00).
-FORGE is mid-task on the code generation. Should I:
-[CONTINUE] [PAUSE AGENTS] [INCREASE BUDGET]"
-```
+- Founder sent a chat message (CEO responds reactively via `streamCEOResponse`, not via the scheduler)
+- Agent waiting for approval
+- All agents busy / utilization > 80%
+- Missing skill for a specific task (keyword matching)
+- Budget threshold reached
+- No activity for extended period ("check in" behavior)
 
 ---
 
-## Chat Message Persistence
+## CEO Action Queue
 
-### Current: React State Only
+The action queue is a lightweight notification system, not a rich action-card UI. Actions are rows in the `ceo_action_queue` Supabase table.
 
-During onboarding, messages live in `useState` — lost on page reload. This is by design for the scripted flow.
-
-### Future: Database-Backed
+### Schema
 
 ```typescript
-// src/hooks/useChatMessages.ts
-function useChatMessages() {
-  const [messages, setMessages] = useState<ChatMessageRow[]>([]);
-
-  // Load from DB on mount
-  useEffect(() => {
-    setMessages(loadChatMessages());
-  }, []);
-
-  // Listen for new messages (from CEO scheduler or Realtime)
-  useEffect(() => {
-    const handler = () => setMessages(loadChatMessages());
-    window.addEventListener('chat-message-added', handler);
-    return () => window.removeEventListener('chat-message-added', handler);
-  }, []);
-
-  function addMessage(msg: Omit<ChatMessageRow, 'created_at'>) {
-    saveChatMessage(msg);
-    window.dispatchEvent(new Event('chat-message-added'));
-  }
-
-  return { messages, addMessage, unreadCount: /* count since last read */ };
+interface CEOAction {
+  id: string;
+  action_type: 'mission_review' | 'needs_attention' | 'insight' | 'greeting';
+  title: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  status: 'pending' | 'seen' | 'dismissed';
+  created_at: string;
 }
+```
+
+### API (`src/lib/ceoActionQueue.ts`)
+
+| Function | What It Does |
+|----------|-------------|
+| `queueCEOAction(type, title, message, metadata?)` | Insert a new pending action, dispatch `ceo-actions-changed` event |
+| `loadPendingActions()` | Load up to 10 pending actions, newest first |
+| `markActionSeen(actionId)` | Update status to `seen`, dispatch event |
+| `dismissAction(actionId)` | Update status to `dismissed`, dispatch event |
+| `getPendingActionCount()` | Count of pending actions (used for badges) |
+
+### Deduplication
+
+The decision engine deduplicates before inserting: it fetches all `pending`, `seen`, and `dismissed` entries created within the last 2 hours and skips any action whose `payload.topic` already exists. Old dismissed/seen entries are pruned after each cycle (2-hour TTL).
+
+### UI Integration
+
+- Supabase Realtime subscription on `ceo_action_queue` dispatches `ceo-actions-changed` window events (`src/hooks/useRealtimeSubscriptions.ts`).
+- The NavigationRail Chat badge shows the count of **unread conversations** (via `getUnreadConversationCount()`), not the action queue count directly. The action queue feeds into the system but the badge is conversation-driven.
+
+---
+
+## Chat Persistence (Shipped)
+
+Chat is fully persisted in Supabase. No more in-memory-only messages.
+
+### Tables
+
+**`conversations`**
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | text PK | `conv-{timestamp}-{random}` |
+| `title` | text | Auto-generated or user-set |
+| `participant` | text | `'ceo'` |
+| `status` | text | `'active'` or `'archived'` |
+| `last_read_at` | timestamp | Tracks founder's read position |
+| `created_at` | timestamp | |
+| `updated_at` | timestamp | |
+
+**`chat_messages`**
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | text PK | `msg-{timestamp}-{random}` |
+| `conversation_id` | text FK | References `conversations.id` |
+| `sender` | text | `'user'` or `'ceo'` |
+| `text` | text | Message content (markdown) |
+| `metadata` | jsonb | Action card data, tool call results, etc. |
+| `token_count` | integer | Approximate token count |
+| `created_at` | timestamp | |
+
+### Components
+
+| Component | Role |
+|-----------|------|
+| `ChatView.tsx` | Main chat page — routes between onboarding flow and post-meeting chat |
+| `ChatSidebar.tsx` | Conversation list with new/archive actions |
+| `ChatThread.tsx` | Message rendering with LLM streaming support |
+| `OnboardingFlow.tsx` | Scripted first-run onboarding (separate from persistent chat) |
+| `QuickChatPanel.tsx` | Compact chat overlay on Surveillance page |
+| `ToolCallBlock.tsx` | Renders tool call results and action buttons inline |
+| `RichResultCard.tsx` | Renders skill execution results with formatted output |
+
+### Conversation Lifecycle
+
+1. Founder navigates to Chat after onboarding is complete.
+2. On "New Conversation", a random CEO greeting is selected (pool of 20, with LRU history to avoid repeats) and inserted as the first CEO message.
+3. Founder types a message. `streamCEOResponse()` builds the full system prompt, appends the last 20 messages as context, and streams the LLM response.
+4. CEO response is parsed for `<task_plan>` / `<tool_call>` blocks. Matched blocks are dispatched via `taskDispatcher.ts`. `enable_skill` calls create approval cards.
+5. Conversations can be archived from the sidebar.
+6. `markConversationRead()` updates `last_read_at` to track unread status.
+
+### Realtime
+
+Supabase Realtime subscriptions on `chat_messages` dispatch `chat-messages-changed` window events, keeping all open tabs/components in sync.
+
+---
+
+## CEO System Prompt
+
+Built fresh for every LLM call by `buildCEOSystemPrompt()` in `src/lib/llm/chatService.ts`. Contains these sections:
+
+| # | Section | Source |
+|---|---------|--------|
+| 1 | **Identity** | CEO name, org name, founder name, primary mission, today's date |
+| 2 | **Personality** | `ARCHETYPE_PERSONAS[ceo.archetype]` — 8 archetypes (Wharton MBA, Wall Street, MIT Engineer, SV Founder, Beach Bum, Military Commander, Creative Director, Professor) |
+| 3 | **Philosophy** | `PHILOSOPHY_BLOCKS[ceo.philosophy]` — 4 options (Move fast, Steady, Data-driven, Innovation) |
+| 4 | **Risk Tolerance** | `RISK_BLOCKS[ceo.risk_tolerance]` — 3 levels (Conservative, Moderate, Aggressive) with specific behavior rules |
+| 5 | **Founder Profile** | `org_memory` rows where `category = 'founder_profile'`, sorted by importance |
+| 6 | **Organizational Memory** | Top 20 non-founder memories from `org_memory`, sorted by importance then recency |
+| 7 | **Workforce** | Agent list with name, role, model |
+| 8 | **Enabled Skills** | Full command definitions with parameter names, types, required/optional, defaults, descriptions |
+| 9 | **Disabled Skills** | Available-but-not-enabled skills (real ones from GitHub repo, not hardcoded placeholders) |
+| 10 | **Active Missions** | Mission list with status, assignee, priority |
+| 11 | **Budget & Spend** | Monthly budget, current month spend (LLM + channel breakdown), remaining, exceeded warning |
+| 12 | **Tool Usage Rules** | 4-step decision flow: answer from knowledge, use a skill, propose a mission, suggest enabling a disabled skill. Parameter checking, quick vs long task guidance, `<task_plan>` output format |
+| 13 | **Critical Rules** | Respond naturally, match personality, never fabricate data, never fire skills silently, keep responses concise |
+
+### Conversation Context
+
+After the system prompt, the last 20 messages from the active conversation are appended as alternating `user`/`assistant` turns, followed by the current user message.
+
+---
+
+## CEO Scheduler
+
+**Implementation**: `src/lib/ceoScheduler.ts` — Option B (visibility-aware `setInterval`).
+
+### Class: `CEOScheduler`
+
+| Method | Description |
+|--------|-------------|
+| `start()` | Begin ticking. Registers `visibilitychange` listener if `pauseWhenHidden` is true. |
+| `stop()` | Clear interval, remove listener, set status to `stopped`. |
+| `pause()` | Manual pause (keeps status as `paused`). |
+| `resume()` | Resume from manual pause. |
+| `getStatus()` | Returns `'running'` / `'paused'` / `'stopped'`. |
+| `getState()` | Returns `{ status, lastHeartbeat, lastCycleResult }`. |
+
+### Configuration
+
+```typescript
+interface SchedulerConfig {
+  intervalMs: number;        // default 30000 (30 seconds)
+  pauseWhenHidden: boolean;  // default true
+}
+```
+
+### Visibility Behavior
+
+- **Tab hidden**: Clears the interval but keeps status as `running` (visibility pause, not manual pause).
+- **Tab visible**: Re-schedules the interval AND runs an immediate tick so the CEO catches up on anything that happened while the tab was hidden.
+
+### State Persistence
+
+After every tick, the scheduler upserts to the `scheduler_state` table:
+
+```typescript
+{
+  id: 'main',
+  status: 'running' | 'paused' | 'stopped',
+  interval_ms: number,
+  last_heartbeat: ISO timestamp,
+  last_cycle_result: CycleResult,
+  config: SchedulerConfig,
+  updated_at: ISO timestamp,
+}
+```
+
+### Factory
+
+```typescript
+import { createScheduler } from './ceoScheduler';
+const scheduler = createScheduler(evaluateCycle, { intervalMs: 30000 });
+scheduler.start();
 ```
 
 ---
 
-## Action Cards in Chat
+## Task Dispatch from Chat
 
-Rich inline content beyond plain text:
+When the CEO's LLM response contains `<task_plan>` or `<tool_call>` blocks, `chatService.ts` parses and dispatches them:
 
-| Card Type | Content | Buttons |
-|-----------|---------|---------|
-| **Hire Recommendation** | Agent preview (name, role, model, skills, cost estimate) | APPROVE / MODIFY / DECLINE |
-| **Skill Enable Request** | Skill icon, name, description | APPROVE / LATER |
-| **Budget Warning** | Current spend vs limit, which agents are active | CONTINUE / PAUSE / INCREASE |
-| **Task Report** | Agent name, task summary, result preview | ACCEPT / REVIEW FULL / REDO |
-| **Mission Update** | Mission title, status change, next steps | ACKNOWLEDGE |
-| **Attention Request** | Brief summary of pending items | GO TO APPROVALS / DISMISS |
+1. **Parse**: `parseTaskPlan(fullText)` extracts structured mission/tool-call data.
+2. **Separate**: `enable_skill` calls are handled via `handleEnableSkillCall()` (creates approval + chat message with metadata). Regular skill calls become missions.
+3. **Dispatch**: `dispatchTaskPlan(missions, model, context)` creates `task_executions` rows, assigns agents, and runs skills via `skillExecutor.ts`.
+4. **Context**: The dispatch includes `conversationExcerpt` (recent messages) and `founderPresent: true` flag so quick tasks auto-complete inline.
 
-### Rendering
+### Stuck Task Recovery
 
-Action cards are stored in `chat_messages.metadata` as JSON:
-```json
-{
-  "cardType": "hire_recommendation",
-  "payload": {
-    "agentConfig": { "name": "SCOUT", "role": "Research Analyst", ... },
-    "reason": "3 unassigned research tasks in backlog"
-  }
-}
-```
-
-The `ChatView` component matches `cardType` to a React component for inline rendering.
+The decision engine's `checkStuckTasks()` handles tasks stuck in `pending`/`running` for over 5 minutes:
+- Marks them as `failed` with an error message.
+- If all sibling tasks for a mission are now terminal, moves the mission to `review` status.
+- Posts a chat message to the active conversation with action buttons (`LOOKS GOOD`, `REVIEW MISSION`, `VIEW COLLATERAL`).
+- For multi-task missions with 2+ completed tasks, triggers `synthesizeMissionSummary()`.
+- Dispatches `missions-changed` and `task-executions-changed` events for UI refresh.
 
 ---
 
 ## Notification System
 
-### Navigation Badge
+### Navigation Rail Badges
 
-```typescript
-// NavigationRail listens for unread chat messages
-const [chatBadge, setChatBadge] = useState(0);
-
-useEffect(() => {
-  const update = () => setChatBadge(getUnreadChatCount());
-  window.addEventListener('ceo-wants-to-chat', update);
-  window.addEventListener('chat-message-added', update);
-  return () => { /* cleanup */ };
-}, []);
-```
+| Badge | Tab | Source | Event |
+|-------|-----|--------|-------|
+| Pending approvals count | Approvals | `getPendingApprovalCount()` | `approvals-changed` + 5s poll |
+| Missions in review count | Missions | `getMissionReviewCount()` | `missions-changed` + 5s poll |
+| New collateral items | Collateral | `getNewCollateralCount()` | `task-executions-changed` + 5s poll |
+| Unread conversations | Chat | `getUnreadConversationCount()` | `chat-messages-changed` + `chat-read` + 8s poll |
 
 ### CEO Status Pip
 
-NavigationRail already shows a CEO status dot. Enhanced states:
+The NavigationRail displays a small colored dot with the CEO's initial:
 
-| State | Color | Meaning |
-|-------|-------|---------|
-| Nominal | Green | CEO is idle, no pending work |
-| Working | Amber pulse | CEO is evaluating or executing |
-| Wants to chat | Red pulse | CEO has something to discuss |
-| Offline | Gray | Scheduler not running |
-
----
-
-## Demo Mode vs Full Mode
-
-### Demo Mode (sql.js)
-
-- **Scheduler**: `setInterval` with Visibility API (Option B)
-- **Detection**: Direct DB reads on each tick
-- **Notifications**: `window.dispatchEvent()` custom events
-- **Limitations**: Only runs when tab is open, no cross-tab sync
-
-### Full Mode (Supabase)
-
-- **Scheduler**: Edge Function + pg_cron (Option E)
-- **Detection**: Direct Postgres queries in Edge Function
-- **Notifications**: Supabase Realtime subscriptions push to all connected clients
-- **Advantages**: Runs even when browser is closed, cross-tab, cross-device
+| Status | Color | Meaning |
+|--------|-------|---------|
+| `nominal` | Emerald | CEO is idle |
+| `thinking` | Yellow | CEO is processing |
+| `error` | Red | Something went wrong |
 
 ---
 
-## The Full CEO Prompt Strategy
+## Aspirational Features (Not Yet Built)
 
-### System Prompt (Loaded Once, Refreshed on Config Change)
+These are part of the original vision but have no implementation:
 
-```
-You are {ceo_name}, the AI Chief Executive Officer of {org_name}.
-Founded by {founder_name}.
+### CEO-Initiated Conversations
+The CEO would detect situations requiring founder input and proactively post messages like "Hey {FOUNDER}, we need to chat!" with an `attention_request` type. The NavigationRail would show a special badge and/or the CEO status pip would pulse red. Currently, the CEO only responds to founder messages.
 
-Your management philosophy: {philosophy}
-Your risk tolerance: {risk_tolerance}
+### Rich Action Cards
+Inline interactive cards in chat for hire recommendations, budget warnings, task reports, and mission updates — each with approve/decline/modify buttons. Currently only skill-approval cards exist (via `metadata.type = 'skill_approval'`).
 
-Available org skills (enabled by founder): {enabled_skill_list}
-Current agents: {agent_list_with_roles_and_skills}
-Current missions: {mission_list_with_statuses}
+### Budget Threshold Warnings
+Proactive alerts when token spend approaches daily/monthly limits. The budget is tracked in `llm_usage` and enforced (LLM calls are blocked when exceeded), but there are no proactive warnings to the founder.
 
-Your job is to:
-1. Evaluate the current state of the organization
-2. Identify what needs attention
-3. Decide on actions (assign tasks, recommend hires, request skills, communicate)
-4. Communicate clearly with the founder
-5. Manage and direct your agents effectively
-
-Output format: JSON array of actions (see schema below)
-```
-
-### User Prompt (Per Evaluation Tick)
-
-```
-Current state as of {timestamp}:
-
-Pending approvals: {count} ({list if any})
-Agents idle: {count} / {total}
-Missions in backlog: {count}
-Recent events: {last N audit log entries}
-Unread founder messages: {messages if any}
-Budget used today: {amount} / {limit}
-
-What actions should we take? Respond with a JSON array of actions.
-If the founder sent a message, respond to it first.
-If nothing needs attention, respond with an empty array.
-```
-
-### User Prompt (Per Task Delegation to Agent)
-
-```
-Task: {task_description}
-Assigned to: {agent_name} ({agent_role})
-Context: {relevant_mission_context}
-Tools available: {assigned_skill_ids_with_descriptions}
-Constraints: {budget_limit, time_limit, approval_requirements}
-Expected output: {output_format}
-
-If you need founder approval for anything, pause and report back.
-When complete, provide results in the specified format.
-```
-
----
-
-## Implementation Sequence
-
-1. **Phase 1**: `chat_messages` table + `useChatMessages` hook (persistent messages)
-2. **Phase 2**: CEO scheduler (demo: Option B with visibility API)
-3. **Phase 3**: Decision engine (`evaluateCycle()`) — reads state, produces actions
-4. **Phase 4**: Chat integration — action cards, badges, navigation triggers
-5. **Phase 5**: Agent task execution — `task_executions`, persistent conversation, resume
-6. **Phase 6**: Supabase migration — Edge Function, Realtime subscriptions
+### Cross-Tab / Cross-Device
+Option E (Edge Function + pg_cron) would allow the CEO to evaluate and act even when no browser tab is open. Supabase Realtime would push notifications to all connected clients. Currently limited to the active browser tab.
 
 ---
 
@@ -314,10 +350,23 @@ When complete, provide results in the specified format.
 
 | File | Role |
 |------|------|
+| `src/lib/ceoScheduler.ts` | CEOScheduler class — visibility-aware setInterval, state persistence |
+| `src/lib/ceoDecisionEngine.ts` | `evaluateCycle()` — 6 heuristic checks, action queue insertion, stuck task recovery, skill sync |
+| `src/lib/ceoActionQueue.ts` | Action queue CRUD — `queueCEOAction`, `loadPendingActions`, `markActionSeen`, `dismissAction` |
+| `src/lib/llm/chatService.ts` | `streamCEOResponse()`, `buildCEOSystemPrompt()`, `isLLMAvailable()`, `handleEnableSkillCall()` |
+| `src/lib/taskDispatcher.ts` | `parseTaskPlan()`, `dispatchTaskPlan()`, `synthesizeMissionSummary()` |
+| `src/lib/memory.ts` | `getMemories()` — feeds founder profile + org memories into system prompt |
+| `src/lib/database.ts` | All DB functions: conversations, chat_messages, agents, missions, approvals, etc. |
+| `src/hooks/useRealtimeSubscriptions.ts` | Supabase Realtime on 7 tables including `chat_messages` and `ceo_action_queue` |
+| `src/components/Chat/ChatView.tsx` | Main chat page — onboarding router + conversation management |
+| `src/components/Chat/ChatSidebar.tsx` | Conversation list with new/archive |
+| `src/components/Chat/ChatThread.tsx` | Message rendering with streaming |
+| `src/components/Chat/ToolCallBlock.tsx` | Tool call results + action buttons |
+| `src/components/Chat/RichResultCard.tsx` | Formatted skill execution results |
+| `src/components/Chat/OnboardingFlow.tsx` | Scripted first-run CEO meeting |
+| `src/components/Surveillance/QuickChatPanel.tsx` | Compact chat overlay on Surveillance page |
+| `src/components/Missions/MissionDetailPage.tsx` | Mission review with task results |
+| `src/components/Layout/NavigationRail.tsx` | Badge counts (approvals, missions, collateral, unread chat), CEO status pip |
 | `AI/CEO-Agent-System.md` | Full technical architecture (scheduler options, decision engine, personality) |
-| `AI/Chat-Onboarding-Flow.md` | Scripted onboarding conversation (current implementation) |
+| `AI/Chat-Onboarding-Flow.md` | Scripted onboarding conversation |
 | `AI/Approval-System.md` | Approval types and lifecycle |
-| `src/lib/ceoScheduler.ts` | (Future) Scheduler class |
-| `src/lib/ceoDecisionEngine.ts` | (Future) CEO brain — state evaluation → action production |
-| `src/hooks/useChatMessages.ts` | (Future) Persistent chat hook |
-| `src/components/Chat/ChatView.tsx` | Current chat UI (onboarding + future active chat) |

@@ -39,7 +39,7 @@
 - [ ] **Passkey/WebAuthn auth verified** (GoTrue config, enrollment flow tested)
 - [ ] **Studio basic auth verified** (Caddy protecting studio subdomain — password shown once during `setup.mjs`, login at `studio.jarvis.local`)
 - [ ] **SSL options verified** (internal self-signed, Let's Encrypt HTTP-01, or off)
-- [ ] **Dual-mode boot** (Demo vs Full mode selection screen)
+- [ ] **Dual-mode boot** (Demo vs Full mode selection screen) - Probably dont want demo mode... 
 - [ ] **Founder Ceremony: system_setup phase** — CRT wizard that walks through `docker/.env` config:
   - Reads `.env.example` as template
   - Prompts for domain, passwords, keys with CRT-themed input fields

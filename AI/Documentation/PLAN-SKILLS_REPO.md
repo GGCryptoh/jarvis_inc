@@ -1,5 +1,32 @@
 # Skills Repository & Marketplace — Implementation Plan
 
+> **STATUS: COMPLETED** — Shipped in Sprint 5 (Feb 2026)
+>
+> **What shipped:**
+> - `skills_repo/` git submodule → `GGCryptoh/jarvis_inc_skills` (canonical)
+> - `skillResolver.ts` — three-layer merge (hardcoded UI + GitHub JSON + DB state)
+> - `skillExecutor.ts` — LLM provider execution with `execution_handler` → `API_HANDLERS` registry
+> - `SkillTestDialog.tsx` — in-app skill testing with parameter forms
+> - `cliSkillHandlers.ts` — CLI-based execution handlers
+> - JSON schema at `skills_repo/schema/skill.schema.json`
+> - 19 skill JSON files across 4 categories in `seed_skills_repo/Official/`
+> - Manifest-based sync via GitHub raw URLs
+>
+> **What didn't ship (deferred):**
+> - OAuth flow (PKCE) — no OAuth skills implemented yet
+> - CLI config / binary skills — connection_type "cli" not wired
+> - `skill_repos` multi-repo table — single official repo only
+> - `oauth_connections` table — deferred until OAuth skills needed
+>
+> **Key files:**
+> - `src/lib/skillResolver.ts` — runtime resolution (was "Future" in this plan, now shipped)
+> - `src/lib/skillExecutor.ts` — execution pipeline
+> - `src/lib/cliSkillHandlers.ts` — CLI skill handlers
+> - `src/components/Skills/SkillTestDialog.tsx` — test dialog
+> - `src/data/skillDefinitions.ts` — hardcoded UI fallback (Phase 1 of migration path)
+
+---
+
 > Defines the JSON schema, GitHub repo structure, database changes, test dialog,
 > refresh mechanism, and migration path for the skills system.
 
@@ -34,6 +61,7 @@
 | `oauth_config` | object \| null | `null` | Required when `connection_type` is `"oauth"` |
 | `curl_example` | object \| null | `null` | Example HTTP request for `"curl"` type |
 | `cli_config` | object \| null | `null` | Required when `connection_type` is `"cli"` |
+| `execution_handler` | string \| null | `null` | Named handler in `skillExecutor.ts` API_HANDLERS registry |
 
 ### Command Definition
 
@@ -124,6 +152,7 @@ Parameter types: `"string"` | `"number"` | `"boolean"` | `"object"` | `"array"`
   "default_model": null,
   "fixed_service": "OpenAI",
   "service_type": "fixed",
+  "execution_handler": "create_images",
   "oauth_config": null,
   "curl_example": {
     "method": "POST",
@@ -208,7 +237,7 @@ Jarvis Inc runtime interprets them to wire agents to external services.
 
 ```
 jarvis-skills/
-├── skills/
+├── Official/
 │   ├── communication/
 │   │   ├── read_email.json
 │   │   ├── write_email.json
@@ -220,11 +249,14 @@ jarvis-skills/
 │   │   ├── research_reddit.json
 │   │   └── deep_search.json
 │   ├── creation/
-│   │   ├── create_images.json
+│   │   ├── create_images_openai.json
+│   │   ├── create_images_gemini.json
 │   │   ├── write_document.json
 │   │   └── generate_code.json
 │   └── analysis/
 │       └── analyze_data.json
+├── Marketplace/
+│   └── (community contributions)
 ├── schema/
 │   └── skill.schema.json
 ├── manifest.json
@@ -280,10 +312,10 @@ Each command declares its name, description, typed parameters, and return type:
 ### Adding a New Skill
 
 1. **Fork** this repository
-2. **Create** a new JSON file in the appropriate `skills/<category>/` directory
+2. **Create** a new JSON file in the appropriate `Official/<category>/` directory
 3. **Validate** against the schema:
    ```bash
-   npx ajv validate -s schema/skill.schema.json -d skills/<category>/your_skill.json
+   npx ajv validate -s schema/skill.schema.json -d Official/<category>/your_skill.json
    ```
 4. **Submit** a pull request with:
    - A clear description of what the skill does
@@ -312,26 +344,6 @@ Skills follow [Semantic Versioning](https://semver.org/):
 - **MINOR**: New commands or optional parameters
 - **PATCH**: Description updates, tag changes, bug fixes
 
-## Warranty & Liability Disclaimer
-
-THIS SOFTWARE AND ALL SKILL DEFINITIONS ARE PROVIDED "AS IS", WITHOUT WARRANTY
-OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-
-IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, OR CONTRIBUTORS BE LIABLE FOR
-ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, THE SKILL
-DEFINITIONS, OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-**Community skills** (marketplace) are provided by third-party contributors and
-are not reviewed, endorsed, or guaranteed by Jarvis Inc. Use community skills at
-your own risk. Always review skill definitions before enabling them, especially
-skills that require OAuth connections or API keys.
-
-**API costs**: Skills that connect to paid APIs (OpenAI, Anthropic, Google, etc.)
-will incur charges on your API accounts. Jarvis Inc is not responsible for any
-API costs incurred through skill usage.
-
 ## License
 
 This repository is licensed under the [Apache License 2.0](LICENSE).
@@ -339,7 +351,7 @@ This repository is licensed under the [Apache License 2.0](LICENSE).
 
 ---
 
-## 4. Skill Mapping (18 Skills → JSON Schema)
+## 4. Skill Mapping (19 Skills → JSON Schema)
 
 | Skill ID | connection_type | service_type | fixed_service | models | icon | status |
 |----------|----------------|-------------|---------------|--------|------|--------|
@@ -354,6 +366,7 @@ This repository is licensed under the [Apache License 2.0](LICENSE).
 | `browse-web` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Monitor | available |
 | `web-scraping` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | ScanSearch | available |
 | `create-images` | api_key | fixed | OpenAI | null | Image | available |
+| `create-images-gemini` | api_key | fixed | Google | null | Image | available |
 | `generate-video` | api_key | fixed | OpenAI | null | Video | coming_soon |
 | `write-document` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | FileText | available |
 | `generate-code` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Code | available |
@@ -361,10 +374,6 @@ This repository is licensed under the [Apache License 2.0](LICENSE).
 | `analyze-image` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Eye | available |
 | `summarize-document` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | BookOpen | available |
 | `translate-text` | api_key | llm | null | [Claude Opus 4.6, GPT-5.2, ...] | Languages | available |
-
-**Notes**:
-- `read-email`, `write-email`, `send-slack`, `schedule-meeting` are reclassified from `api_key`/`fixed` to `oauth`/`fixed` since they actually need OAuth flows (Gmail API, Slack API, Google Calendar API).
-- 6 new skills added: `browse-web`, `web-scraping`, `generate-video`, `analyze-image`, `summarize-document`, `translate-text`.
 
 ### Skill-Agent Assignment Model
 
@@ -379,7 +388,9 @@ Skills are NOT globally available to all agents. The CEO controls which tools ea
 
 ## 5. Seed Skills Repo Structure
 
-Create `/seed_skills_repo/` in the project for local development. Mirrors the GitHub repo structure at https://github.com/GGCryptoh/jarvis_inc_skills (which already has `Official/`, `Marketplace/`, and `LICENSE`):
+The canonical skills repo is `skills_repo/` (git submodule → https://github.com/GGCryptoh/jarvis_inc_skills).
+
+Local reference copy at `seed_skills_repo/` mirrors the structure:
 
 ```
 seed_skills_repo/
@@ -395,9 +406,12 @@ seed_skills_repo/
 │   │   ├── research_reddit.json
 │   │   ├── deep_search.json
 │   │   ├── browse_web.json
-│   │   └── web_scraping.json
+│   │   ├── web_scraping.json
+│   │   ├── dns_lookup.json
+│   │   └── whois_lookup.json
 │   ├── creation/
-│   │   ├── create_images.json
+│   │   ├── create_images_openai.json
+│   │   ├── create_images_gemini.json
 │   │   ├── generate_video.json
 │   │   ├── write_document.json
 │   │   └── generate_code.json
@@ -408,11 +422,11 @@ seed_skills_repo/
 │   │   └── translate_text.json
 │   └── README.md
 ├── Marketplace/
-│   └── README.md
+│   └── (empty — future community contributions)
 ├── schema/
 │   └── skill.schema.json
 ├── manifest.json
-└── README.md
+└── other-manifest.json
 ```
 
 The `manifest.json` lists all skill file paths with checksums for efficient sync:
@@ -422,137 +436,51 @@ The `manifest.json` lists all skill file paths with checksums for efficient sync
   "version": "1.0.0",
   "updated_at": "2026-02-11T00:00:00Z",
   "skills": [
-    { "path": "skills/communication/read_email.json", "checksum": "sha256:..." },
-    { "path": "skills/communication/write_email.json", "checksum": "sha256:..." }
+    { "path": "Official/communication/read_email.json", "checksum": "sha256:..." },
+    { "path": "Official/communication/write_email.json", "checksum": "sha256:..." }
   ]
 }
 ```
 
 ---
 
-## 6. Database Schema Additions
+## 6. Database Schema
 
-### New: `skill_definitions` (cached remote skill data)
-```sql
-CREATE TABLE IF NOT EXISTS skill_definitions (
-  id              TEXT PRIMARY KEY,
-  source          TEXT NOT NULL DEFAULT 'local',
-  source_repo     TEXT DEFAULT NULL,
-  json_data       TEXT NOT NULL,
-  version         TEXT NOT NULL,
-  author          TEXT NOT NULL,
-  category        TEXT NOT NULL,
-  icon            TEXT NOT NULL,
-  connection_type TEXT NOT NULL,
-  fetched_at      TEXT NOT NULL DEFAULT (datetime('now')),
-  checksum        TEXT DEFAULT NULL,
-  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
+The `skills` table in Supabase stores user-facing skill state (enabled/disabled, selected model). Skill definitions are resolved at runtime by `skillResolver.ts` from three sources:
 
-### New: `oauth_connections`
-```sql
-CREATE TABLE IF NOT EXISTS oauth_connections (
-  id              TEXT PRIMARY KEY,
-  provider        TEXT NOT NULL,
-  skill_id        TEXT DEFAULT NULL,
-  access_token    TEXT NOT NULL,
-  refresh_token   TEXT DEFAULT NULL,
-  token_type      TEXT NOT NULL DEFAULT 'Bearer',
-  expires_at      TEXT DEFAULT NULL,
-  scopes          TEXT DEFAULT NULL,
-  account_label   TEXT DEFAULT NULL,
-  status          TEXT NOT NULL DEFAULT 'active',
-  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
+1. **Hardcoded** — `skillDefinitions.ts` (offline/first-boot fallback)
+2. **GitHub** — fetched from `skills_repo` manifest via raw URLs
+3. **DB** — user preferences (enabled, model) from `skills` table
 
-### New: `skill_repos`
-```sql
-CREATE TABLE IF NOT EXISTS skill_repos (
-  id              TEXT PRIMARY KEY,
-  name            TEXT NOT NULL,
-  repo_url        TEXT NOT NULL,
-  repo_type       TEXT NOT NULL DEFAULT 'official',
-  branch          TEXT NOT NULL DEFAULT 'main',
-  enabled         INTEGER NOT NULL DEFAULT 1,
-  last_synced_at  TEXT DEFAULT NULL,
-  sync_error      TEXT DEFAULT NULL,
-  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
-
-### Modified: `skills` table (add source tracking)
-```sql
-ALTER TABLE skills ADD COLUMN source TEXT DEFAULT 'local';
-ALTER TABLE skills ADD COLUMN definition_id TEXT DEFAULT NULL;
-```
+The three-layer merge in `resolveSkills()` produces `ResolvedSkillDefinition[]` with full JSON definition + user config attached.
 
 ---
 
 ## 7. Refresh Mechanism
 
 ### Auto-Refresh
-- On Skills page mount: `useEffect` checks each enabled repo's `last_synced_at`
-- If older than 24 hours → triggers `syncSkillRepos()`
+- On Skills page mount: `useEffect` checks `last_synced_at` in localStorage
+- If older than 24 hours → triggers sync from GitHub
 - Silent background operation — no UI interruption
 
 ### Manual Refresh
-- Muted `RefreshCw` icon button in Skills page header (zinc-500 text, thin border)
+- Muted `RefreshCw` icon button in Skills page header
 - Animates with `animate-spin` while syncing
 - Tooltip: "Refresh skills from repositories"
 
-### Sync Engine (`src/lib/skillsRepository.ts`)
+### Sync Engine (`src/lib/skillResolver.ts`)
 
 ```
-Fetch manifest.json → compare checksums → fetch only changed skills → validate → upsert
+Fetch manifest.json → compare checksums → fetch only changed skills → validate → merge with DB state
 ```
-
-1. `fetchManifest(repoUrl, branch)` — one HTTP call to get file list + checksums
-2. Compare each checksum against `skill_definitions.checksum` in DB
-3. Only fetch changed skill JSON files (minimize API calls)
-4. `parseAndValidateSkill(raw)` — JSON parse + schema validation
-5. `saveSkillDefinition()` — upsert into `skill_definitions` table
-6. Update `skill_repos.last_synced_at`
 
 **GitHub raw URLs**: `https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}`
-Public repos have permissive CORS. Private repos need a GitHub token in the vault.
-
-**Rate limits**: Unauthenticated GitHub API: 60/hour. Manifest approach = 1 + N changed files per sync. With daily sync, this is well within limits.
 
 ---
 
 ## 8. Test Dialog UX
 
 ### Component: `src/components/Skills/SkillTestDialog.tsx`
-
-```
-+-----------------------------------------------+
-|  TEST SKILL: Research Web               [X]   |
-|-----------------------------------------------|
-|  Command: [search           v]                 |
-|                                               |
-|  PARAMETERS                                    |
-|  +-----------------------------------------+  |
-|  | query*     [                           ] |  |
-|  | max_results [ 10                       ] |  |
-|  +-----------------------------------------+  |
-|                                               |
-|  [ RUN TEST ]                                 |
-|                                               |
-|  RESULT                                        |
-|  +-----------------------------------------+  |
-|  | {                                       |  |
-|  |   "status": "success",                 |  |
-|  |   "results": [...]                      |  |
-|  | }                                       |  |
-|  +-----------------------------------------+  |
-|                                               |
-|  Elapsed: 1.2s  |  Tokens: 847  |  Cost: ~$0.01|
-+-----------------------------------------------+
-```
 
 **State machine**: `idle → running → success | error`
 
@@ -564,71 +492,40 @@ Public repos have permissive CORS. Private repos need a GitHub token in the vaul
 - Required params: asterisk marker
 - Optional params: show `default` as placeholder
 
-**Phase 1 (no backend)**: Dry-run mode — shows the interpolated API payload / cURL command
-**Phase 2 (with backend)**: Live execution — sends request and shows real response
-
 **Integration**: Test button (FlaskConical icon) on each skill card, visible when skill is enabled and has required credentials.
 
 ---
 
-## 9. OAuth Flow (PKCE)
+## 9. Migration Path (COMPLETED)
 
-Since there's no backend, OAuth uses Authorization Code + PKCE flow:
-
-1. Generate `code_verifier` (random 43-128 chars) and `code_challenge` (SHA-256, base64url)
-2. Open provider's auth URL in a popup with `code_challenge`
-3. User authorizes in popup
-4. Redirect to `http://localhost:5173/oauth/callback` (dev) or production URL
-5. Exchange authorization code + `code_verifier` for tokens
-6. Store in `oauth_connections` table
-
-### Callback Route
-Add `<Route path="/oauth/callback" element={<OAuthCallback />} />` in App.tsx.
-
-### Token Refresh
-Check `expires_at` before each use. Auto-refresh if within 5 minutes of expiry.
-
-### Vault Integration
-OAuth connections shown in a new section on the Vault page with: provider, scopes, expiry, account label, disconnect button.
-
----
-
-## 10. Migration Path
-
-### Phase 1: Dual Source (backward compatible)
+### Phase 1: Dual Source (backward compatible) — SHIPPED
 - `skillDefinitions.ts` remains as hardcoded fallback
-- New `skillResolver.ts` merges: hardcoded → official repo → marketplace
+- `skillResolver.ts` merges: hardcoded → official repo → DB state
 - `resolveSkills()` returns `ResolvedSkillDefinition[]` with user config attached
 - SkillsView imports from resolver instead of hardcoded
 
-### Phase 2: Seed Skills Repo
-- Create 13 JSON files in `/seed_skills_repo/`
-- Add official repo as default entry in `skill_repos` during `initDatabase()`
+### Phase 2: Seed Skills Repo — SHIPPED
+- 19+ JSON files in `seed_skills_repo/` and canonical `skills_repo/`
+- Official repo as default source
 
-### Phase 3: Steady State
+### Phase 3: Steady State — SHIPPED
 - Hardcoded `skillDefinitions.ts` serves only as offline/first-boot fallback
-- All runtime skill data comes from synced repos
+- All runtime skill data comes from synced repo + DB
 - User's enabled/model preferences always preserved in `skills` table
 
 ### Icon Resolution
-JSON files use string icon names. New `src/lib/iconResolver.ts` maps strings to Lucide components:
-```typescript
-import { Mail, Globe, Code, Image, ... } from 'lucide-react';
-const iconMap = { Mail, Globe, Code, Image, ... };
-export function resolveIcon(name: string): React.ElementType;
-// Fallback: Puzzle icon for unknown names
-```
+`skillResolver.ts` maps string icon names to Lucide components using an internal icon map. Fallback: Puzzle icon for unknown names.
 
 ---
 
-## 11. New Files Summary
+## 10. Files Summary
 
-| File | Purpose |
-|------|---------|
-| `src/lib/skillsRepository.ts` | GitHub sync engine (fetch manifest, diff checksums, fetch changed) |
-| `src/lib/skillResolver.ts` | Merge hardcoded + cached + user config |
-| `src/lib/iconResolver.ts` | Map string icon names to Lucide components |
-| `src/lib/oauthFlow.ts` | PKCE OAuth popup flow + token management |
-| `src/types/skills.ts` | ResolvedSkillDefinition, SkillCommand, SkillParameter, OAuthConfig types |
-| `src/components/Skills/SkillTestDialog.tsx` | Themed test dialog with param form + result panel |
-| `seed_skills_repo/` | 13 JSON files + schema + manifest + LICENSE + README |
+| File | Purpose | Status |
+|------|---------|--------|
+| `src/lib/skillResolver.ts` | Three-layer merge: hardcoded + GitHub + DB | SHIPPED |
+| `src/lib/skillExecutor.ts` | LLM provider execution + API_HANDLERS registry | SHIPPED |
+| `src/lib/cliSkillHandlers.ts` | CLI-based skill execution handlers | SHIPPED |
+| `src/components/Skills/SkillTestDialog.tsx` | Themed test dialog with param form + result panel | SHIPPED |
+| `src/data/skillDefinitions.ts` | Hardcoded UI fallback definitions | SHIPPED |
+| `skills_repo/` | Git submodule → canonical GitHub repo | SHIPPED |
+| `seed_skills_repo/` | Local reference copy (knowledge only) | SHIPPED |

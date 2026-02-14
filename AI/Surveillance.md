@@ -1,12 +1,37 @@
 # Surveillance Module — Design Reference
 
 > Committed project documentation. Captures the visual identity, technical architecture,
-> and future vision for the `/surveillance` pixel office module.
+> and current implementation state for the `/surveillance` pixel office module.
 
-### Implementation Status (2026-02-12)
-- **Shipped**: All 8 components (SurveillanceView, SurveillanceModule, PixelOffice, AgentSprite, CEOSprite, CRTFrame, SurveillanceControls, HireAgentModal)
+### Implementation Status (2026-02-13)
+- **Shipped**: All 9 components (SurveillanceView, SurveillanceModule, PixelOffice, AgentSprite, CEOSprite, CRTFrame, SurveillanceControls, HireAgentModal, QuickChatPanel)
 - **Shipped**: 4 floor tiers, 7 animation states, CEO walk-in + agent hire ceremonies, floor planner mode
-- **Note**: Door animation has been **removed** (TASKS.md line 142). Ceremonies now run without door visuals. References to door animation below are historical.
+- **Shipped**: Door animations (CSS `.door-open-left`/`.door-open-right`) — active during CEO walk-in and agent hire ceremonies
+- **Shipped**: QuickChatPanel — compact chat overlay for talking to CEO without leaving surveillance
+- **Shipped**: Real-time status updates via Supabase Realtime subscriptions (agents, missions, task_executions)
+- **Shipped**: Cost tracking in agent/CEO hover tooltips (via `llmUsage.ts`)
+- **Shipped**: Typing hands animation on AgentSprite when status='working'
+- **Shipped**: CEO personality archetype + risk tolerance display in hover tooltip
+- **Shipped**: Skill picker in HireAgentModal (assign skills at hire time)
+- **Shipped**: Agent confidence scores refreshed from task_execution results in real-time
+- **Shipped**: CEO proactive action notifications ("CEO WANTS TO CHAT") overlay
+
+---
+
+## Component Map
+
+```
+src/components/Surveillance/
+├── SurveillanceView.tsx      # Main DB-backed view — ceremonies, sidebar, overlays
+├── SurveillanceModule.tsx    # Demo mode (sample-surveillance route, dummy data)
+├── PixelOffice.tsx           # Office floor rendering + agent/CEO sprites + holographic board
+├── AgentSprite.tsx           # Agent pixel character + hover card with cost tracking
+├── CEOSprite.tsx             # CEO pixel character + hover card with archetype + cost
+├── CRTFrame.tsx              # Scanline/vignette/phosphor CRT wrapper
+├── SurveillanceControls.tsx  # Scene buttons + hire + status panel
+├── HireAgentModal.tsx        # Hire/edit form + live sprite preview + skill picker
+└── QuickChatPanel.tsx        # Compact CEO chat overlay (bottom-center of CRT frame)
+```
 
 ---
 
@@ -58,26 +83,36 @@
 
 ### Agent Sprite (`AgentSprite.tsx`)
 - **Pixel art character**: CSS-constructed (no image files)
-  - Hair/hat: 15px wide x 6px tall, agent `color`
-  - Head: 15px x 12px, agent `skinTone`, with 2px black pixel eyes and mouth
-  - Body: 18px x 15px, agent `color`
-  - Legs: Two 6px x 9px blocks (slate-700), bob animation when walking
+  - Hair/hat: 24px wide x 10px tall, agent `color`
+  - Head: 24px x 19px, agent `skinTone`, with 3px black pixel eyes
+  - Body: Arms (5px wide each, with skin-tone hands) flanking a 24px x 24px torso in agent `color`
+  - Legs: Two 10px x 14px blocks (slate-700), bob animation when walking
+- **Typing hands**: When status='working', two 6px x 4px skin-tone blocks appear below the torso, simulating hands on a keyboard. Arms shorten and animate via `agent-arm-left` / `agent-arm-right` CSS classes.
+- **Seated offset**: When working, sprite translates down 22px (`translateY(22px)`) so agents appear to sit behind desks
+- **Facing direction**: `facing` prop (`'left'` | `'right'`) applies horizontal flip via `scaleX(-1)`
+- **Thought bubbles**: When working or in meeting, a thought bubble with status-specific labels appears (e.g., "compiling...", "debug...", "idea!")
 - **Status dot**: Top-right corner, colored by status
-- **Working glow**: Small "monitor" glow rectangle above sprite when status='working'
+- **Working glow**: Radial gradient "monitor" glow (19px x 14px) above sprite when status='working', with screen flicker animation
+- **Hover glow**: On hover, a colored glow shadow radiates around the sprite using the agent's suit color
+- **Hover tooltip**: Shows agent name, current task, confidence %, base cost. On hover, asynchronously loads real cost data from `getAgentUsage()` (via `llmUsage.ts`) showing task count and total LLM spend.
 - **Nametag**: Agent name in agent color, Press Start 2P pixel font below sprite
 
 ### CEO Sprite (`CEOSprite.tsx`)
-- 2.5-3x larger than agent sprites
-- **Crown**: Unicode chess queen symbol in gold (#f1fa8c)
-- **Body details**: Suit lapels (darker inner rect), gold tie (3px stripe), arms
-- **Status dot**: Gold-ringed with 2px border and glow shadow
-- **Working glow**: Larger 15px x 12px monitor glow
-- **Name label**: "CEO [NAME]" in gold with text shadow
+- ~1.2x scale of regular agent sprites (29px head width vs 24px)
+- **Crown**: Unicode chess queen symbol in gold (#f1fa8c) with gold text shadow
+- **Head**: 29px x 23px with 4px pixel eyes and a subtle mouth
+- **Body details**: Suit lapels (darker inner rect via rgba overlay), gold tie (4px stripe), arms with brightness filter
+- **Status dot**: Left side of head, gold-ringed with 2px border and glow shadow
+- **Seated offset**: When working, translates down 24px
+- **Working glow**: 18px x 14px radial gradient monitor glow with screen flicker
+- **Hover tooltip**: Shows "CEO [NAME]", personality archetype (e.g., "WHARTON MBA"), current task, model name, status with risk tolerance level, and total LLM cost from `getAgentUsage('ceo')`
+- **Name label**: "CEO [NAME]" in gold with text shadow, 9px pixel font
+- **Gold hover glow**: On hover, gold-tinted shadow glow around the sprite
 
 ### Animation States
 | Status | CSS Class | Visual Effect | Dot Color |
 |--------|-----------|---------------|-----------|
-| working | `agent-typing` | Subtle hand bob | Green #50fa7b |
+| working | `agent-typing` | Subtle hand bob + typing hands | Green #50fa7b |
 | walking | `agent-walking` | Bounce + scale alternation | Orange #ffb86c |
 | celebrating | `agent-celebrating` | Bouncy jump/spin dance | Magenta #ff79c6 |
 | meeting | `agent-meeting` | Gentle sway | Purple #bd93f9 |
@@ -114,6 +149,7 @@ null → entering → celebrating → walking_to_desk → seated → null
 Same flow as CEO walk-in but for the new agent. Uses `hireCeremonyRef` to sync state inside setInterval.
 
 ### Door Animation
+Door animations are active during ceremonies (CEO walk-in and agent hire):
 - `doorOpen: true` → CSS classes `.door-open-left` + `.door-open-right` (doors slide apart)
 - `doorOpen: false` → CSS classes `.door-close-left` + `.door-close-right` (doors slide together)
 - `doorOpen: null` → static, no animation playing
@@ -123,6 +159,25 @@ Same flow as CEO walk-in but for the new agent. Uses `hireCeremonyRef` to sync s
 - Square + triangle wave ascending arpeggio: C5 → E5 → G5 → C6 with high sparkle notes
 - No external audio files — pure synthesis
 - Plays on: CEO celebration, agent hire celebration
+
+## QuickChatPanel (`QuickChatPanel.tsx`)
+
+Compact CEO chat overlay that lets the founder talk to the CEO without navigating away from the surveillance view.
+
+### Behavior
+- **Toggle**: Opened via the "QUICK CHAT" button in the agent detail sidebar or the chat button on surveillance controls
+- **Conversation**: On mount, loads the most recent active conversation. If none exists, auto-creates a new one titled "Quick Chat"
+- **LLM streaming**: Sends messages via `streamCEOResponse()` from `chatService.ts`. Tokens stream in real-time with a pulsing cursor. Falls back to `getCEOResponse()` (scripted) if LLM is unavailable.
+- **Event listeners**: Reloads messages on `chat-messages-changed` and `missions-changed` events (e.g., when `taskDispatcher` posts skill results)
+- **Abort handling**: If the user navigates to full chat mid-stream, the partial response is saved and the stream is aborted
+
+### UI
+- **Positioned**: Absolute bottom-center of the CRT frame, z-index 30, 600px wide
+- **Title bar**: Retro-styled with CEO name, minimize/maximize/close/expand buttons
+- **Messages area**: 240px tall scrollable area. User messages right-aligned (emerald), CEO messages left-aligned (zinc) with yellow CEO label
+- **Rich content**: CEO messages rendered via `RichMessageContent` (supports tool call blocks)
+- **Input**: Pixel-font input field with Send button. Enter key sends.
+- **Minimized state**: Collapses to a small "CEO CHAT" button with message count badge
 
 ## Interactive Elements
 
@@ -142,18 +197,33 @@ Four buttons as HTML overlay on the office viewport:
 
 ### Today's Priorities
 - Holographic "TODAY'S PRIORITIES" panel positioned top-right of the office
-- Shows current missions from `loadMissions()` (limited to critical/high priority)
+- Shows current missions from `loadMissions()` (limited to active/not-done, max 3)
+- Before onboarding: shows contextual first-time priorities ("Meet the Founder", "Set Company Goals", "Enable first skill")
+- Also displays active task executions (pending/running) with skill name, status, and assigned agent
 - `pointer-events-none` — visual overlay, not interactive
 - Retro-styled with semi-transparent background and pixel font
 
-### Agent Interaction
-- Click agent sprite → sidebar opens with:
+### Agent Interaction (Detail Sidebar)
+- Click agent sprite → sidebar opens (280px wide, right side) with:
   - Agent name, role, model
-  - Current status and task
-  - Confidence level (0-100%)
-  - Cost so far (token spend)
-  - Edit button → HireAgentModal in edit mode
-  - Fire button → confirmation dialog → `deleteAgent()`
+  - Current task (or CEO philosophy)
+  - Status with colored dot
+  - Confidence level (0-100%) with progress bar
+  - Real cost from `getAgentUsage()` (total spend + task count)
+  - Active mission (title, status, priority) from `loadAgentActivity()`
+  - Currently executing task (skill_id, command_name, status)
+  - Assigned skills list
+  - Edit Look button → HireAgentModal in edit mode
+  - Fire button → two-step confirmation → `deleteAgent()`
+  - Quick Chat button → opens QuickChatPanel
+  - Close button
+
+### HireAgentModal
+- **Hire mode**: Form for name (max 12 chars, auto-uppercased), role (presets or custom), model selector, suit color picker, skin tone picker
+- **Edit mode**: Pre-filled with existing agent data, name/role fields may be read-only for CEO
+- **Skill picker**: Loads enabled skills from `resolveSkills()`. Checkboxes to select skills. On hire, skills are assigned via `assignSkillToAgent()` and stored in `agent_skills` table.
+- **Live sprite preview**: Real-time preview of the agent being configured
+- **CEO editing**: Supports editing CEO appearance (color, skin tone, name) via `updateCEOAppearance()`
 
 ### Meeting Clusters
 - In meeting scene mode, agents cluster at midpoints between their positions
@@ -164,6 +234,24 @@ Four buttons as HTML overlay on the office viewport:
 - Hover over fire extinguisher area in the office background
 - Tooltip: "Break Glass (Coming Soon)"
 - Placeholder for future emergency/kill-switch feature
+
+## Real-Time Updates
+
+SurveillanceView subscribes to multiple event channels for live updates:
+
+| Event | Source | Effect |
+|-------|--------|--------|
+| `chat-messages-changed` | chatService, taskDispatcher | CEO status → 'meeting', QuickChatPanel reloads messages |
+| `task-executions-changed` | taskDispatcher, ceoScheduler | CEO/agent status updates, confidence refresh, active tasks board update |
+| `missions-changed` | ceoDecisionEngine | Priority board refresh, CEO status update |
+| `ceo-actions-changed` | ceoActionQueue | CEO proactive notification overlay |
+| `approvals-changed` | approval mutations | Approval badge sync |
+
+CEO real-time status cycle:
+- Chat activity → status: `meeting`, task: "Chatting with Founder..."
+- Task execution running → status: `working`, task: "Executing: [skill_id]"
+- Mission in progress → status: `working`, task: "[mission title]"
+- 30s of no activity → status: `idle`, task: "Awaiting instructions..."
 
 ## CSS Classes Reference
 
@@ -182,18 +270,22 @@ Four buttons as HTML overlay on the office viewport:
 - `.pixel-art` — image-rendering: pixelated for crisp pixel art scaling
 
 ### Door Animations
-- `.door-open-left` / `.door-open-right` — sliding door open
-- `.door-close-left` / `.door-close-right` — sliding door close
+- `.door-open-left` / `.door-open-right` — sliding door open (used during ceremonies)
+- `.door-close-left` / `.door-close-right` — sliding door close (used during ceremonies)
 
 ### Agent Animations
-- `.agent-sprite` — base positioning container
-- `.agent-typing` — working animation
-- `.agent-walking` — movement animation
-- `.agent-celebrating` — celebration dance
+- `.agent-sprite` — base positioning container (absolute, translate-centered)
+- `.agent-typing` — working animation (subtle bob)
+- `.agent-walking` — movement animation (bounce + scale alternation)
+- `.agent-celebrating` — celebration dance (bouncy jump/spin)
 - `.agent-meeting` — meeting sway
 - `.agent-break` — break bob
 - `.agent-idle` — idle breathing
-- `.agent-nametag` — name label styling
+- `.agent-nametag` — name label styling (pixel font, tracking)
+- `.agent-arm-left` / `.agent-arm-right` — typing arm animation (when working)
+- `.agent-humming` — subtle body hum when working
+- `.agent-thought-bubble` / `.agent-thought-dot` / `.agent-thought-label` — thought bubble display
+- `.typing-hands` — forward-extended hands at keyboard position
 
 ## Color Palettes (for Agent Customization)
 
@@ -223,7 +315,6 @@ Four buttons as HTML overlay on the office viewport:
 
 ## Future Vision
 
-- **Real-time agent status**: Reflect actual LLM execution state (thinking, generating, waiting for API, etc.)
 - **Agent reporting lines**: Visual hierarchy lines showing who reports to whom
 - **Blocked state visualization**: Red/amber indicators when agents wait on approval or budget
 - **Advanced floor planner**: Drag-and-drop positioning, snap-to-grid, zone definitions
@@ -231,7 +322,6 @@ Four buttons as HTML overlay on the office viewport:
 - **Conference zone editor**: Define named meeting areas on the floor plan with custom labels
 - **Network view**: Interactive graph showing agent communication patterns and data flow
 - **Analytics overlay**: Heat map showing per-agent cost, throughput, and performance metrics
-- **Agent desk offset**: `translateY(14px)` when working so agents appear to sit behind desks
 - **Ghost desk cursor**: Preview desk follows mouse when agent is selected in floor plan mode
 - **Multi-floor navigation**: Tabs or elevator UI to switch between floor tiers
 - **Weather/time effects**: Pixel art window showing day/night cycle, weather
