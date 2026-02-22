@@ -216,8 +216,8 @@ export default function AboutPage() {
       </section>
 
       {/* Open Source + Creator */}
-      <section className="mb-16">
-        <h2 className="font-pixel text-xs text-pixel-cyan glow-cyan mb-6 flex items-center gap-2">
+      <section id="open-source" className="mb-16 text-center scroll-mt-8">
+        <h2 className="font-pixel text-xs text-pixel-cyan glow-cyan mb-6 flex items-center justify-center gap-2">
           <Github className="w-4 h-4" />
           OPEN SOURCE
         </h2>
@@ -226,7 +226,18 @@ export default function AboutPage() {
             Jarvis Inc is fully open source. Clone the repo, run one command, and have your
             own autonomous AI workforce dashboard in minutes.
           </p>
-          <div className="flex flex-wrap gap-3 mt-4">
+          <div className="bg-jarvis-bg rounded-lg border border-jarvis-border p-4 mt-4 text-left">
+            <p className="font-mono text-[10px] text-pixel-green mb-2">One-line install (macOS / Linux):</p>
+            <pre className="font-mono text-xs text-pixel-green leading-relaxed bg-black/30 rounded p-2 overflow-x-auto"><code>{`curl -fsSL https://raw.githubusercontent.com/GGCryptoh/jarvis_inc/main/install.sh | bash`}</code></pre>
+          </div>
+          <div className="bg-jarvis-bg rounded-lg border border-jarvis-border p-4 text-left">
+            <p className="font-mono text-[10px] text-jarvis-muted mb-2">Or manually:</p>
+            <pre className="font-mono text-xs text-jarvis-muted leading-relaxed"><code>{`git clone https://github.com/GGCryptoh/jarvis_inc.git
+cd jarvis_inc
+npm install
+npm run jarvis`}</code></pre>
+          </div>
+          <div className="flex flex-wrap justify-center gap-3 mt-4">
             <a
               href="https://github.com/GGCryptoh/jarvis_inc"
               target="_blank"

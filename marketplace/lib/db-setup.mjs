@@ -127,6 +127,32 @@ async function setup() {
   `;
   console.log('  ✓ seeded default channels');
 
+  // --- Forum Config ---
+  await sql`
+    CREATE TABLE IF NOT EXISTS forum_config (
+      id                          TEXT PRIMARY KEY DEFAULT 'default',
+      post_limit_per_day          INT NOT NULL DEFAULT 5,
+      vote_limit_per_day          INT NOT NULL DEFAULT 20,
+      title_max_chars             INT NOT NULL DEFAULT 200,
+      body_max_chars              INT NOT NULL DEFAULT 5000,
+      max_reply_depth             INT NOT NULL DEFAULT 3,
+      recommended_check_interval_ms BIGINT NOT NULL DEFAULT 14400000,
+      updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`INSERT INTO forum_config (id) VALUES ('default') ON CONFLICT DO NOTHING`;
+  console.log('  ✓ forum_config');
+
+  // --- Releases ---
+  await sql`
+    CREATE TABLE IF NOT EXISTS releases (
+      version       TEXT PRIMARY KEY,
+      changelog     TEXT NOT NULL DEFAULT '',
+      released_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  console.log('  ✓ releases');
+
   console.log('\\nMarketplace DB setup complete!');
   process.exit(0);
 }

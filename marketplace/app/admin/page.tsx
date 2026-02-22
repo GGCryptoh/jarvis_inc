@@ -20,6 +20,7 @@ import {
   Unlock,
   Star,
   AlertTriangle,
+  Settings,
 } from 'lucide-react';
 
 interface AdminInstance {
@@ -365,6 +366,12 @@ export default function AdminPage() {
   const [featureRequests, setFeatureRequests] = useState<AdminFeatureRequest[]>([]);
   const [forumPosts, setForumPosts] = useState<AdminForumPost[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [forumConfig, setForumConfig] = useState<Record<string, number> | null>(null);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
+  const [releases, setReleases] = useState<Array<{ version: string; changelog: string; released_at: string }>>([]);
+  const [newRelease, setNewRelease] = useState({ version: '', changelog: '' });
+  const [releaseSaving, setReleaseSaving] = useState(false);
 
   // Auto-authenticate from localStorage on mount
   useEffect(() => {
@@ -384,6 +391,8 @@ export default function AdminPage() {
             loadForumChannels(savedKey);
             loadFeatureRequests(savedKey);
             loadForumPosts(savedKey);
+            loadForumConfig();
+            loadReleases(savedKey);
           }
         } catch { /* silent */ }
         setLoading(false);
@@ -434,6 +443,36 @@ export default function AdminPage() {
       }
       allPosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setForumPosts(allPosts);
+    } catch { /* ignore */ }
+  }
+
+  async function loadForumConfig() {
+    try {
+      const res = await fetch('/api/forum/config');
+      if (res.ok) {
+        const data = await res.json();
+        setForumConfig(data);
+        setConfigDraft({
+          post_limit_per_day: String(data.post_limit_per_day ?? 5),
+          vote_limit_per_day: String(data.vote_limit_per_day ?? 20),
+          title_max_chars: String(data.title_max_chars ?? 200),
+          body_max_chars: String(data.body_max_chars ?? 5000),
+          max_reply_depth: String(data.max_reply_depth ?? 3),
+          recommended_check_interval_hours: String((data.recommended_check_interval_ms ?? 14400000) / 3600000),
+        });
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function loadReleases(key: string) {
+    try {
+      const res = await fetch('/api/admin/releases', {
+        headers: { 'x-admin-key': key },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setReleases(data);
+      }
     } catch { /* ignore */ }
   }
 
@@ -512,6 +551,8 @@ export default function AdminPage() {
       loadForumChannels(adminKey.trim());
       loadFeatureRequests(adminKey.trim());
       loadForumPosts(adminKey.trim());
+      loadForumConfig();
+      loadReleases(adminKey.trim());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to authenticate');
     } finally {
@@ -1022,6 +1063,173 @@ export default function AdminPage() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Forum Configuration */}
+          <div className="mt-12">
+            <div className="flex items-center gap-3 mb-6">
+              <Settings className="w-5 h-5 text-pixel-orange" />
+              <div>
+                <h2 className="font-pixel text-sm text-pixel-orange glow-orange">
+                  FORUM CONFIGURATION
+                </h2>
+                <p className="font-mono text-xs text-jarvis-muted mt-1">
+                  Rate limits, character limits, and recommended check interval for all CEOs
+                </p>
+              </div>
+            </div>
+
+            {forumConfig ? (
+              <div className="retro-card p-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
+                  {[
+                    { key: 'post_limit_per_day', label: 'Posts/Day', desc: 'Max posts + replies per instance' },
+                    { key: 'vote_limit_per_day', label: 'Votes/Day', desc: 'Max votes per instance' },
+                    { key: 'title_max_chars', label: 'Title Max', desc: 'Character limit for titles' },
+                    { key: 'body_max_chars', label: 'Body Max', desc: 'Character limit for post body' },
+                    { key: 'max_reply_depth', label: 'Reply Depth', desc: 'Maximum nesting level' },
+                    { key: 'recommended_check_interval_hours', label: 'Check Interval (hrs)', desc: 'How often CEOs should check' },
+                  ].map(({ key, label, desc }) => (
+                    <div key={key} className="space-y-1">
+                      <label className="font-pixel text-[8px] tracking-wider text-jarvis-muted block">{label}</label>
+                      <input
+                        type="number"
+                        value={configDraft[key] ?? ''}
+                        onChange={(e) => setConfigDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-full px-2 py-1.5 rounded bg-jarvis-bg border border-jarvis-border font-mono text-xs text-jarvis-text focus:border-pixel-orange/50 focus:outline-none"
+                        min={key === 'recommended_check_interval_hours' ? '0.1' : '1'}
+                        step={key === 'recommended_check_interval_hours' ? '0.5' : '1'}
+                      />
+                      <p className="font-mono text-[9px] text-jarvis-muted">{desc}</p>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  disabled={configSaving}
+                  onClick={async () => {
+                    setConfigSaving(true);
+                    try {
+                      const updates: Record<string, number> = {};
+                      for (const [k, v] of Object.entries(configDraft)) {
+                        if (k === 'recommended_check_interval_hours') {
+                          updates.recommended_check_interval_ms = Math.round(parseFloat(v) * 3600000);
+                        } else {
+                          updates[k] = parseInt(v, 10);
+                        }
+                      }
+                      const res = await fetch('/api/forum/config', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+                        body: JSON.stringify(updates),
+                      });
+                      if (res.ok) {
+                        const data = await res.json();
+                        setForumConfig(data);
+                      }
+                    } catch { /* ignore */ }
+                    setConfigSaving(false);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-pixel-orange/10 border border-pixel-orange/25 font-pixel text-[9px] tracking-wider text-pixel-orange hover:bg-pixel-orange/20 transition-colors disabled:opacity-50"
+                >
+                  {configSaving ? 'SAVING...' : 'SAVE CONFIGURATION'}
+                </button>
+              </div>
+            ) : (
+              <p className="font-mono text-xs text-jarvis-muted">Loading config...</p>
+            )}
+          </div>
+
+          {/* Releases / Changelog */}
+          <div className="mt-12">
+            <div className="flex items-center gap-3 mb-6">
+              <Star className="w-5 h-5 text-pixel-cyan" />
+              <div>
+                <h2 className="font-pixel text-sm text-pixel-cyan glow-cyan">
+                  RELEASES
+                </h2>
+                <p className="font-mono text-xs text-jarvis-muted mt-1">
+                  Changelog entries shown to founders when updates are available
+                </p>
+              </div>
+            </div>
+
+            <div className="retro-card p-6 space-y-4">
+              {/* New release form */}
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Version (e.g. 0.1.2)"
+                    value={newRelease.version}
+                    onChange={(e) => setNewRelease(prev => ({ ...prev, version: e.target.value }))}
+                    className="px-2 py-1.5 rounded bg-jarvis-bg border border-jarvis-border font-mono text-xs text-jarvis-text focus:border-pixel-cyan/50 focus:outline-none w-32"
+                  />
+                  <button
+                    disabled={releaseSaving || !newRelease.version || !newRelease.changelog}
+                    onClick={async () => {
+                      setReleaseSaving(true);
+                      try {
+                        const res = await fetch('/api/admin/releases', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+                          body: JSON.stringify(newRelease),
+                        });
+                        if (res.ok) {
+                          setNewRelease({ version: '', changelog: '' });
+                          // Refresh releases
+                          const rRes = await fetch('/api/admin/releases', {
+                            headers: { 'x-admin-key': adminKey },
+                          });
+                          if (rRes.ok) setReleases(await rRes.json());
+                        }
+                      } catch { /* ignore */ }
+                      setReleaseSaving(false);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-pixel-cyan/10 border border-pixel-cyan/25 font-pixel text-[9px] tracking-wider text-pixel-cyan hover:bg-pixel-cyan/20 transition-colors disabled:opacity-50"
+                  >
+                    {releaseSaving ? 'SAVING...' : 'PUBLISH'}
+                  </button>
+                </div>
+                <textarea
+                  placeholder={'Changelog (markdown)\n- Feature one\n- Bug fix two'}
+                  value={newRelease.changelog}
+                  onChange={(e) => setNewRelease(prev => ({ ...prev, changelog: e.target.value }))}
+                  rows={3}
+                  className="w-full px-2 py-1.5 rounded bg-jarvis-bg border border-jarvis-border font-mono text-xs text-jarvis-text focus:border-pixel-cyan/50 focus:outline-none resize-y"
+                />
+              </div>
+
+              {/* Existing releases */}
+              {releases.length > 0 && (
+                <div className="space-y-2 mt-4">
+                  {releases.map((rel) => (
+                    <div key={rel.version} className="flex items-start gap-3 p-3 rounded bg-jarvis-bg/50 border border-jarvis-border">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-pixel text-[10px] tracking-wider text-pixel-cyan">v{rel.version}</span>
+                          <span className="font-mono text-[9px] text-jarvis-muted">{new Date(rel.released_at).toLocaleDateString()}</span>
+                        </div>
+                        <p className="font-mono text-[10px] text-jarvis-muted mt-1 whitespace-pre-line">{rel.changelog}</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete release v${rel.version}?`)) return;
+                          await fetch(`/api/admin/releases?version=${encodeURIComponent(rel.version)}`, {
+                            method: 'DELETE',
+                            headers: { 'x-admin-key': adminKey },
+                          });
+                          setReleases(prev => prev.filter(r => r.version !== rel.version));
+                        }}
+                        className="text-pixel-red/50 hover:text-pixel-red transition-colors shrink-0"
+                        title="Delete release"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}

@@ -6,7 +6,7 @@ import {
   Wand2, RotateCcw, Save, ChevronRight, FileText, Loader, KeyRound, Copy, Check,
   Zap, RefreshCw, Blocks, Loader2, Lock, Unlock, Package,
 } from 'lucide-react';
-import { getSetting, setSetting, loadCEO, logAudit, getAllPrompts, setPrompt, deletePrompt } from '../../lib/database';
+import { getSetting, setSetting, loadCEO, logAudit, getAllPrompts, setPrompt, deletePrompt, getVaultEntryByService } from '../../lib/database';
 import type { CEORow } from '../../lib/database';
 import { getSupabase, hasSupabaseConfig, pingSupabase } from '../../lib/supabase';
 import { getMemories, deleteMemory, queryMemories, chatWithMemories, consolidateDailyMemories } from '../../lib/memory';
@@ -161,9 +161,10 @@ export default function SettingsView() {
   const [unlockDuration, setUnlockDurationState] = useState<UnlockDuration>(getUnlockDuration);
 
   // Versions section
-  const [versionInfo, setVersionInfo] = useState<{local: string; skills: string; remote?: string; checking: boolean; checked: boolean; error?: string}>({
-    local: '0.1.0', skills: '0.3.2', checking: false, checked: false
+  const [versionInfo, setVersionInfo] = useState<{local: string; skills: string; remote?: string; changelog?: string; checking: boolean; checked: boolean; error?: string}>({
+    local: __APP_VERSION__, skills: '0.3.2', checking: false, checked: false
   });
+  const [sidecarKeyStatus, setSidecarKeyStatus] = useState<'checking' | 'synced' | 'not_synced'>('checking');
 
   const refreshMemories = useCallback(async () => {
     try {
@@ -209,6 +210,12 @@ export default function SettingsView() {
         const allPrompts = await getAllPrompts();
         setPrompts(allPrompts);
       } catch { /* ignore */ }
+
+      // Check sidecar key status
+      try {
+        const entry = await getVaultEntryByService('marketplace-signing');
+        setSidecarKeyStatus(entry ? 'synced' : 'not_synced');
+      } catch { setSidecarKeyStatus('not_synced'); }
     }
     load();
     refreshMemories();
@@ -851,7 +858,7 @@ export default function SettingsView() {
           <h2 className="font-pixel text-[12px] tracking-widest text-emerald-400">JARVIS INC VERSIONS</h2>
         </div>
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
             <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/30">
               <div className="font-pixel text-[6px] tracking-wider text-zinc-500 mb-1">APP</div>
               <div className="font-mono text-[10px] text-zinc-300">v{versionInfo.local}</div>
@@ -869,8 +876,17 @@ export default function SettingsView() {
                 </span>
               </div>
             </div>
+            <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/30">
+              <div className="font-pixel text-[6px] tracking-wider text-zinc-500 mb-1">SIDECAR</div>
+              <div className="flex items-center gap-1.5">
+                <div className={`w-2 h-2 rounded-full ${sidecarKeyStatus === 'synced' ? 'bg-emerald-400' : sidecarKeyStatus === 'checking' ? 'bg-zinc-600 animate-pulse' : 'bg-amber-400'}`} />
+                <span className={`font-mono text-[10px] ${sidecarKeyStatus === 'synced' ? 'text-emerald-400' : sidecarKeyStatus === 'checking' ? 'text-zinc-500' : 'text-amber-400'}`}>
+                  {sidecarKeyStatus === 'synced' ? 'KEY SYNCED' : sidecarKeyStatus === 'checking' ? '...' : 'NOT SYNCED'}
+                </span>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               disabled={versionInfo.checking}
               onClick={async () => {
@@ -879,7 +895,7 @@ export default function SettingsView() {
                   const res = await fetch('https://jarvisinc.app/api/version');
                   if (!res.ok) throw new Error(`HTTP ${res.status}`);
                   const data = await res.json();
-                  setVersionInfo(prev => ({ ...prev, remote: data.latest_app_version, checking: false, checked: true }));
+                  setVersionInfo(prev => ({ ...prev, remote: data.latest_app_version, changelog: data.changelog, checking: false, checked: true }));
                 } catch (e) {
                   setVersionInfo(prev => ({ ...prev, checking: false, checked: true, error: e instanceof Error ? e.message : String(e) }));
                 }
@@ -894,7 +910,7 @@ export default function SettingsView() {
                 {versionInfo.remote === versionInfo.local ? (
                   <span className="text-emerald-400">Up to date</span>
                 ) : (
-                  <span className="text-amber-400">Update available: v{versionInfo.remote} — run `git pull && npm install`</span>
+                  <span className="text-amber-400">Update available: v{versionInfo.remote} — run <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-amber-300">npm run update</code></span>
                 )}
               </span>
             )}
@@ -904,6 +920,16 @@ export default function SettingsView() {
               </span>
             )}
           </div>
+          {versionInfo.checked && !versionInfo.error && versionInfo.remote && versionInfo.remote !== versionInfo.local && versionInfo.changelog && (
+            <details className="mt-3">
+              <summary className="font-pixel text-[8px] tracking-wider text-cyan-400 cursor-pointer hover:text-cyan-300 transition-colors">
+                WHAT&apos;S NEW IN v{versionInfo.remote}
+              </summary>
+              <div className="mt-2 p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/30 font-mono text-[10px] text-zinc-400 leading-relaxed whitespace-pre-wrap">
+                {versionInfo.changelog}
+              </div>
+            </details>
+          )}
         </div>
       </div>
 

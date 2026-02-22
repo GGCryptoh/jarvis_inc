@@ -80,7 +80,7 @@ export function useDatabase() {
   }, []);
 
   // Reset DB → truncate all tables, re-check
-  const reset = useCallback(async (options?: { keepMemory?: boolean }) => {
+  const reset = useCallback(async (options?: { keepMemory?: boolean; clearFinancials?: boolean }) => {
     setState({ ready: false, initialized: false, ceoInitialized: false, error: null });
     await resetDatabase(options);
     setState({ ready: true, initialized: false, ceoInitialized: false, error: null });

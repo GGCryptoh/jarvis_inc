@@ -8,7 +8,7 @@ type ActionType = 'fire_ceo' | 'shutter' | 'reset';
 interface ResetDBDialogProps {
   open: boolean;
   onClose: () => void;
-  onResetDB: (options?: { keepMemory?: boolean }) => void;
+  onResetDB: (options?: { keepMemory?: boolean; clearFinancials?: boolean }) => void;
   onFireCEO: () => void;
 }
 
@@ -19,6 +19,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
   const [isExecuting, setIsExecuting] = useState(false);
 
   const [keepMemory, setKeepMemory] = useState(false);
+  const [clearFinancials, setClearFinancials] = useState(false);
   const [ceoRow, setCeoRow] = useState<CEORow | null>(null);
   const [founderInfo, setFounderInfo] = useState<{ founderName: string; orgName: string } | null>(null);
 
@@ -45,6 +46,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
       setConfirmText('');
       setIsExecuting(false);
       setKeepMemory(false);
+      setClearFinancials(false);
     }
   }, [open]);
 
@@ -111,12 +113,12 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
       // Small extra delay to allow download to start
       await new Promise((r) => setTimeout(r, 500));
       onClose();
-      onResetDB({ keepMemory });
+      onResetDB({ keepMemory, clearFinancials });
     } else {
       onClose();
-      onResetDB({ keepMemory });
+      onResetDB({ keepMemory, clearFinancials });
     }
-  }, [confirmText, confirmPhrase, selectedAction, onClose, onFireCEO, onResetDB, ceoName, keepMemory]);
+  }, [confirmText, confirmPhrase, selectedAction, onClose, onFireCEO, onResetDB, ceoName, keepMemory, clearFinancials]);
 
   if (!open) return null;
 
@@ -242,7 +244,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                     {ceoName}_{new Date().toISOString().split('T')[0]}_terminated.json
                   </span>
                 </div>
-                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-emerald-500/8 border border-emerald-500/20 mb-4 cursor-pointer hover:bg-emerald-500/12 transition-colors">
+                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-emerald-500/8 border border-emerald-500/20 mb-3 cursor-pointer hover:bg-emerald-500/12 transition-colors">
                   <input
                     type="checkbox"
                     checked={keepMemory}
@@ -252,6 +254,18 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                   <div>
                     <span className="text-emerald-400 text-xs font-semibold">Keep Organizational Memory</span>
                     <p className="text-zinc-500 text-[10px] mt-0.5">Preserve learned facts, decisions, and founder profile across the reset</p>
+                  </div>
+                </label>
+                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-amber-500/8 border border-amber-500/20 mb-4 cursor-pointer hover:bg-amber-500/12 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={clearFinancials}
+                    onChange={e => setClearFinancials(e.target.checked)}
+                    className="w-4 h-4 rounded border-amber-500/40 bg-transparent accent-amber-500"
+                  />
+                  <div>
+                    <span className="text-amber-400 text-xs font-semibold">Clear Financial History</span>
+                    <p className="text-zinc-500 text-[10px] mt-0.5">Wipe LLM usage costs and channel usage records</p>
                   </div>
                 </label>
                 <p className="text-jarvis-muted text-xs">
@@ -283,7 +297,7 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                     Financial records and budgets
                   </li>
                 </ul>
-                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-emerald-500/8 border border-emerald-500/20 mb-4 cursor-pointer hover:bg-emerald-500/12 transition-colors">
+                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-emerald-500/8 border border-emerald-500/20 mb-3 cursor-pointer hover:bg-emerald-500/12 transition-colors">
                   <input
                     type="checkbox"
                     checked={keepMemory}
@@ -293,6 +307,18 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                   <div>
                     <span className="text-emerald-400 text-xs font-semibold">Keep Organizational Memory</span>
                     <p className="text-zinc-500 text-[10px] mt-0.5">Preserve learned facts, decisions, and founder profile across the reset</p>
+                  </div>
+                </label>
+                <label className="flex items-center gap-3 px-3 py-2.5 rounded bg-amber-500/8 border border-amber-500/20 mb-4 cursor-pointer hover:bg-amber-500/12 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={clearFinancials}
+                    onChange={e => setClearFinancials(e.target.checked)}
+                    className="w-4 h-4 rounded border-amber-500/40 bg-transparent accent-amber-500"
+                  />
+                  <div>
+                    <span className="text-amber-400 text-xs font-semibold">Clear Financial History</span>
+                    <p className="text-zinc-500 text-[10px] mt-0.5">Wipe LLM usage costs and channel usage records</p>
                   </div>
                 </label>
                 <p className="text-jarvis-muted text-xs">

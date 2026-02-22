@@ -45,13 +45,44 @@ export default function App() {
           <div className="font-pixel text-pixel-pink text-[10px] tracking-widest mb-4">
             CONNECTION ERROR
           </div>
-          <div className="font-pixel text-[9px] tracking-wider text-zinc-400 leading-relaxed mb-6">
+          <div className="font-pixel text-[9px] tracking-wider text-zinc-400 leading-relaxed mb-4">
             {error}
           </div>
-          <div className="font-pixel text-[9px] tracking-wider text-zinc-500 leading-relaxed">
-            Run <span className="text-pixel-green">npm run jarvis</span> to start the full stack,{' '}
-            or set VITE_SUPABASE_URL in .env.development
+          <div className="text-left bg-zinc-900/50 border border-zinc-800 rounded-lg p-5 mb-4">
+            <div className="font-pixel text-[8px] tracking-wider text-pixel-cyan mb-3">TROUBLESHOOTING</div>
+            <div className="space-y-3 font-mono text-[10px] text-zinc-500 leading-relaxed">
+              <div>
+                <span className="text-zinc-400">1.</span> Open <span className="text-pixel-green">Docker Desktop</span> and
+                check all containers are <span className="text-emerald-400">green</span> (running).
+                Look for: supabase-db, supabase-kong, supabase-auth, supabase-rest
+              </div>
+              <div>
+                <span className="text-zinc-400">2.</span> If containers are red or missing, run in terminal:
+                <div className="bg-black/50 rounded px-2 py-1 mt-1 text-pixel-green">
+                  docker compose -f docker/docker-compose.yml up -d
+                </div>
+              </div>
+              <div>
+                <span className="text-zinc-400">3.</span> If Docker Desktop is not open:
+                <div className="bg-black/50 rounded px-2 py-1 mt-1 text-pixel-green">
+                  open -a Docker
+                </div>
+                <span className="text-zinc-600">Wait for the whale icon in the menu bar, then restart.</span>
+              </div>
+              <div>
+                <span className="text-zinc-400">4.</span> Full reset — re-run the setup:
+                <div className="bg-black/50 rounded px-2 py-1 mt-1 text-pixel-green">
+                  npm run jarvis
+                </div>
+              </div>
+            </div>
           </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="font-pixel text-[8px] tracking-wider text-pixel-green bg-pixel-green/10 border border-pixel-green/25 px-4 py-2 rounded-lg hover:bg-pixel-green/20 transition-colors"
+          >
+            RETRY CONNECTION
+          </button>
         </div>
       </div>
     )

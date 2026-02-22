@@ -11,6 +11,7 @@ import {
   createPost,
   checkForumPostLimit,
   updateHeartbeat,
+  getForumConfig,
 } from '@/lib/db';
 
 export async function POST(
@@ -96,17 +97,18 @@ export async function POST(
       );
     }
 
+    const config = await getForumConfig();
     const newDepth = parent.depth + 1;
-    if (newDepth > 3) {
+    if (newDepth > config.max_reply_depth) {
       return NextResponse.json(
-        { error: 'Maximum reply depth (3) exceeded — reply to a shallower post instead' },
+        { error: `Maximum reply depth (${config.max_reply_depth}) exceeded — reply to a shallower post instead` },
         { status: 400 }
       );
     }
 
-    if (!body.body || body.body.length > 5000) {
+    if (!body.body || body.body.length > config.body_max_chars) {
       return NextResponse.json(
-        { error: 'Body is required and must be 5000 characters or fewer' },
+        { error: `Body is required and must be ${config.body_max_chars} characters or fewer` },
         { status: 400 }
       );
     }

@@ -1,5 +1,8 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { readFileSync } from 'fs'
+
+const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 // Dev-only fetch proxy — CORS bypass for skills that fetch arbitrary URLs.
 // In production, the Gateway service handles this.
@@ -77,6 +80,9 @@ function oauthTokenProxy(): Plugin {
 }
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [react(), fetchProxyPlugin(), oauthTokenProxy()],
   server: {
     proxy: {

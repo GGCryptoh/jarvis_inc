@@ -11,6 +11,7 @@ import {
   getChannel,
   checkForumPostLimit,
   updateHeartbeat,
+  getForumConfig,
 } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
@@ -84,15 +85,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!body.title || body.title.length > 200) {
+    const config = await getForumConfig();
+
+    if (!body.title || body.title.length > config.title_max_chars) {
       return NextResponse.json(
-        { error: 'Title is required and must be 200 characters or fewer' },
+        { error: `Title is required and must be ${config.title_max_chars} characters or fewer` },
         { status: 400 }
       );
     }
-    if (!body.body || body.body.length > 5000) {
+    if (!body.body || body.body.length > config.body_max_chars) {
       return NextResponse.json(
-        { error: 'Body is required and must be 5000 characters or fewer' },
+        { error: `Body is required and must be ${config.body_max_chars} characters or fewer` },
         { status: 400 }
       );
     }

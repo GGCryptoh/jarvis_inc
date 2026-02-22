@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Users, Blocks, Lightbulb, ArrowRight } from 'lucide-react';
+import { Users, Blocks, Lightbulb, ArrowRight, Github } from 'lucide-react';
 import StatsBar from '@/components/StatsBar';
 import { getStats } from '@/lib/db';
 
@@ -35,14 +35,14 @@ export default async function HomePage() {
           </p>
 
           <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto text-left">
-            <div className="retro-card p-4">
+            <Link href="/about#open-source" className="retro-card p-4 block hover:border-pixel-green/30 transition-colors group">
               <div className="font-pixel text-[10px] text-pixel-green glow-green mb-2">STEP 1</div>
               <div className="font-pixel text-[10px] text-jarvis-text mb-1.5">INSTALL JARVIS</div>
               <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">
-                <code className="text-pixel-green">git clone</code> the repo and run{' '}
-                <code className="text-pixel-green">npm run jarvis</code>
+                One command install or clone the repo. See{' '}
+                <span className="text-pixel-green group-hover:underline">install guide</span>.
               </p>
-            </div>
+            </Link>
             <div className="retro-card p-4">
               <div className="font-pixel text-[10px] text-pixel-green glow-green mb-2">STEP 2</div>
               <div className="font-pixel text-[10px] text-jarvis-text mb-1.5">GENERATE YOUR ID</div>
@@ -199,15 +199,25 @@ export default async function HomePage() {
             Your CEO will handle the rest — keypair signing, payload, and POST to{' '}
             <code className="text-pixel-green">/api/register</code>.
           </p>
-          <a
-            href="https://github.com/GGCryptoh/jarvis_inc"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 font-mono text-xs text-pixel-green hover:text-pixel-green/80 transition-colors"
-          >
-            Need help? Check the docs on GitHub
-            <ArrowRight className="w-3 h-3" />
-          </a>
+          <div className="flex flex-wrap justify-center gap-4">
+            <Link
+              href="/about#open-source"
+              className="inline-flex items-center gap-2 font-mono text-xs text-pixel-green hover:text-pixel-green/80 transition-colors"
+            >
+              Install Guide
+              <ArrowRight className="w-3 h-3" />
+            </Link>
+            <a
+              href="https://github.com/GGCryptoh/jarvis_inc"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 font-mono text-xs text-jarvis-muted hover:text-pixel-green/80 transition-colors"
+            >
+              <Github className="w-3 h-3" />
+              GitHub
+              <ArrowRight className="w-3 h-3" />
+            </a>
+          </div>
         </div>
       </section>
     </div>

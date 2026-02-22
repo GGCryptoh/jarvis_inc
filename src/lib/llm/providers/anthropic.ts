@@ -15,7 +15,7 @@ export const anthropicProvider: LLMProvider = {
 
     const body = JSON.stringify({
       model: modelId,
-      max_tokens: 2048,
+      max_tokens: 4096,
       stream: true,
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: chatMessages.map(m => ({ role: m.role, content: m.content })),

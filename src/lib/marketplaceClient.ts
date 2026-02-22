@@ -9,8 +9,8 @@
  * purely local (localStorage).
  */
 
-import { loadKeyFromLocalStorage, signPayload } from './jarvisKey';
-import { getSetting, loadSkills, loadAgents } from './database';
+import { loadKeyFromLocalStorage as loadKeyFromLS, signPayload, type KeyFileData } from './jarvisKey';
+import { getSetting, setSetting, loadSkills, loadAgents, saveVaultEntry, getVaultEntryByService } from './database';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -37,13 +37,28 @@ const SIGNING_DURATION_KEY = 'jarvis-signing-duration';
 
 let sessionRawPrivateKey: string | null = null;
 
+// Sidecar caches (populated by initSidecarSigning)
+let cachedKeyFileData: KeyFileData | null = null;
+let cachedRegistrationState: {
+  registered: boolean; instanceId: string; nickname: string;
+} | null = null;
+
+/** Isomorphic key loader — uses sidecar cache in Node.js, localStorage in browser */
+function loadKeyFromLocalStorage(): KeyFileData | null {
+  if (cachedKeyFileData) return cachedKeyFileData;
+  if (typeof window === 'undefined') return null;
+  return loadKeyFromLS();
+}
+
 /** Get the user's preferred unlock duration */
 export function getUnlockDuration(): UnlockDuration {
+  if (typeof window === 'undefined') return 'forever'; // sidecar: always unlocked
   return (localStorage.getItem(SIGNING_DURATION_KEY) as UnlockDuration) || 'session';
 }
 
 /** Set the preferred unlock duration */
 export function setUnlockDuration(duration: UnlockDuration): void {
+  if (typeof window === 'undefined') return;
   localStorage.setItem(SIGNING_DURATION_KEY, duration);
   // If switching to 'session', clear any persisted cache
   if (duration === 'session') {
@@ -56,6 +71,7 @@ export function setUnlockDuration(duration: UnlockDuration): void {
 }
 
 function persistSigningCache(key: string, duration: UnlockDuration): void {
+  if (typeof window === 'undefined') return;
   if (duration === 'session') return;
   const ttlMs: Record<string, number> = {
     day:   24 * 60 * 60 * 1000,
@@ -66,6 +82,26 @@ function persistSigningCache(key: string, duration: UnlockDuration): void {
   localStorage.setItem(SIGNING_CACHE_KEY, JSON.stringify({ key, expiresAt }));
 }
 
+/** Persist the signing key to vault so the sidecar can sign without a browser. */
+async function persistKeyToVault(rawKey: string): Promise<void> {
+  const keyData = loadKeyFromLocalStorage();
+  if (!keyData) return;
+  const existing = await getVaultEntryByService('marketplace-signing');
+  if (existing) return; // Already stored
+  await saveVaultEntry({
+    id: 'marketplace-signing',
+    name: 'Marketplace Signing Key',
+    type: 'signing',
+    service: 'marketplace-signing',
+    key_value: JSON.stringify({
+      rawPrivateKey: rawKey,
+      publicKey: keyData.publicKey,
+      publicKeyHash: keyData.publicKeyHash,
+      createdAt: keyData.createdAt,
+    }),
+  });
+}
+
 /** Cache the raw (decrypted) private key for browser-side signing */
 export function cacheRawPrivateKey(key: string): void {
   sessionRawPrivateKey = key;
@@ -73,11 +109,14 @@ export function cacheRawPrivateKey(key: string): void {
   if (duration !== 'session') {
     persistSigningCache(key, duration);
   }
+  // Fire-and-forget: persist to vault for sidecar signing
+  persistKeyToVault(key).catch(() => {});
 }
 
 /** Get the cached raw private key — checks memory first, then localStorage */
 export function getCachedRawPrivateKey(): string | null {
   if (sessionRawPrivateKey) return sessionRawPrivateKey;
+  if (typeof window === 'undefined') return null; // sidecar uses sessionRawPrivateKey directly
 
   // Try restoring from localStorage
   const raw = localStorage.getItem(SIGNING_CACHE_KEY);
@@ -101,12 +140,15 @@ export function getCachedRawPrivateKey(): string | null {
 /** Clear the signing cache (both memory and localStorage) */
 export function clearSigningCache(): void {
   sessionRawPrivateKey = null;
-  localStorage.removeItem(SIGNING_CACHE_KEY);
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(SIGNING_CACHE_KEY);
+  }
 }
 
 /** Get human-readable expiry info */
 export function getSigningExpiry(): { unlocked: boolean; label: string } {
   if (!getCachedRawPrivateKey()) return { unlocked: false, label: 'LOCKED' };
+  if (typeof window === 'undefined') return { unlocked: true, label: 'SIDECAR' };
   const duration = getUnlockDuration();
   if (duration === 'session') return { unlocked: true, label: 'THIS SESSION' };
   if (duration === 'forever') return { unlocked: true, label: 'ALWAYS' };
@@ -124,6 +166,40 @@ export function getSigningExpiry(): { unlocked: boolean; label: string } {
   } catch {
     return { unlocked: true, label: duration.toUpperCase() };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sidecar initialization — load signing key + registration from vault/settings
+// ---------------------------------------------------------------------------
+
+/**
+ * Initialize marketplace signing for the sidecar (headless Node.js).
+ * Loads the raw signing key from vault and registration state from settings.
+ * Must be called once at sidecar boot, after Supabase is connected.
+ */
+export async function initSidecarSigning(): Promise<boolean> {
+  const entry = await getVaultEntryByService('marketplace-signing');
+  if (!entry) { console.warn('[Sidecar] No signing key in vault'); return false; }
+  try {
+    const data = JSON.parse(entry.key_value);
+    sessionRawPrivateKey = data.rawPrivateKey;
+    cachedKeyFileData = {
+      publicKey: data.publicKey,
+      publicKeyHash: data.publicKeyHash,
+      encryptedPrivateKey: { encrypted: '', iv: '', salt: '' },
+      createdAt: data.createdAt || entry.created_at,
+    };
+  } catch { return false; }
+
+  const regId = await getSetting('marketplace_instance_id');
+  const regNick = await getSetting('marketplace_nickname');
+  if (regId) {
+    cachedRegistrationState = {
+      registered: true, instanceId: regId, nickname: regNick || 'Unknown',
+    };
+  }
+  console.log('[Sidecar] Signing initialized, instance:', regId);
+  return true;
 }
 
 /** localStorage key for marketplace registration state */
@@ -156,6 +232,17 @@ export interface RegisterResult {
  * Does NOT call the marketplace API — purely local check.
  */
 export function getMarketplaceStatus(): MarketplaceStatus {
+  if (typeof window === 'undefined') {
+    // Sidecar path — use cached registration state
+    return {
+      registered: cachedRegistrationState?.registered ?? false,
+      hasKey: cachedKeyFileData !== null,
+      instanceId: cachedRegistrationState?.instanceId ?? null,
+      nickname: cachedRegistrationState?.nickname ?? null,
+      lastRegistered: null,
+    };
+  }
+
   const keyData = loadKeyFromLocalStorage();
   const regData = localStorage.getItem(REGISTRATION_KEY);
 
@@ -282,12 +369,19 @@ export async function registerOnMarketplace(
       const instanceId = data.instance?.id;
 
       // Save registration state locally
-      localStorage.setItem(REGISTRATION_KEY, JSON.stringify({
-        registered: true,
-        instanceId,
-        nickname: payload.nickname,
-        lastRegistered: new Date().toISOString(),
-      }));
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(REGISTRATION_KEY, JSON.stringify({
+          registered: true,
+          instanceId,
+          nickname: payload.nickname,
+          lastRegistered: new Date().toISOString(),
+        }));
+      }
+
+      // Persist to settings so sidecar can read registration state
+      setSetting('marketplace_registered', 'true').catch(() => {});
+      setSetting('marketplace_instance_id', instanceId).catch(() => {});
+      setSetting('marketplace_nickname', String(payload.nickname)).catch(() => {});
 
       console.log('[Marketplace] Registered successfully:', instanceId);
       return { success: true, instanceId };
@@ -322,9 +416,11 @@ export async function signedMarketplacePost(
 
   const rawKey = getCachedRawPrivateKey();
   if (!rawKey) {
-    window.dispatchEvent(new CustomEvent('navigate-toast', {
-      detail: { message: 'Session signing locked — unlock to use marketplace', path: '/key' },
-    }));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('navigate-toast', {
+        detail: { message: 'Session signing locked — unlock to use marketplace', path: '/key' },
+      }));
+    }
     return {
       success: false,
       error: 'Session signing is locked. Go to /key and click UNLOCK to enter your master password first.',

@@ -981,7 +981,7 @@ export async function exportDatabaseAsJSON(): Promise<Record<string, unknown[]>>
 // Reset
 // ---------------------------------------------------------------------------
 
-export async function resetDatabase(options?: { keepMemory?: boolean }): Promise<void> {
+export async function resetDatabase(options?: { keepMemory?: boolean; clearFinancials?: boolean }): Promise<void> {
   const sb = getSupabase();
 
   // Tables with standard `id` text PK
@@ -1013,6 +1013,16 @@ export async function resetDatabase(options?: { keepMemory?: boolean }): Promise
   try {
     await sb.from('audit_log').delete().gte('id', 0);
   } catch { /* ignore */ }
+
+  // Financial tables (llm_usage, channel_usage) — only clear if explicitly requested
+  if (options?.clearFinancials) {
+    try {
+      await sb.from('llm_usage').delete().gte('id', 0);
+    } catch { /* ignore */ }
+    try {
+      await sb.from('channel_usage').delete().gte('id', 0);
+    } catch { /* ignore */ }
+  }
 }
 
 // ---------------------------------------------------------------------------

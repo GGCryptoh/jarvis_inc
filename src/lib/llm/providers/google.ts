@@ -21,7 +21,7 @@ export const googleProvider: LLMProvider = {
 
     const body: Record<string, unknown> = {
       contents,
-      generationConfig: { maxOutputTokens: 2048 },
+      generationConfig: { maxOutputTokens: 4096 },
     };
     if (systemPrompt) {
       body.systemInstruction = { parts: [{ text: systemPrompt }] };

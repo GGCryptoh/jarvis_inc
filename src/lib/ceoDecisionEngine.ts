@@ -880,6 +880,37 @@ async function checkSkillSchedules(): Promise<CEOAction[]> {
 let lastForumCheckTime = 0;
 const DEFAULT_FORUM_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
+// Marketplace forum config — cached for 30 minutes
+interface MarketplaceForumConfig {
+  post_limit_per_day: number;
+  vote_limit_per_day: number;
+  title_max_chars: number;
+  body_max_chars: number;
+  max_reply_depth: number;
+  recommended_check_interval_ms: number;
+}
+
+let cachedForumConfig: MarketplaceForumConfig | null = null;
+let forumConfigFetchedAt = 0;
+const FORUM_CONFIG_CACHE_MS = 30 * 60 * 1000; // 30 minutes
+
+async function fetchForumConfig(): Promise<MarketplaceForumConfig | null> {
+  const now = Date.now();
+  if (cachedForumConfig && now - forumConfigFetchedAt < FORUM_CONFIG_CACHE_MS) {
+    return cachedForumConfig;
+  }
+  try {
+    const res = await fetch('https://jarvisinc.app/api/forum/config');
+    if (!res.ok) return cachedForumConfig;
+    const data = await res.json();
+    cachedForumConfig = data as MarketplaceForumConfig;
+    forumConfigFetchedAt = now;
+    return cachedForumConfig;
+  } catch {
+    return cachedForumConfig; // Return stale cache on failure
+  }
+}
+
 export async function triggerForumCheckNow(): Promise<CEOAction[]> {
   lastForumCheckTime = 0;
   return checkForumActivity();
@@ -905,24 +936,36 @@ export async function refreshMarketplaceProfile(): Promise<void> {
     return (def?.name as string) ?? s.id;
   });
 
+  // Showcase skills — extra skills to display on the marketplace profile
+  // (stored as comma-separated string in settings, merged into featured + writeup)
+  const showcaseRaw = await gs('marketplace_showcase_skills');
+  const showcaseSkills = showcaseRaw
+    ? showcaseRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+
   const allAgents = await la();
   const agentNames = allAgents.map(a => a.name);
 
   const description = mktDescription
     ?? (primaryMission ? primaryMission.substring(0, 180) : `${founderName}'s Jarvis instance — ${orgName}`);
 
+  // Merge real skill IDs + showcase IDs for featured_skills badge array
+  const allFeatured = [...featuredSkills, ...showcaseSkills].slice(0, 40);
+  // Merge real skill names + showcase names for the writeup
+  const allSkillNames = [...skillNames, ...showcaseSkills];
+
   const writeupParts: string[] = [];
   // Use marketplace description for mission line, fall back to primary_mission
   const missionLine = mktDescription || primaryMission;
   if (missionLine) writeupParts.push(`Mission: ${missionLine}`);
-  if (skillNames.length > 0) writeupParts.push(`Skills: ${skillNames.join(', ')}`);
+  if (allSkillNames.length > 0) writeupParts.push(`Skills: ${allSkillNames.join(', ')}`);
   if (agentNames.length > 0) writeupParts.push(`Agents: ${agentNames.join(', ')}`);
   const skillsWriteup = writeupParts.join('\n') || `${founderName}'s autonomous AI workforce`;
 
   const payload = {
     nickname: orgName.substring(0, 24),
     description: description.substring(0, 200),
-    featured_skills: featuredSkills,
+    featured_skills: allFeatured,
     skills_writeup: skillsWriteup.substring(0, 1000),
   };
   console.log('[refreshMarketplaceProfile] Sending:', JSON.stringify(payload));
@@ -946,7 +989,7 @@ function parseCronToMs(cron: string): number {
   if (match) return parseInt(match[1], 10) * 60 * 60 * 1000;
   // 0 0 * * * → daily
   if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(cron)) return 24 * 60 * 60 * 1000;
-  return DEFAULT_FORUM_CHECK_INTERVAL_MS;
+  return cachedForumConfig?.recommended_check_interval_ms ?? DEFAULT_FORUM_CHECK_INTERVAL_MS;
 }
 
 interface ForumPostSummary {
@@ -978,6 +1021,10 @@ async function checkForumActivity(): Promise<CEOAction[]> {
     const now = Date.now();
     const sb = getSupabase();
 
+    // Fetch marketplace forum config (cached 30min) for recommended interval + limits
+    const forumConfig = await fetchForumConfig();
+    const defaultInterval = forumConfig?.recommended_check_interval_ms ?? DEFAULT_FORUM_CHECK_INTERVAL_MS;
+
     // Burst mode: use shorter intervals after posting/replying
     let intervalMs: number;
     if (forumBurstState.active) {
@@ -990,18 +1037,18 @@ async function checkForumActivity(): Promise<CEOAction[]> {
           .select('value')
           .eq('key', 'forum_check_frequency')
           .maybeSingle();
-        intervalMs = freqRow?.value ? parseCronToMs(freqRow.value) : DEFAULT_FORUM_CHECK_INTERVAL_MS;
+        intervalMs = freqRow?.value ? parseCronToMs(freqRow.value) : defaultInterval;
       } else {
         intervalMs = BURST_INTERVALS_MS[idx];
       }
     } else {
-      // Normal cron-based interval
+      // Normal cron-based interval — local setting overrides marketplace recommendation
       const { data: freqRow } = await sb
         .from('settings')
         .select('value')
         .eq('key', 'forum_check_frequency')
         .maybeSingle();
-      intervalMs = freqRow?.value ? parseCronToMs(freqRow.value) : DEFAULT_FORUM_CHECK_INTERVAL_MS;
+      intervalMs = freqRow?.value ? parseCronToMs(freqRow.value) : defaultInterval;
     }
 
     if (now - lastForumCheckTime < intervalMs) return actions;

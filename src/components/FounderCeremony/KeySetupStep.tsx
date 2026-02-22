@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   generateKeyPair,
   encryptPrivateKey,
@@ -35,6 +35,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
   const [registerError, setRegisterError] = useState('');
   const [registering, setRegistering] = useState(false);
   const [sessionUnlocked, setSessionUnlocked] = useState(!!getCachedRawPrivateKey());
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [showUnlockForm, setShowUnlockForm] = useState(false);
   const [unlockError, setUnlockError] = useState('');
@@ -174,6 +175,8 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
       saveKeyToLocalStorage(fileData);
 
       // Cache raw key for browser-side skill handlers (CEO marketplace commands)
+      // Set unlock to 'day' so signing persists through page reloads after ceremony
+      setUnlockDuration('day');
       cacheRawPrivateKey(keyPair.privateKey);
 
       // Auto-register on marketplace (fire-and-forget, we have the raw private key)
@@ -290,6 +293,31 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
     }
   }
 
+  function handleImportKey() {
+    fileInputRef.current?.click();
+  }
+
+  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text) as KeyFileData;
+      if (!data.publicKey || !data.publicKeyHash || !data.encryptedPrivateKey || !data.createdAt) {
+        setError('Invalid key file — missing required fields');
+        return;
+      }
+      saveKeyToLocalStorage(data);
+      setKeyData(data);
+      // Reload to pick up the imported key
+      window.location.reload();
+    } catch {
+      setError('Failed to read key file — must be valid JSON');
+    }
+    // Reset input so the same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
   // Format the hash with spacing for readability
   function formatHash(hash: string): string {
     return hash.match(/.{1,8}/g)?.join(' ') ?? hash;
@@ -312,6 +340,15 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
         style={{
           background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%)',
         }}
+      />
+
+      {/* Hidden file input for key import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleFileSelected}
+        className="hidden"
       />
 
       <div className="relative z-20 w-full max-w-2xl px-8 py-8 my-auto">
@@ -790,13 +827,26 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
               </div>
             </div>
 
-            <div className="text-center">
+            <div className="text-center space-y-3">
               <button
                 onClick={() => setPhase('form')}
                 className="font-pixel text-sm tracking-[0.3em] py-4 px-12 rounded-sm border-2 bg-pixel-green/10 border-pixel-green text-pixel-green hover:bg-pixel-green/20 hover:shadow-[0_0_30px_rgba(0,255,136,0.2)] cursor-pointer transition-all duration-300"
               >
-                PROCEED
+                GENERATE NEW
               </button>
+              <div>
+                <button
+                  onClick={handleImportKey}
+                  className="font-pixel text-[10px] tracking-[0.2em] py-3 px-8 rounded-sm border-2 border-pixel-cyan/30 text-pixel-cyan/70 hover:bg-pixel-cyan/10 hover:border-pixel-cyan/50 hover:text-pixel-cyan cursor-pointer transition-all duration-300"
+                >
+                  IMPORT EXISTING KEY
+                </button>
+              </div>
+              {error && (
+                <div className="font-pixel text-[10px] text-red-400 tracking-wider animate-[fadeIn_0.3s_ease-out]">
+                  {error}
+                </div>
+              )}
             </div>
           </div>
         )}

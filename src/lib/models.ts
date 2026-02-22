@@ -1,5 +1,6 @@
 export const MODEL_OPTIONS = [
   'Claude Opus 4.6',
+  'Claude Sonnet 4.6',
   'Claude Opus 4.5',
   'Claude Sonnet 4.5',
   'Claude Haiku 4.5',
@@ -15,6 +16,7 @@ export const MODEL_OPTIONS = [
 
 export const MODEL_SERVICE_MAP: Record<string, string> = {
   'Claude Opus 4.6': 'Anthropic',
+  'Claude Sonnet 4.6': 'Anthropic',
   'Claude Opus 4.5': 'Anthropic',
   'Claude Sonnet 4.5': 'Anthropic',
   'Claude Haiku 4.5': 'Anthropic',
@@ -57,6 +59,7 @@ export const SERVICE_KEY_HINTS: Record<string, { url: string; steps: string[] }>
 
 export const MODEL_API_IDS: Record<string, string> = {
   'Claude Opus 4.6':    'claude-opus-4-6',
+  'Claude Sonnet 4.6':  'claude-sonnet-4-6',
   'Claude Opus 4.5':    'claude-opus-4-5-20251101',
   'Claude Sonnet 4.5':  'claude-sonnet-4-5-20250929',
   'Claude Haiku 4.5':   'claude-haiku-4-5-20251001',
@@ -73,6 +76,7 @@ export const MODEL_API_IDS: Record<string, string> = {
 /** Cost per 1M tokens in USD: [input, output] */
 export const MODEL_COSTS: Record<string, [number, number]> = {
   'Claude Opus 4.6':    [5, 25],
+  'Claude Sonnet 4.6':  [3, 15],
   'Claude Opus 4.5':    [5, 25],
   'Claude Sonnet 4.5':  [3, 15],
   'Claude Haiku 4.5':   [0.80, 4],

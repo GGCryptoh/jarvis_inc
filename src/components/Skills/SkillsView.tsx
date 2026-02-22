@@ -357,8 +357,10 @@ export default function SkillsView() {
 
       await saveSkill(skill.id, true, model);
 
+      // Only create api_key_request approvals for non-OAuth skills
+      // OAuth skills use the CONNECT button on the card instead
       const service = getRequiredService(skill, model);
-      if (service && !(await hasApiKey(service))) {
+      if (service && !skill.oauthConfig && !(await hasApiKey(service))) {
         await ensureApproval(service, skill.name, model);
         window.dispatchEvent(new Event('approvals-changed'));
       }

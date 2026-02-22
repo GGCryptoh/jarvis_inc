@@ -116,7 +116,8 @@ echo ""
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo -e "${BOLD}Updating existing installation...${NC}"
   cd "$INSTALL_DIR"
-  git pull --rebase || true
+  git fetch origin
+  git reset --hard origin/main
 else
   echo -e "${BOLD}Cloning Jarvis Inc...${NC}"
   git clone "$REPO_URL" "$INSTALL_DIR"

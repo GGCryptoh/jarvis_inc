@@ -734,7 +734,7 @@ IMPORTANT: Always preserve IDs (post IDs, channel slugs, instance IDs) in your s
 
 Skill: ${skillId}:${commandName}
 Raw result:
-${resultText.slice(0, 2000)}`,
+${resultText.slice(0, 6000)}`,
                     }],
                     vaultEntry.key_value,
                     MODEL_API_IDS['Claude Haiku 4.5'],

@@ -453,6 +453,22 @@ export async function seedSkillsFromRepo(): Promise<SeedResult> {
       } catch { /* cleanup is best-effort */ }
     }
 
+    // Auto-enable essential skills on first seed (new install or post-reset)
+    if (result.created > 0) {
+      const DEFAULT_ENABLED_SKILLS = ['marketplace', 'research-web', 'forum'];
+      for (const skillId of DEFAULT_ENABLED_SKILLS) {
+        if (seededIds.has(skillId)) {
+          try {
+            await getSupabase()
+              .from('skills')
+              .update({ enabled: true })
+              .eq('id', skillId)
+              .eq('enabled', false);
+          } catch { /* best-effort */ }
+        }
+      }
+    }
+
     // Fire event so UI can refresh
     if (result.created > 0 || result.updated > 0) {
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('skills-changed'));

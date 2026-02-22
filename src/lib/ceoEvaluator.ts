@@ -58,7 +58,7 @@ Duration: ${Math.round(durationMs / 1000)}s
 Tasks completed: ${taskResults.length}
 
 Results:
-${taskResults.map((t, i) => `--- Task ${i + 1}: ${t.skill_id} (${t.tokens} tokens, $${t.cost.toFixed(4)}) ---\n${t.output.slice(0, 1000)}`).join('\n\n')}
+${taskResults.map((t, i) => `--- Task ${i + 1}: ${t.skill_id} (${t.tokens} tokens, $${t.cost.toFixed(4)}) ---\n${t.output.slice(0, 3000)}`).join('\n\n')}
 
 Score this mission.`;
 

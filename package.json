@@ -1,7 +1,7 @@
 {
   "name": "jarvis-inc",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "jarvis": "node docker/setup.mjs --auto && npm run dev",
     "setup": "node docker/setup.mjs",
-    "setup:check": "node docker/setup.mjs --check"
+    "setup:check": "node docker/setup.mjs --check",
+    "update": "node auto-update.mjs",
+    "update:force": "node auto-update.mjs --force",
+    "update:cron": "node auto-update.mjs --install-cron weekly"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { setSetting, saveMission, logAudit } from '../../lib/database';
 import { hasInstanceKey } from '../../lib/jarvisKey';
 import KeySetupStep from './KeySetupStep';
+import packageJson from '../../../package.json';
 
 interface FounderCeremonyProps {
   onComplete: () => void;
@@ -17,7 +18,7 @@ type Phase =
   | 'done';
 
 const BOOT_LINES = [
-  { text: 'JARVIS SYSTEMS v0.1.0', delay: 0 },
+  { text: `JARVIS SYSTEMS v${packageJson.version}`, delay: 0 },
   { text: 'Initializing core modules...', delay: 600 },
   { text: '[OK] Neural engine online', delay: 1200 },
   { text: '[OK] Agent framework loaded', delay: 1700 },

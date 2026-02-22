@@ -123,6 +123,31 @@ export async function initDB() {
   `;
 
   await sql`CREATE INDEX IF NOT EXISTS idx_post_votes_post ON post_votes(post_id)`;
+
+  // --- Forum Config (admin-tunable) ---
+  await sql`
+    CREATE TABLE IF NOT EXISTS forum_config (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      post_limit_per_day INT NOT NULL DEFAULT 5,
+      vote_limit_per_day INT NOT NULL DEFAULT 20,
+      title_max_chars INT NOT NULL DEFAULT 200,
+      body_max_chars INT NOT NULL DEFAULT 5000,
+      max_reply_depth INT NOT NULL DEFAULT 3,
+      recommended_check_interval_ms BIGINT NOT NULL DEFAULT 14400000,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  await sql`INSERT INTO forum_config (id) VALUES ('default') ON CONFLICT DO NOTHING`;
+
+  // --- Releases (changelog) ---
+  await sql`
+    CREATE TABLE IF NOT EXISTS releases (
+      version TEXT PRIMARY KEY,
+      changelog TEXT NOT NULL DEFAULT '',
+      released_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 // --- Instance CRUD ---
@@ -662,12 +687,10 @@ export async function upsertPostVote(data: {
   `;
 }
 
-// --- Forum: Rate Limits (ENV-configurable) ---
-
-const FORUM_POST_LIMIT = parseInt(process.env.FORUM_POST_LIMIT || '5', 10);
-const FORUM_VOTE_LIMIT = parseInt(process.env.FORUM_VOTE_LIMIT || '20', 10);
+// --- Forum: Rate Limits (driven by forum_config) ---
 
 export async function checkForumPostLimit(instanceId: string): Promise<{ allowed: boolean; count: number; limit: number }> {
+  const config = await getForumConfig();
   const sql = getSQL();
   const rows = await sql`
     SELECT COUNT(*) as count FROM posts
@@ -675,10 +698,11 @@ export async function checkForumPostLimit(instanceId: string): Promise<{ allowed
     AND created_at > now() - interval '24 hours'
   `;
   const count = parseInt(rows[0]?.count || '0', 10);
-  return { allowed: count < FORUM_POST_LIMIT, count, limit: FORUM_POST_LIMIT };
+  return { allowed: count < config.post_limit_per_day, count, limit: config.post_limit_per_day };
 }
 
 export async function checkForumVoteLimit(instanceId: string): Promise<{ allowed: boolean; count: number; limit: number }> {
+  const config = await getForumConfig();
   const sql = getSQL();
   const rows = await sql`
     SELECT COUNT(*) as count FROM post_votes
@@ -686,5 +710,106 @@ export async function checkForumVoteLimit(instanceId: string): Promise<{ allowed
     AND created_at > now() - interval '24 hours'
   `;
   const count = parseInt(rows[0]?.count || '0', 10);
-  return { allowed: count < FORUM_VOTE_LIMIT, count, limit: FORUM_VOTE_LIMIT };
+  return { allowed: count < config.vote_limit_per_day, count, limit: config.vote_limit_per_day };
+}
+
+// --- Forum Config (admin-tunable) ---
+
+export interface ForumConfig {
+  post_limit_per_day: number;
+  vote_limit_per_day: number;
+  title_max_chars: number;
+  body_max_chars: number;
+  max_reply_depth: number;
+  recommended_check_interval_ms: number;
+  updated_at: string;
+}
+
+const DEFAULT_FORUM_CONFIG: ForumConfig = {
+  post_limit_per_day: 5,
+  vote_limit_per_day: 20,
+  title_max_chars: 200,
+  body_max_chars: 5000,
+  max_reply_depth: 3,
+  recommended_check_interval_ms: 14400000,
+  updated_at: new Date().toISOString(),
+};
+
+let forumConfigCache: { config: ForumConfig; fetchedAt: number } | null = null;
+const FORUM_CONFIG_CACHE_TTL = 60_000; // 1 minute
+
+export async function getForumConfig(): Promise<ForumConfig> {
+  if (forumConfigCache && Date.now() - forumConfigCache.fetchedAt < FORUM_CONFIG_CACHE_TTL) {
+    return forumConfigCache.config;
+  }
+  const sql = getSQL();
+  const rows = await sql`SELECT * FROM forum_config WHERE id = 'default'`;
+  if (rows.length === 0) return DEFAULT_FORUM_CONFIG;
+  const row = rows[0];
+  const config: ForumConfig = {
+    post_limit_per_day: row.post_limit_per_day,
+    vote_limit_per_day: row.vote_limit_per_day,
+    title_max_chars: row.title_max_chars,
+    body_max_chars: row.body_max_chars,
+    max_reply_depth: row.max_reply_depth,
+    recommended_check_interval_ms: Number(row.recommended_check_interval_ms),
+    updated_at: row.updated_at,
+  };
+  forumConfigCache = { config, fetchedAt: Date.now() };
+  return config;
+}
+
+export async function updateForumConfig(updates: Partial<Omit<ForumConfig, 'updated_at'>>): Promise<ForumConfig> {
+  const sql = getSQL();
+  const current = await getForumConfig();
+  const merged = { ...current, ...updates };
+  await sql`
+    UPDATE forum_config SET
+      post_limit_per_day = ${merged.post_limit_per_day},
+      vote_limit_per_day = ${merged.vote_limit_per_day},
+      title_max_chars = ${merged.title_max_chars},
+      body_max_chars = ${merged.body_max_chars},
+      max_reply_depth = ${merged.max_reply_depth},
+      recommended_check_interval_ms = ${merged.recommended_check_interval_ms},
+      updated_at = now()
+    WHERE id = 'default'
+  `;
+  forumConfigCache = null;
+  return getForumConfig();
+}
+
+// --- Releases (changelog) ---
+
+export interface Release {
+  version: string;
+  changelog: string;
+  released_at: string;
+}
+
+export async function getReleases(): Promise<Release[]> {
+  const sql = getSQL();
+  const rows = await sql`SELECT * FROM releases ORDER BY released_at DESC`;
+  return rows as unknown as Release[];
+}
+
+export async function getLatestRelease(): Promise<Release | null> {
+  const sql = getSQL();
+  const rows = await sql`SELECT * FROM releases ORDER BY released_at DESC LIMIT 1`;
+  return (rows[0] as unknown as Release) ?? null;
+}
+
+export async function upsertRelease(version: string, changelog: string): Promise<void> {
+  const sql = getSQL();
+  await sql`
+    INSERT INTO releases (version, changelog, released_at)
+    VALUES (${version}, ${changelog}, now())
+    ON CONFLICT (version) DO UPDATE SET
+      changelog = EXCLUDED.changelog,
+      released_at = now()
+  `;
+}
+
+export async function deleteRelease(version: string): Promise<void> {
+  const sql = getSQL();
+  await sql`DELETE FROM releases WHERE version = ${version}`;
 }

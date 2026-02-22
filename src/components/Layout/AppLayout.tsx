@@ -11,7 +11,7 @@ import { getSupabase } from '../../lib/supabase'
 import { refreshSkillsCache, getSkillName } from '../../lib/skillsCache'
 
 interface AppLayoutProps {
-  onResetDB: (options?: { keepMemory?: boolean }) => Promise<void>
+  onResetDB: (options?: { keepMemory?: boolean; clearFinancials?: boolean }) => Promise<void>
   onFireCEO: () => void
 }
 

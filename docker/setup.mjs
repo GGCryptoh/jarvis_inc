@@ -130,6 +130,23 @@ function isBrewInstalled() {
   }
 }
 
+function isRemoteSession() {
+  if (process.platform !== 'darwin') return false;
+  try {
+    // Check for macOS Screen Sharing / VNC / ARD sessions
+    const who = execSync('who', { encoding: 'utf-8', stdio: 'pipe' });
+    // Screen Sharing sessions show as "console" user but SSH_CONNECTION is unset
+    // More reliable: check if Screen Sharing agent is running
+    const ps = execSync('pgrep -f "ScreensharingAgent|screensharingd|ARDAgent" 2>/dev/null || true', {
+      encoding: 'utf-8', stdio: 'pipe',
+    });
+    if (ps.trim()) return true;
+  } catch { /* ignore */ }
+  // Also check SSH
+  if (process.env.SSH_CONNECTION || process.env.SSH_CLIENT) return true;
+  return false;
+}
+
 function detectInstallMethod() {
   const platform = process.platform;
   if (platform === 'darwin' && isBrewInstalled()) {
@@ -204,8 +221,30 @@ async function ensureDocker() {
         process.exit(1);
       }
       await ask('Press Enter when Docker is installed and running...');
+    } else if (AUTO_MODE || isRemoteSession()) {
+      // Auto mode or remote session (Screen Sharing / SSH):
+      // Don't attempt brew install (requires sudo password which breaks over remote)
+      const remote = isRemoteSession();
+      console.log('');
+      if (remote) {
+        console.log(gold('  ── REMOTE SESSION DETECTED ──'));
+        console.log(dim('  Docker install requires a password prompt that may not work'));
+        console.log(dim('  over Screen Sharing / SSH. Paste these 3 commands instead:'));
+      } else {
+        console.log(gold('  ── DOCKER REQUIRED ──'));
+        console.log(dim('  Paste these 3 commands:'));
+      }
+      console.log('');
+      console.log(cyan('  brew install --cask docker'));
+      console.log(cyan('  open -a Docker'));
+      console.log(cyan('  npm run jarvis'));
+      console.log('');
+      console.log(dim('  Wait for the Docker whale icon in the menu bar after step 2,'));
+      console.log(dim('  then run step 3.'));
+      console.log('');
+      process.exit(1);
     } else {
-      // Can install automatically
+      // Interactive local session: offer to install
       const doInstall = await ask(`Install Docker via ${install.label}?`, 'Y');
       if (doInstall.toLowerCase() === 'y') {
         const ok = await installDocker(install);
@@ -217,9 +256,6 @@ async function ensureDocker() {
         console.log(`  ${cyan('Windows:')}  https://docs.docker.com/desktop/install/windows-install/`);
         console.log(`  ${cyan('Linux:')}    https://docs.docker.com/engine/install/`);
         console.log('');
-        if (AUTO_MODE) {
-          process.exit(1);
-        }
         await ask('Press Enter when Docker is installed and running...');
       }
     }

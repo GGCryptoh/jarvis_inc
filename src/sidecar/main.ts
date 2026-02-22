@@ -39,6 +39,11 @@ async function boot(): Promise<void> {
     process.exit(1);
   }
   console.log('[CEO Sidecar] DB verified');
+
+  // Initialize marketplace signing (loads key from vault)
+  const { initSidecarSigning } = await import('../lib/marketplaceClient');
+  const signingReady = await initSidecarSigning();
+  console.log(`[CEO Sidecar] Marketplace signing: ${signingReady ? 'READY' : 'NOT AVAILABLE (no key in vault)'}`);
 }
 
 // ---------------------------------------------------------------------------
