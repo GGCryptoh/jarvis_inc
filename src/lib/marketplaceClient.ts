@@ -1,0 +1,394 @@
+/**
+ * Marketplace Client — Registration and status checking
+ *
+ * Handles communication between a Jarvis instance and the marketplace hub
+ * at jarvisinc.app. Uses the Ed25519 keypair from jarvisKey.ts for signing.
+ *
+ * Registration happens during KeySetupStep (Founder Ceremony) when the raw
+ * private key is available before encryption. Subsequent status checks are
+ * purely local (localStorage).
+ */
+
+import { loadKeyFromLocalStorage, signPayload } from './jarvisKey';
+import { getSetting, loadSkills, loadAgents } from './database';
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+export const MARKETPLACE_URL = 'https://jarvisinc.app';
+
+// ---------------------------------------------------------------------------
+// Session key cache — raw private key with optional persistence
+//
+// By default, the decrypted key lives only in a JS variable (lost on refresh).
+// The founder can choose an unlock duration to persist across refreshes:
+//   'session'  — in-memory only (default, cleared on page refresh)
+//   'day'      — localStorage, 24h TTL
+//   'week'     — localStorage, 7d TTL
+//   'month'    — localStorage, 30d TTL
+//   'forever'  — localStorage, no expiry
+// ---------------------------------------------------------------------------
+
+export type UnlockDuration = 'session' | 'day' | 'week' | 'month' | 'forever';
+
+const SIGNING_CACHE_KEY = 'jarvis-signing-cache';
+const SIGNING_DURATION_KEY = 'jarvis-signing-duration';
+
+let sessionRawPrivateKey: string | null = null;
+
+/** Get the user's preferred unlock duration */
+export function getUnlockDuration(): UnlockDuration {
+  return (localStorage.getItem(SIGNING_DURATION_KEY) as UnlockDuration) || 'session';
+}
+
+/** Set the preferred unlock duration */
+export function setUnlockDuration(duration: UnlockDuration): void {
+  localStorage.setItem(SIGNING_DURATION_KEY, duration);
+  // If switching to 'session', clear any persisted cache
+  if (duration === 'session') {
+    localStorage.removeItem(SIGNING_CACHE_KEY);
+  }
+  // If we have a key in memory, re-persist with the new duration
+  if (sessionRawPrivateKey && duration !== 'session') {
+    persistSigningCache(sessionRawPrivateKey, duration);
+  }
+}
+
+function persistSigningCache(key: string, duration: UnlockDuration): void {
+  if (duration === 'session') return;
+  const ttlMs: Record<string, number> = {
+    day:   24 * 60 * 60 * 1000,
+    week:  7 * 24 * 60 * 60 * 1000,
+    month: 30 * 24 * 60 * 60 * 1000,
+  };
+  const expiresAt = duration === 'forever' ? null : Date.now() + (ttlMs[duration] ?? ttlMs.day);
+  localStorage.setItem(SIGNING_CACHE_KEY, JSON.stringify({ key, expiresAt }));
+}
+
+/** Cache the raw (decrypted) private key for browser-side signing */
+export function cacheRawPrivateKey(key: string): void {
+  sessionRawPrivateKey = key;
+  const duration = getUnlockDuration();
+  if (duration !== 'session') {
+    persistSigningCache(key, duration);
+  }
+}
+
+/** Get the cached raw private key — checks memory first, then localStorage */
+export function getCachedRawPrivateKey(): string | null {
+  if (sessionRawPrivateKey) return sessionRawPrivateKey;
+
+  // Try restoring from localStorage
+  const raw = localStorage.getItem(SIGNING_CACHE_KEY);
+  if (!raw) return null;
+  try {
+    const { key, expiresAt } = JSON.parse(raw) as { key: string; expiresAt: number | null };
+    if (expiresAt !== null && Date.now() > expiresAt) {
+      // Expired — clear it
+      localStorage.removeItem(SIGNING_CACHE_KEY);
+      return null;
+    }
+    // Restore to memory
+    sessionRawPrivateKey = key;
+    return key;
+  } catch {
+    localStorage.removeItem(SIGNING_CACHE_KEY);
+    return null;
+  }
+}
+
+/** Clear the signing cache (both memory and localStorage) */
+export function clearSigningCache(): void {
+  sessionRawPrivateKey = null;
+  localStorage.removeItem(SIGNING_CACHE_KEY);
+}
+
+/** Get human-readable expiry info */
+export function getSigningExpiry(): { unlocked: boolean; label: string } {
+  if (!getCachedRawPrivateKey()) return { unlocked: false, label: 'LOCKED' };
+  const duration = getUnlockDuration();
+  if (duration === 'session') return { unlocked: true, label: 'THIS SESSION' };
+  if (duration === 'forever') return { unlocked: true, label: 'ALWAYS' };
+  const raw = localStorage.getItem(SIGNING_CACHE_KEY);
+  if (!raw) return { unlocked: true, label: duration.toUpperCase() };
+  try {
+    const { expiresAt } = JSON.parse(raw) as { expiresAt: number | null };
+    if (!expiresAt) return { unlocked: true, label: 'ALWAYS' };
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) return { unlocked: false, label: 'EXPIRED' };
+    const hours = Math.ceil(remaining / (60 * 60 * 1000));
+    if (hours < 24) return { unlocked: true, label: `${hours}h LEFT` };
+    const days = Math.ceil(hours / 24);
+    return { unlocked: true, label: `${days}d LEFT` };
+  } catch {
+    return { unlocked: true, label: duration.toUpperCase() };
+  }
+}
+
+/** localStorage key for marketplace registration state */
+const REGISTRATION_KEY = 'jarvis-marketplace-registered';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface MarketplaceStatus {
+  registered: boolean;
+  hasKey: boolean;
+  instanceId: string | null;
+  nickname: string | null;
+  lastRegistered: string | null;
+}
+
+export interface RegisterResult {
+  success: boolean;
+  error?: string;
+  instanceId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Status checking
+// ---------------------------------------------------------------------------
+
+/**
+ * Check marketplace registration status from local state.
+ * Does NOT call the marketplace API — purely local check.
+ */
+export function getMarketplaceStatus(): MarketplaceStatus {
+  const keyData = loadKeyFromLocalStorage();
+  const regData = localStorage.getItem(REGISTRATION_KEY);
+
+  let registered = false;
+  let instanceId: string | null = null;
+  let nickname: string | null = null;
+  let lastRegistered: string | null = null;
+
+  if (regData) {
+    try {
+      const parsed = JSON.parse(regData);
+      registered = parsed.registered === true;
+      instanceId = parsed.instanceId ?? null;
+      nickname = parsed.nickname ?? null;
+      lastRegistered = parsed.lastRegistered ?? null;
+    } catch { /* corrupt data, treat as unregistered */ }
+  }
+
+  return {
+    registered,
+    hasKey: keyData !== null,
+    instanceId,
+    nickname,
+    lastRegistered,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Registration (called from KeySetupStep with raw private key)
+// ---------------------------------------------------------------------------
+
+/**
+ * Register this Jarvis instance on the marketplace.
+ *
+ * Called from KeySetupStep during Founder Ceremony, when the raw (unencrypted)
+ * private key is available for signing. This is the only time we can sign
+ * without prompting for the master password.
+ *
+ * @param rawPrivateKeyBase64 - Unencrypted Ed25519 private key (PKCS8, base64)
+ * @param publicKeyBase64 - Raw Ed25519 public key (base64)
+ */
+export async function registerOnMarketplace(
+  rawPrivateKeyBase64: string,
+  publicKeyBase64: string,
+): Promise<RegisterResult> {
+  // Load founder/org info from DB
+  let founderName: string;
+  let orgName: string;
+  let primaryMission: string;
+  try {
+    founderName = (await getSetting('founder_name')) ?? 'Unknown';
+    orgName = (await getSetting('org_name')) ?? 'Jarvis Instance';
+    primaryMission = (await getSetting('primary_mission')) ?? '';
+  } catch {
+    founderName = 'Unknown';
+    orgName = 'Jarvis Instance';
+    primaryMission = '';
+  }
+
+  // Gather enabled skills
+  let featuredSkills: string[] = [];
+  let skillNames: string[] = [];
+  try {
+    const skills = await loadSkills();
+    const enabled = skills.filter(s => s.enabled);
+    featuredSkills = enabled.map(s => s.id).slice(0, 20);
+    skillNames = enabled.map(s => {
+      const def = s.definition as Record<string, unknown> | null;
+      return (def?.name as string) ?? s.id;
+    });
+  } catch { /* DB may not be ready */ }
+
+  // Gather agents
+  let agentNames: string[] = [];
+  try {
+    const agents = await loadAgents();
+    agentNames = agents.map(a => a.name);
+  } catch { /* ignore */ }
+
+  // Build a writeup from real instance data
+  const writeupParts: string[] = [];
+  if (primaryMission) writeupParts.push(`Mission: ${primaryMission}`);
+  if (skillNames.length > 0) writeupParts.push(`Skills: ${skillNames.join(', ')}`);
+  if (agentNames.length > 0) writeupParts.push(`Agents: ${agentNames.join(', ')}`);
+  const skillsWriteup = writeupParts.join('\n') || `${founderName}'s autonomous AI workforce`;
+
+  // Build description
+  const description = primaryMission
+    ? `${primaryMission.substring(0, 180)}`
+    : `${founderName}'s Jarvis instance — ${orgName}`;
+
+  const timestamp = Date.now();
+
+  // Build payload (without signature — added after signing)
+  const payload: Record<string, unknown> = {
+    repo_url: 'https://github.com/GGCryptoh/jarvis_inc',
+    repo_type: 'github',
+    nickname: orgName.substring(0, 24),
+    description: description.substring(0, 200),
+    avatar_color: '#50fa7b',
+    avatar_icon: 'bot',
+    avatar_border: '#ff79c6',
+    featured_skills: featuredSkills,
+    skills_writeup: skillsWriteup.substring(0, 1000),
+    public_key: publicKeyBase64,
+    timestamp,
+  };
+
+  try {
+    // Sign the payload with the raw Ed25519 private key
+    const signature = await signPayload(rawPrivateKeyBase64, payload);
+    payload.signature = signature;
+
+    console.log('[Marketplace] Registering with', featuredSkills.length, 'skills,', agentNames.length, 'agents');
+
+    const res = await fetch(`${MARKETPLACE_URL}/api/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const instanceId = data.instance?.id;
+
+      // Save registration state locally
+      localStorage.setItem(REGISTRATION_KEY, JSON.stringify({
+        registered: true,
+        instanceId,
+        nickname: payload.nickname,
+        lastRegistered: new Date().toISOString(),
+      }));
+
+      console.log('[Marketplace] Registered successfully:', instanceId);
+      return { success: true, instanceId };
+    } else {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      console.warn('[Marketplace] Registration failed:', err.error, err.debug ?? '');
+      return { success: false, error: err.error };
+    }
+  } catch (err) {
+    console.warn('[Marketplace] Registration request failed:', err);
+    return { success: false, error: 'Network error — registration will retry later' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Signed API calls (for submit_feature, vote, update_profile)
+// ---------------------------------------------------------------------------
+
+/**
+ * Make a signed POST request to the marketplace API.
+ * Requires a session-cached raw private key (from key generation or password entry).
+ * Returns the response JSON or an error.
+ */
+export async function signedMarketplacePost(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }> {
+  const keyData = loadKeyFromLocalStorage();
+  if (!keyData) {
+    return { success: false, error: 'No marketplace identity key found. Generate one at /key first.' };
+  }
+
+  const rawKey = getCachedRawPrivateKey();
+  if (!rawKey) {
+    window.dispatchEvent(new CustomEvent('navigate-toast', {
+      detail: { message: 'Session signing locked — unlock to use marketplace', path: '/key' },
+    }));
+    return {
+      success: false,
+      error: 'Session signing is locked. Go to /key and click UNLOCK to enter your master password first.',
+    };
+  }
+
+  const status = getMarketplaceStatus();
+  const payload: Record<string, unknown> = {
+    ...body,
+    instance_id: status.instanceId,
+    public_key: keyData.publicKey,
+    timestamp: Date.now(),
+  };
+
+  try {
+    const signature = await signPayload(rawKey, payload);
+    payload.signature = signature;
+
+    const res = await fetch(`${MARKETPLACE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json().catch(() => ({ error: 'Unknown error' }));
+    if (res.ok) {
+      return { success: true, data };
+    } else {
+      return { success: false, error: data.error || `Request failed (${res.status})` };
+    }
+  } catch (err) {
+    return { success: false, error: 'Network error — marketplace may be unreachable' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a heartbeat to the marketplace to keep the instance marked as online.
+ * Fire-and-forget — requires instance to be registered.
+ */
+export async function sendHeartbeat(): Promise<void> {
+  const status = getMarketplaceStatus();
+  if (!status.registered || !status.instanceId) return;
+
+  const keyData = loadKeyFromLocalStorage();
+  if (!keyData) return;
+
+  try {
+    const timestamp = Date.now();
+    // Heartbeat also requires signature, but we only have encrypted key.
+    // For now, we send an unsigned heartbeat — the marketplace can
+    // accept it for heartbeats specifically (lower security requirement).
+    await fetch(`${MARKETPLACE_URL}/api/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instance_id: status.instanceId,
+        public_key: keyData.publicKey,
+        timestamp,
+        signature: '',
+      }),
+    });
+  } catch { /* silent — best effort */ }
+}

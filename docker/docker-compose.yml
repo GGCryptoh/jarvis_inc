@@ -1,0 +1,312 @@
+# Jarvis Inc. — Full Stack (Supabase + Caddy + Jarvis Frontend)
+# =============================================================
+#
+# This compose file runs the full Jarvis Inc production stack:
+#   - Supabase (Postgres, GoTrue auth, PostgREST, Realtime, Studio)
+#   - Caddy (reverse proxy, auto HTTPS, Studio protection)
+#   - Jarvis frontend (React SPA)
+#
+# Quick start:
+#   cp .env.example .env    # edit with your values
+#   docker compose up -d
+#
+# Supabase Studio (DB admin):
+#   https://studio.${DOMAIN}  (protected by basic auth)
+#
+# Jarvis dashboard:
+#   https://${DOMAIN}
+
+services:
+
+  # ─── Caddy (reverse proxy + auto HTTPS) ────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+      - STUDIO_USER=${STUDIO_USER}
+      - STUDIO_PASS_HASH=${STUDIO_PASS_HASH}
+    depends_on:
+      - jarvis
+      - supabase-kong
+      - supabase-studio
+    networks:
+      - jarvis-net
+
+  # ─── Jarvis Frontend ───────────────────────────────────────
+  jarvis:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: Postgres ────────────────────────────────────
+  supabase-db:
+    image: supabase/postgres:15.8.1.085
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXP:-3600}
+    volumes:
+      - supabase_db:/var/lib/postgresql/data
+      - ./supabase/migrations/000_roles.sh:/docker-entrypoint-initdb.d/zz_jarvis_roles.sh
+      - ./supabase/migrations:/docker-entrypoint-initdb.d/migrations
+    healthcheck:
+      test: pg_isready -U postgres -h localhost
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: GoTrue (Auth) ───────────────────────────────
+  supabase-auth:
+    image: supabase/gotrue:v2.185.0
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${DOMAIN}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@supabase-db:5432/${POSTGRES_DB:-postgres}
+      GOTRUE_SITE_URL: https://${DOMAIN}
+      GOTRUE_URI_ALLOW_LIST: ""
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: ${JWT_EXP:-3600}
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      # Passkey / WebAuthn
+      GOTRUE_SECURITY_MFA_ENABLED: "true"
+      GOTRUE_EXTERNAL_WEBAUTHN_ENABLED: "true"
+      GOTRUE_EXTERNAL_WEBAUTHN_RP_DISPLAY_NAME: "Jarvis Inc"
+      GOTRUE_EXTERNAL_WEBAUTHN_RP_ID: ${DOMAIN}
+      GOTRUE_EXTERNAL_WEBAUTHN_RP_ORIGINS: https://${DOMAIN}
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: PostgREST (REST API) ────────────────────────
+  supabase-rest:
+    image: postgrest/postgrest:v14.3
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@supabase-db:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: public,storage,graphql_public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXP:-3600}
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: Storage (file uploads) ──────────────────────
+  supabase-storage:
+    image: supabase/storage-api:v1.37.1
+    restart: unless-stopped
+    volumes:
+      - supabase_storage:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      supabase-rest:
+        condition: service_started
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://supabase-rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@supabase-db:5432/${POSTGRES_DB:-postgres}
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: Realtime ────────────────────────────────────
+  supabase-realtime:
+    image: supabase/realtime:v2.72.0
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DB_HOST: supabase-db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-postgres}
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
+      DB_ENC_KEY: supabaserealtime
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      ERL_AFLAGS: "-proto_dist inet_tcp"
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: Edge Functions (Deno runtime) ───────────────
+  supabase-functions:
+    image: supabase/edge-runtime:v1.70.0
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_URL: http://supabase-kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}
+      VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT:-false}"
+      EDGE_RUNTIME_PORT: "9000"
+    volumes:
+      - ./supabase/functions:/home/deno/functions:Z
+    command:
+      - start
+      - --main-service
+      - /home/deno/functions/main
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: Kong (API gateway) ──────────────────────────
+  supabase-kong:
+    image: kong:2.8.1
+    restart: unless-stopped
+    ports:
+      - "${KONG_HTTP_PORT:-8000}:8000"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+    volumes:
+      - ./supabase/kong.yml:/home/kong/kong.yml:ro
+    depends_on:
+      - supabase-auth
+      - supabase-rest
+      - supabase-storage
+      - supabase-realtime
+      - supabase-functions
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: Studio (admin UI) ──────────────────────────
+  supabase-studio:
+    image: supabase/studio:2026.01.27-sha-6aa59ff
+    restart: unless-stopped
+    environment:
+      STUDIO_PG_META_URL: http://supabase-meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DEFAULT_ORGANIZATION_NAME: "Jarvis Inc"
+      DEFAULT_PROJECT_NAME: "jarvis_inc"
+      SUPABASE_URL: http://supabase-kong:8000
+      SUPABASE_PUBLIC_URL: https://api.${DOMAIN}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+    depends_on:
+      - supabase-kong
+      - supabase-meta
+    networks:
+      - jarvis-net
+
+  # ─── Supabase: pg_meta (for Studio) ───────────────────────
+  supabase-meta:
+    image: supabase/postgres-meta:v0.95.2
+    restart: unless-stopped
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: supabase-db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: ${POSTGRES_DB:-postgres}
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    networks:
+      - jarvis-net
+
+  # ─── CEO Sidecar (headless scheduler) ──────────────────────
+  jarvis-ceo:
+    build:
+      context: ..
+      dockerfile: docker/sidecar/Dockerfile
+    restart: unless-stopped
+    environment:
+      SUPABASE_URL: http://supabase-kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      CEO_INTERVAL_MS: "30000"
+      TZ: ${TZ:-America/New_York}
+    depends_on:
+      supabase-kong:
+        condition: service_started
+    networks:
+      - jarvis-net
+    volumes:
+      - gateway_workspace:/workspace
+
+  # ─── Gateway Workspace (app serving + code execution) ─────
+  jarvis-gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-3001}:3001"
+    volumes:
+      - gateway_workspace:/workspace
+    environment:
+      GATEWAY_PORT: "3001"
+      WORKSPACE_PATH: /workspace
+    networks:
+      - jarvis-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+  supabase_db:
+  supabase_storage:
+  gateway_workspace:
+
+networks:
+  jarvis-net:
+    driver: bridge

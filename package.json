@@ -1,0 +1,33 @@
+{
+  "name": "jarvis-inc",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "jarvis": "node docker/setup.mjs --auto && npm run dev",
+    "setup": "node docker/setup.mjs",
+    "setup:check": "node docker/setup.mjs --check"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.95.3",
+    "highlight.js": "^11.11.1",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,103 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+dist-ssr
+
+# Vite
+.vite
+*.local
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Secrets & credentials
+*.pem
+*.key
+*.cert
+*.p12
+credentials.json
+serviceAccount.json
+.jarvis-key
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE / Editor
+.vscode/settings.json
+.vscode/launch.json
+.idea
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage
+.nyc_output
+
+# Docker (local overrides & secrets)
+docker-compose.override.yml
+docker/.env
+docker/supabase/kong.yml
+docker/supabase/volumes/
+
+# SQLite (if ever used on disk)
+*.sqlite
+*.sqlite3
+*.db
+
+# Misc
+.cache
+.turbo
+.parcel-cache
+nul
+.vercel
+
+# Internal docs & strategy (keep local only)
+AI/
+CLAUDE.md
+TASKS.md
+TODO.md
+PRD.txt
+LINKEDIN.md
+FORUM-POST.md
+WEBMCP-TEST-SKILLS-VIA-CHAT.md
+APPTEST-PLAYWRIGHT.md
+docs/plans/
+marketplace/docs/plans/
+
+# Local reference & backups
+seed_skills_repo/
+backups/
+scripts/
+public/temp/
+
+# Test lab files
+src/lib/testAutoRunners.ts
+src/lib/testDefinitions.ts
+src/lib/testRunsDb.ts
+docker/supabase/migrations/011_test_lab.sql
+
+# Claude Code & tooling
+.claude/
+.playwright-mcp/
+.worktrees/
+
+# Next.js build artifacts (marketplace)
+marketplace/.next/
+marketplace/next-env.d.ts
+marketplace/tsconfig.tsbuildinfo

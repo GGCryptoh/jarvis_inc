@@ -1,0 +1,48 @@
+# Jarvis Inc — Caddy Reverse Proxy
+# =================================
+#
+# Routes:
+#   {$DOMAIN}          → Jarvis frontend (React SPA)
+#   api.{$DOMAIN}      → Supabase API gateway (Kong)
+#   studio.{$DOMAIN}   → Supabase Studio (basic auth protected)
+#
+# SSL modes (set CADDY_TLS in .env):
+#   - "internal"  → Self-signed certs (LAN / local dev, default)
+#   - ""          → Auto HTTPS via Let's Encrypt (internet-facing)
+#   - "off"       → Plain HTTP only (behind another proxy or trusted LAN)
+
+# ─── Jarvis Frontend + Webhooks ─────────────────────────────
+{$DOMAIN} {
+	tls {$CADDY_TLS:internal}
+
+	# OAuth token exchange proxy → gateway handles stripping token_url and forwarding
+	handle /api/oauth/token {
+		reverse_proxy jarvis-gateway:3001
+	}
+
+	# Frontend
+	handle {
+		reverse_proxy jarvis:80
+	}
+}
+
+# ─── Supabase API ────────────────────────────────────────────
+api.{$DOMAIN} {
+	tls {$CADDY_TLS:internal}
+	reverse_proxy supabase-kong:8000
+
+	header {
+		Access-Control-Allow-Origin  *
+		Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+		Access-Control-Allow-Headers "Authorization, Content-Type, apikey, x-client-info"
+	}
+}
+
+# ─── Supabase Studio (protected with basic auth) ─────────────
+studio.{$DOMAIN} {
+	tls {$CADDY_TLS:internal}
+	basicauth {
+		{$STUDIO_USER} {$STUDIO_PASS_HASH}
+	}
+	reverse_proxy supabase-studio:3000
+}
