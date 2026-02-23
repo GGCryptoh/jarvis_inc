@@ -1089,10 +1089,30 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                 <span className={`font-mono text-xs ${
                   marketplaceResult === 'registered' ? 'text-pixel-green/70' :
                   marketplaceResult === 'failed' ? 'text-amber-400/70' :
+                  marketplaceResult === 'retrying' ? 'text-pixel-cyan/70 animate-pulse' :
                   'text-pixel-green/40 animate-pulse'
                 }`}>
                   {marketplaceResult === 'registered' ? 'Registered' :
-                   marketplaceResult === 'failed' ? 'Retry later' :
+                   marketplaceResult === 'retrying' ? 'Retrying...' :
+                   marketplaceResult === 'failed' ? (
+                     <button
+                       onClick={async () => {
+                         const rawKey = getCachedRawPrivateKey();
+                         const pub = keyData?.publicKey;
+                         if (!rawKey || !pub) return;
+                         setMarketplaceResult('retrying');
+                         try {
+                           const result = await registerOnMarketplace(rawKey, pub);
+                           setMarketplaceResult(result.success ? 'registered' : 'failed');
+                         } catch {
+                           setMarketplaceResult('failed');
+                         }
+                       }}
+                       className="text-amber-400/70 hover:text-amber-300 underline underline-offset-2 cursor-pointer"
+                     >
+                       Retry now
+                     </button>
+                   ) :
                    'Registering...'}
                 </span>
               </div>
