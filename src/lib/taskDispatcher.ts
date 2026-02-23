@@ -734,7 +734,7 @@ IMPORTANT: Always preserve IDs (post IDs, channel slugs, instance IDs) in your s
 
 Skill: ${skillId}:${commandName}
 Raw result:
-${resultText.slice(0, 6000)}`,
+${resultText.slice(0, 12000)}`,
                     }],
                     vaultEntry.key_value,
                     MODEL_API_IDS['Claude Haiku 4.5'],
@@ -747,6 +747,20 @@ ${resultText.slice(0, 6000)}`,
                 });
 
                 summary = summaryResult || `Done — ${brief}${ellipsis}`;
+
+                // Store the LLM-generated summary back on the task for mission detail display
+                if (summaryResult && taskId) {
+                  sb.from('task_executions')
+                    .select('result')
+                    .eq('id', taskId)
+                    .single()
+                    .then(({ data }) => {
+                      if (data?.result) {
+                        const updatedResult = { ...(data.result as Record<string, unknown>), auto_summary: summaryResult };
+                        sb.from('task_executions').update({ result: updatedResult }).eq('id', taskId).then(() => {});
+                      }
+                    });
+                }
               } else {
                 // No API key — fall back to basic count summary
                 summary = `Done — ${brief}${ellipsis}`;

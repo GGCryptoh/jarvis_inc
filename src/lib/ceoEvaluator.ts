@@ -44,6 +44,12 @@ export async function evaluateMission(
 - Efficiency: Was the work done with reasonable token/cost usage for its complexity?
 - Overall: Your holistic assessment combining all factors.
 
+IMPORTANT SCORING GUIDELINES:
+- For very low-cost tasks (under $0.05): Be lenient. If the task was completed and produced a result, don't fail it. A simple lookup or list operation costing a penny is fine — grade C+ or above if it returned useful data.
+- For moderate-cost tasks ($0.05-$0.50): Normal scoring. Expect solid output proportional to cost.
+- For expensive tasks ($0.50+): High standards. Expect thorough, well-structured, comprehensive results.
+- If output appears truncated, assess what IS present rather than penalizing for missing content — the full result may exist but was cut for evaluation.
+
 Assign a letter grade: A+ (95-100), A (90-94), B+ (85-89), B (80-84), B- (75-79), C+ (70-74), C (65-69), C- (60-64), D (50-59), F (0-49).
 
 Recommend one of: approve (good work), needs_revision (minor issues), reject (significant problems).
@@ -53,12 +59,14 @@ Respond ONLY with a JSON object, no markdown fences:
 
     const systemPrompt = (await getPrompt('mission-evaluation')) ?? hardcodedEvalPrompt;
 
+    const totalCost = taskResults.reduce((sum, t) => sum + t.cost, 0);
     const userPrompt = `Mission: "${missionTitle}"
 Duration: ${Math.round(durationMs / 1000)}s
 Tasks completed: ${taskResults.length}
+Total cost: $${totalCost.toFixed(4)}
 
 Results:
-${taskResults.map((t, i) => `--- Task ${i + 1}: ${t.skill_id} (${t.tokens} tokens, $${t.cost.toFixed(4)}) ---\n${t.output.slice(0, 3000)}`).join('\n\n')}
+${taskResults.map((t, i) => `--- Task ${i + 1}: ${t.skill_id} (${t.tokens} tokens, $${t.cost.toFixed(4)}) ---\n${t.output.slice(0, 8000)}`).join('\n\n')}
 
 Score this mission.`;
 

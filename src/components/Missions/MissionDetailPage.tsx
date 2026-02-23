@@ -133,6 +133,21 @@ export default function MissionDetailPage() {
     };
   }, [id]);
 
+  // ESC key navigates back (closes modals first)
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (showApproveDialog) { setShowApproveDialog(false); }
+        else if (showRejectModal) { setShowRejectModal(false); }
+        else if (deleteConfirm) { setDeleteConfirm(false); }
+        else { navigate(-1); }
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [navigate, showApproveDialog, showRejectModal, deleteConfirm]);
+
   // Derived metrics
   const totalCost = tasks.reduce((sum: number, t: any) => sum + (t.cost_usd ?? 0), 0);
   const totalTokens = tasks.reduce((sum: number, t: any) => sum + (t.tokens_used ?? 0), 0);
@@ -489,8 +504,8 @@ export default function MissionDetailPage() {
       {!summaryOutput && regularTasks.length > 0 && regularTasks[0]?.result?.output && (
         <div className="mb-5 bg-jarvis-surface border border-jarvis-border rounded-lg p-4">
           <div className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider mb-2">CEO SUMMARY</div>
-          <div className="text-sm text-zinc-300 leading-relaxed line-clamp-4">
-            <RichResultDisplay text={regularTasks[0].result.summary || regularTasks[0].result.output.slice(0, 400)} />
+          <div className="text-sm text-zinc-300 leading-relaxed line-clamp-6">
+            <RichResultDisplay text={regularTasks[0].result.auto_summary || regularTasks[0].result.output.slice(0, 1500)} />
           </div>
         </div>
       )}
