@@ -118,6 +118,15 @@ function peerDiscoveryPlugin(): Plugin {
         // bonjour-service not installed — skip silently
       });
 
+      // Catch unhandled mDNS errors so they don't crash Vite
+      process.on('uncaughtException', (err: Error) => {
+        if (err.message?.includes('Service name') || err.message?.includes('already in use')) {
+          console.warn('[PeerDiscovery] mDNS name collision (non-fatal):', err.message);
+          return; // swallow — Vite keeps running
+        }
+        throw err; // re-throw non-mDNS errors
+      });
+
       // Stop on server close
       server.httpServer?.on('close', () => {
         import('./src/lib/peerDiscovery').then(({ stopPeerDiscovery }) => {

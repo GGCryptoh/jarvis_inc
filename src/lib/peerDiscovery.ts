@@ -6,6 +6,7 @@
  */
 
 import type Bonjour from 'bonjour-service';
+import { hostname } from 'os';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,7 +58,11 @@ export async function startPeerDiscovery(config: {
   bonjourInstance = new Bonjour();
   advertiseConfig = config;
 
-  // Advertise our service
+  // Advertise our service — name must be unique per machine on the LAN
+  const host = hostname().replace(/\.local$/, '').substring(0, 16);
+  const shortId = config.instanceId.substring(0, 8);
+  const serviceName = `jarvis-${host}-${shortId}`;
+
   const txtRecord: Record<string, string> = {
     id: config.instanceId,
     nick: config.nickname.substring(0, 24),
@@ -66,14 +71,22 @@ export async function startPeerDiscovery(config: {
     ver: config.version,
   };
 
-  bonjourInstance.publish({
-    name: `jarvis-${config.instanceId.substring(0, 8)}`,
-    type: 'jarvis',
-    port: config.devPort ?? 5173,
-    txt: txtRecord,
-  });
+  try {
+    const service = bonjourInstance.publish({
+      name: serviceName,
+      type: 'jarvis',
+      port: config.devPort ?? 5173,
+      txt: txtRecord,
+    });
+    // Handle async mDNS errors (e.g., name collision) gracefully
+    service.on('error', (err: Error) => {
+      console.warn(`[PeerDiscovery] mDNS error (non-fatal): ${err.message}`);
+    });
+  } catch (err) {
+    console.warn(`[PeerDiscovery] Failed to publish (non-fatal): ${err instanceof Error ? err.message : err}`);
+  }
 
-  console.log(`[PeerDiscovery] Advertising _jarvis._tcp (${config.nickname})`);
+  console.log(`[PeerDiscovery] Advertising _jarvis._tcp as "${serviceName}" (${config.nickname})`);
 
   // Browse for other Jarvis instances
   browser = bonjourInstance.find({ type: 'jarvis' }, (service) => {
