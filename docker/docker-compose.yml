@@ -51,6 +51,10 @@ services:
       - jarvis-net
 
   # ─── Supabase: Postgres ────────────────────────────────────
+  # No healthcheck — the supabase/postgres image has a built-in one that
+  # conflicts with custom overrides. Services use restart: unless-stopped
+  # to retry until Postgres is ready. setup.mjs Phase 1.5 handles password
+  # sync and service restarts after init completes.
   supabase-db:
     image: supabase/postgres:15.8.1.085
     restart: unless-stopped
@@ -64,12 +68,9 @@ services:
     volumes:
       - supabase_db:/var/lib/postgresql/data
       - ./supabase/migrations/000_roles.sh:/docker-entrypoint-initdb.d/zz_jarvis_roles.sh
-      - ./supabase/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./supabase/migrations/001_jarvis_schema_20260214.sql:/docker-entrypoint-initdb.d/yy_jarvis_schema_20260214.sql
     healthcheck:
-      test: pg_isready -U postgres -h localhost
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      disable: true
     networks:
       - jarvis-net
 
@@ -98,8 +99,7 @@ services:
       GOTRUE_EXTERNAL_WEBAUTHN_RP_ID: ${DOMAIN}
       GOTRUE_EXTERNAL_WEBAUTHN_RP_ORIGINS: https://${DOMAIN}
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     networks:
       - jarvis-net
 
@@ -116,8 +116,7 @@ services:
       PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
       PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXP:-3600}
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     networks:
       - jarvis-net
 
@@ -133,10 +132,8 @@ services:
       interval: 5s
       retries: 3
     depends_on:
-      supabase-db:
-        condition: service_healthy
-      supabase-rest:
-        condition: service_started
+      - supabase-db
+      - supabase-rest
     environment:
       ANON_KEY: ${ANON_KEY}
       SERVICE_KEY: ${SERVICE_ROLE_KEY}
@@ -174,8 +171,7 @@ services:
       APP_NAME: realtime
       SEED_SELF_HOST: "true"
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     networks:
       - jarvis-net
 
@@ -184,14 +180,13 @@ services:
     image: supabase/edge-runtime:v1.70.0
     restart: unless-stopped
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     environment:
       JWT_SECRET: ${JWT_SECRET}
       SUPABASE_URL: http://supabase-kong:8000
       SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
-      SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}
+      SUPABASE_DB_URL: postgresql://supabase_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}
       VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT:-false}"
       EDGE_RUNTIME_PORT: "9000"
     volumes:
@@ -260,8 +255,7 @@ services:
       PG_META_DB_USER: supabase_admin
       PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     networks:
       - jarvis-net
 

@@ -921,8 +921,10 @@ export async function refreshMarketplaceProfile(): Promise<void> {
   const mktStatus = getMarketplaceStatus();
   if (!mktStatus.registered || !mktStatus.instanceId) throw new Error('Not registered');
 
-  const { getSetting: gs, loadSkills: ls, loadAgents: la } = await import('./database');
+  const { getSetting: gs, loadSkills: ls, loadAgents: la, loadCEO } = await import('./database');
   const orgName = (await gs('org_name')) ?? 'Jarvis Instance';
+  const ceo = await loadCEO();
+  const ceoName = ceo?.name;
   const primaryMission = (await gs('primary_mission')) ?? '';
   const founderName = (await gs('founder_name')) ?? 'Unknown';
   // Custom marketplace description takes priority over primary_mission
@@ -963,7 +965,7 @@ export async function refreshMarketplaceProfile(): Promise<void> {
   const skillsWriteup = writeupParts.join('\n') || `${founderName}'s autonomous AI workforce`;
 
   const payload = {
-    nickname: orgName.substring(0, 24),
+    nickname: (ceoName || orgName).substring(0, 24),
     description: description.substring(0, 200),
     featured_skills: allFeatured,
     skills_writeup: skillsWriteup.substring(0, 1000),

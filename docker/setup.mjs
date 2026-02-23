@@ -334,7 +334,7 @@ async function waitForPostgres(timeout = 60000) {
   while (Date.now() - start < timeout) {
     try {
       execSync(
-        'docker compose exec -T supabase-db pg_isready -U postgres -h localhost',
+        'docker compose exec -T supabase-db pg_isready -U supabase_admin -h 127.0.0.1',
         { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 5000 }
       );
       return true;
@@ -402,55 +402,202 @@ async function waitForServices(domain, tls) {
     return false;
   }
 
-  // Phase 1.5: Bootstrap storage role (idempotent — safe to run on existing DBs)
-  try {
-    execSync(
-      `docker compose exec -T supabase-db psql -U postgres -c "
-        DO \\$\\$ BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_storage_admin') THEN
-            CREATE ROLE supabase_storage_admin LOGIN NOINHERIT PASSWORD current_setting('POSTGRES_PASSWORD');
-          END IF;
-        END \\$\\$;
-        ALTER ROLE supabase_storage_admin WITH LOGIN NOINHERIT;
-        CREATE SCHEMA IF NOT EXISTS storage;
-        ALTER SCHEMA storage OWNER TO supabase_storage_admin;
-        GRANT ALL ON SCHEMA storage TO supabase_storage_admin;
-        GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
-        GRANT anon TO supabase_storage_admin;
-        GRANT authenticated TO supabase_storage_admin;
-        GRANT service_role TO supabase_storage_admin;
-      "`,
-      { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 15000 }
-    );
-    console.log(`  ${green('✓')} Storage role ${dim('— bootstrapped')}`);
-  } catch {
-    console.log(`  ${dim('○')} Storage role ${dim('— skipped (may already exist)')}`);
+  // Phase 1.5: Bootstrap ALL service roles + schemas (idempotent)
+  // The Supabase Postgres image creates roles during init, but pg_isready
+  // returns healthy before init scripts finish. Services (GoTrue, PostgREST,
+  // Storage, Realtime) start connecting immediately and fail with "password
+  // authentication failed". This phase explicitly sets passwords on all
+  // service roles using the .env password, regardless of init script state.
+  const envContent = readFileSync(ENV_PATH, 'utf-8');
+  const pgPassword = envContent.match(/^POSTGRES_PASSWORD=(.+)$/m)?.[1] || '';
+  const dbUser = 'supabase_admin'; // Supabase image default superuser
+  const safePwShell = pgPassword.replace(/'/g, "'\\''"); // for shell quoting
+  // All psql commands use TCP + PGPASSWORD for scram-sha-256 auth.
+  // Use 127.0.0.1 (not localhost) to avoid IPv6 ::1 resolution on Mac Docker VMs.
+  // Explicit -d postgres because psql defaults to a DB matching the username.
+  const psqlPrefix = `docker compose exec -T -e PGPASSWORD='${safePwShell}' supabase-db psql -U ${dbUser} -h 127.0.0.1 -d postgres`;
+  if (pgPassword) {
+    // Wait for Supabase init scripts to create the base roles (up to 300s)
+    // TCP isn't available during init, so this loop also waits for init to finish.
+    // On Mac Mini with Docker Desktop VM, init can take 2-4 minutes.
+    process.stdout.write(`  ${dim('waiting')} Postgres init scripts...`);
+    const initStart = Date.now();
+    let rolesReady = false;
+    while (Date.now() - initStart < 300000) {
+      try {
+        const result = execSync(
+          `${psqlPrefix} -tAc "SELECT count(*) FROM pg_roles WHERE rolname IN ('authenticator','supabase_auth_admin','supabase_admin','anon','authenticated','service_role');"`,
+          { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 15000 }
+        ).trim();
+        if (parseInt(result, 10) >= 6) {
+          rolesReady = true;
+          break;
+        }
+      } catch { /* TCP not ready yet (init running) or roles not created yet */ }
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (rolesReady) {
+      console.log(`\r  ${green('✓')} Postgres init ${dim('— base roles ready')}`);
+    } else {
+      console.log(`\r  ${dim('○')} Postgres init ${dim('— timed out, will try password sync anyway')}`);
+    }
+
+    // Escape single quotes for SQL
+    const safePw = pgPassword.replace(/'/g, "''");
+    try {
+      execSync(
+        `${psqlPrefix} -c "
+          -- Set passwords on all service login roles
+          ALTER ROLE authenticator       WITH LOGIN NOINHERIT PASSWORD '${safePw}';
+          ALTER ROLE supabase_auth_admin WITH LOGIN NOINHERIT CREATEROLE CREATEDB PASSWORD '${safePw}';
+          ALTER ROLE supabase_admin      WITH LOGIN NOINHERIT PASSWORD '${safePw}';
+
+          -- Storage role (may not exist on first init)
+          DO \\$\\$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_storage_admin') THEN
+              CREATE ROLE supabase_storage_admin LOGIN NOINHERIT PASSWORD '${safePw}';
+            ELSE
+              ALTER ROLE supabase_storage_admin WITH LOGIN NOINHERIT PASSWORD '${safePw}';
+            END IF;
+          END \\$\\$;
+
+          -- Schemas needed by services
+          CREATE SCHEMA IF NOT EXISTS _realtime;
+          CREATE SCHEMA IF NOT EXISTS graphql_public;
+          CREATE SCHEMA IF NOT EXISTS storage;
+
+          -- Schema ownership
+          ALTER SCHEMA storage    OWNER TO supabase_storage_admin;
+          ALTER SCHEMA _realtime  OWNER TO supabase_admin;
+
+          -- Storage grants
+          GRANT ALL ON SCHEMA storage TO supabase_storage_admin;
+          GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
+          GRANT anon TO supabase_storage_admin;
+          GRANT authenticated TO supabase_storage_admin;
+          GRANT service_role TO supabase_storage_admin;
+
+          -- Auth schema + all objects inside it
+          DO \\$\\$
+          DECLARE r RECORD;
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth') THEN
+              EXECUTE 'ALTER SCHEMA auth OWNER TO supabase_auth_admin';
+              EXECUTE 'GRANT ALL ON SCHEMA auth TO supabase_auth_admin';
+
+              -- Transfer ownership of all functions in auth schema (GoTrue needs this for CREATE OR REPLACE)
+              FOR r IN SELECT p.oid::regprocedure AS func_sig
+                       FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+                       WHERE n.nspname = 'auth'
+              LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO supabase_auth_admin', r.func_sig);
+              END LOOP;
+
+              -- Transfer ownership of all tables in auth schema
+              FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'auth'
+              LOOP
+                EXECUTE format('ALTER TABLE auth.%I OWNER TO supabase_auth_admin', r.tablename);
+              END LOOP;
+
+              -- Transfer ownership of all sequences in auth schema
+              FOR r IN SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'auth'
+              LOOP
+                EXECUTE format('ALTER SEQUENCE auth.%I OWNER TO supabase_auth_admin', r.sequence_name);
+              END LOOP;
+            END IF;
+          END \\$\\$;
+
+          -- Public schema grants for API roles
+          GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+          GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+        "`,
+        { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 30000 }
+      );
+      console.log(`  ${green('✓')} Service roles ${dim('— passwords synced, schemas ready')}`);
+    } catch (err) {
+      const msg = err.stderr?.slice(0, 200) || err.message?.slice(0, 200) || 'unknown error';
+      console.log(`  ${dim('○')} Service roles ${dim(`— failed: ${msg}`)}`);
+    }
+
+    // Restart services so they pick up the correct passwords + ownership
+    try {
+      execSync(
+        'docker compose restart supabase-auth supabase-rest supabase-storage supabase-realtime',
+        { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 30000 }
+      );
+      console.log(`  ${green('✓')} Services restarted ${dim('— connecting with synced passwords')}`);
+    } catch {
+      console.log(`  ${dim('○')} Service restart ${dim('— skipped')}`);
+    }
+
+    // Brief wait for services to begin startup after restart
+    await new Promise(r => setTimeout(r, 3000));
   }
 
   // Phase 2: Wait for HTTP services via Kong directly (no Caddy/TLS dependency)
+  // GoTrue needs extra time on fresh installs — it runs its own migrations on first boot.
   const httpServices = [
-    { name: 'Kong API Gateway', url: `http://localhost:8000/rest/v1/` },
-    { name: 'GoTrue Auth', url: `http://localhost:8000/auth/v1/health` },
-    { name: 'Edge Functions', url: `http://localhost:8000/functions/v1/health`, optional: true },
-    { name: 'Supabase Storage', url: `http://localhost:8000/storage/v1/status`, optional: true },
+    { name: 'Kong API Gateway', url: `http://localhost:8000/rest/v1/`, timeout: 60000 },
+    { name: 'GoTrue Auth', url: `http://localhost:8000/auth/v1/health`, timeout: 90000 },
+    { name: 'Edge Functions', url: `http://localhost:8000/functions/v1/health`, optional: true, timeout: 20000 },
+    { name: 'Supabase Storage', url: `http://localhost:8000/storage/v1/status`, optional: true, timeout: 20000 },
   ];
 
   for (const svc of httpServices) {
     process.stdout.write(`  ${dim('waiting')} ${svc.name}...`);
-    const ok = await checkService(svc.name, svc.url, svc.optional ? 15000 : 45000);
+    const ok = await checkService(svc.name, svc.url, svc.timeout);
     if (ok) {
       console.log(`\r  ${green('✓')} ${svc.name} ${dim('— online')}`);
     } else if (svc.optional) {
       console.log(`\r  ${dim('○')} ${svc.name} ${dim('— skipped (optional)')}`);
     } else {
-      console.log(`\r  ${red('✗')} ${svc.name} ${dim('— timed out')}`);
+      console.log(`\r  ${red('✗')} ${svc.name} ${dim('— not ready yet, will retry on next run')}`);
     }
+  }
+
+  // If GoTrue or Kong didn't come up, give one more restart attempt
+  const gotrueOk = await checkService('GoTrue', 'http://localhost:8000/auth/v1/health', 3000);
+  const kongOk = await checkService('Kong', 'http://localhost:8000/rest/v1/', 3000);
+  if (!gotrueOk || !kongOk) {
+    console.log(`  ${dim('⟳')} Some services still starting — restarting once more...`);
+    try {
+      execSync(
+        'docker compose restart supabase-auth supabase-rest',
+        { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 30000 }
+      );
+      // Wait for them to come up
+      for (const svc of httpServices.filter(s => !s.optional)) {
+        process.stdout.write(`  ${dim('waiting')} ${svc.name} (retry)...`);
+        const ok = await checkService(svc.name, svc.url, 60000);
+        console.log(ok
+          ? `\r  ${green('✓')} ${svc.name} ${dim('— online (retry)')}`
+          : `\r  ${red('✗')} ${svc.name} ${dim('— timed out (retry)')}`
+        );
+      }
+    } catch { /* ignore */ }
+  }
+
+  // DB readiness gate: if Phase 1.5 timed out, the DB may still have been initializing.
+  // Now that HTTP services are online, verify psql can actually connect before Phases 3-5.
+  let dbReady = false;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      execSync(
+        `${psqlPrefix} -tAc "SELECT 1;"`,
+        { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 10000 }
+      );
+      dbReady = true;
+      break;
+    } catch { await new Promise(r => setTimeout(r, 3000)); }
   }
 
   // Phase 3: Ensure storage bucket exists (idempotent)
   try {
     execSync(
-      `docker compose exec -T supabase-db psql -U postgres -c "
+      `${psqlPrefix} -c "
         INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
         VALUES ('generated-images', 'generated-images', true, 52428800,
                 ARRAY['image/png','image/jpeg','image/webp','image/gif'])
@@ -484,50 +631,129 @@ async function waitForServices(domain, tls) {
           END IF;
         END \\$\\$;
       "`,
-      { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 10000 }
+      { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 15000 }
     );
     console.log(`  ${green('✓')} Storage bucket ${dim('— ready')}`);
   } catch {
     console.log(`  ${dim('○')} Storage bucket ${dim('— skipped (storage not ready)')}`);
   }
 
-  // Phase 4: Ensure skill_schedules table exists (idempotent)
-  try {
-    execSync(
-      `docker compose exec -T supabase-db psql -U postgres -c "
-        CREATE TABLE IF NOT EXISTS skill_schedules (
-          id           TEXT PRIMARY KEY,
-          skill_id     TEXT NOT NULL,
-          command_name TEXT NOT NULL,
-          frequency    TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly', 'monthly')),
-          run_at_time  TEXT NOT NULL DEFAULT '03:00',
-          run_on_day   INTEGER DEFAULT NULL,
-          params       JSONB DEFAULT '{}',
-          enabled      BOOLEAN NOT NULL DEFAULT true,
-          last_run_at  TIMESTAMPTZ DEFAULT NULL,
-          next_run_at  TIMESTAMPTZ DEFAULT NULL,
-          created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-        );
+  // Phase 4: Ensure skill_schedules table exists (idempotent) — retry up to 3 times
+  let phase4Done = false;
+  for (let attempt = 0; attempt < 3 && !phase4Done; attempt++) {
+    try {
+      execSync(
+        `${psqlPrefix} -c "
+          CREATE TABLE IF NOT EXISTS skill_schedules (
+            id           TEXT PRIMARY KEY,
+            skill_id     TEXT NOT NULL,
+            command_name TEXT NOT NULL,
+            frequency    TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly', 'monthly')),
+            run_at_time  TEXT NOT NULL DEFAULT '03:00',
+            run_on_day   INTEGER DEFAULT NULL,
+            params       JSONB DEFAULT '{}',
+            enabled      BOOLEAN NOT NULL DEFAULT true,
+            last_run_at  TIMESTAMPTZ DEFAULT NULL,
+            next_run_at  TIMESTAMPTZ DEFAULT NULL,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+          );
 
-        ALTER TABLE skill_schedules ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE skill_schedules ENABLE ROW LEVEL SECURITY;
 
-        DO \\$\\$ BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'skill_schedules_anon_all') THEN
-            CREATE POLICY \\"skill_schedules_anon_all\\" ON skill_schedules FOR ALL TO anon USING (true) WITH CHECK (true);
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'skill_schedules_auth_all') THEN
-            CREATE POLICY \\"skill_schedules_auth_all\\" ON skill_schedules FOR ALL TO authenticated USING (true) WITH CHECK (true);
-          END IF;
-        END \\$\\$;
+          DO \\$\\$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'skill_schedules_anon_all') THEN
+              CREATE POLICY \\"skill_schedules_anon_all\\" ON skill_schedules FOR ALL TO anon USING (true) WITH CHECK (true);
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'skill_schedules_auth_all') THEN
+              CREATE POLICY \\"skill_schedules_auth_all\\" ON skill_schedules FOR ALL TO authenticated USING (true) WITH CHECK (true);
+            END IF;
+          END \\$\\$;
 
-        CREATE INDEX IF NOT EXISTS idx_skill_schedules_next_run ON skill_schedules(next_run_at) WHERE enabled = true;
-        CREATE INDEX IF NOT EXISTS idx_skill_schedules_skill ON skill_schedules(skill_id);
-      "`,
-      { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 10000 }
-    );
-    console.log(`  ${green('✓')} Skill schedules table ${dim('— ready')}`);
-  } catch {
-    console.log(`  ${dim('○')} Skill schedules table ${dim('— skipped (DB not ready)')}`);
+          CREATE INDEX IF NOT EXISTS idx_skill_schedules_next_run ON skill_schedules(next_run_at) WHERE enabled = true;
+          CREATE INDEX IF NOT EXISTS idx_skill_schedules_skill ON skill_schedules(skill_id);
+        "`,
+        { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 15000 }
+      );
+      console.log(`  ${green('✓')} Skill schedules table ${dim('— ready')}`);
+      phase4Done = true;
+    } catch {
+      if (attempt < 2) await new Promise(r => setTimeout(r, 5000));
+      else console.log(`  ${dim('○')} Skill schedules table ${dim('— skipped (DB not ready)')}`);
+    }
+  }
+
+  // Phase 5: Ensure all v0.1.1 columns/tables exist (idempotent — for existing DBs) — retry up to 3 times
+  let phase5Done = false;
+  for (let attempt = 0; attempt < 3 && !phase5Done; attempt++) {
+    try {
+      execSync(
+        `${psqlPrefix} -c "
+          -- missions columns from 007-010
+          ALTER TABLE public.missions ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ DEFAULT NULL;
+          ALTER TABLE public.missions ADD COLUMN IF NOT EXISTS task_template JSONB DEFAULT NULL;
+          ALTER TABLE public.missions ADD COLUMN IF NOT EXISTS current_round INTEGER NOT NULL DEFAULT 1;
+          ALTER TABLE public.missions ADD COLUMN IF NOT EXISTS description TEXT DEFAULT NULL;
+          ALTER TABLE public.missions ADD COLUMN IF NOT EXISTS max_runs INTEGER DEFAULT NULL;
+          ALTER TABLE public.missions ADD COLUMN IF NOT EXISTS run_count INTEGER NOT NULL DEFAULT 0;
+
+          -- agents metadata from 007
+          ALTER TABLE public.agents ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+
+          -- mission_rounds table from 008
+          CREATE TABLE IF NOT EXISTS public.mission_rounds (
+            id TEXT PRIMARY KEY, mission_id TEXT NOT NULL, round_number INTEGER NOT NULL DEFAULT 1,
+            agent_id TEXT, status TEXT NOT NULL DEFAULT 'in_progress',
+            quality_score INTEGER, completeness_score INTEGER, efficiency_score INTEGER,
+            overall_score INTEGER, grade TEXT, ceo_review TEXT, ceo_recommendation TEXT,
+            rejection_feedback TEXT, redo_strategy TEXT, tokens_used INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL NOT NULL DEFAULT 0, duration_ms INTEGER, task_count INTEGER NOT NULL DEFAULT 0,
+            started_at TIMESTAMPTZ DEFAULT now(), completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+          );
+          ALTER TABLE public.mission_rounds ENABLE ROW LEVEL SECURITY;
+          DO \\$\\$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'mission_rounds_anon_all') THEN
+              CREATE POLICY \\"mission_rounds_anon_all\\" ON public.mission_rounds FOR ALL TO anon USING (true) WITH CHECK (true);
+            END IF;
+          END \\$\\$;
+
+          -- agent_questions table from 009
+          CREATE TABLE IF NOT EXISTS public.agent_questions (
+            id TEXT PRIMARY KEY, task_execution_id TEXT NOT NULL, mission_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL, question TEXT NOT NULL, context TEXT, answer TEXT,
+            answered_by TEXT, status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(), answered_at TIMESTAMPTZ
+          );
+          ALTER TABLE public.agent_questions ENABLE ROW LEVEL SECURITY;
+          DO \\$\\$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'agent_questions_anon_all') THEN
+              CREATE POLICY \\"agent_questions_anon_all\\" ON public.agent_questions FOR ALL TO anon USING (true) WITH CHECK (true);
+            END IF;
+          END \\$\\$;
+
+          -- test_runs table from 011
+          CREATE TABLE IF NOT EXISTS public.test_runs (
+            id TEXT PRIMARY KEY, test_id TEXT NOT NULL, category TEXT NOT NULL, label TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending', mode TEXT NOT NULL DEFAULT 'auto',
+            duration_ms INTEGER, output JSONB, verified_by TEXT, run_by TEXT, notes TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ
+          );
+          CREATE INDEX IF NOT EXISTS idx_test_runs_test_id ON public.test_runs(test_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_test_runs_category ON public.test_runs(category);
+          ALTER TABLE public.test_runs ENABLE ROW LEVEL SECURITY;
+          DO \\$\\$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'test_runs_anon_all') THEN
+              CREATE POLICY \\"test_runs_anon_all\\" ON public.test_runs FOR ALL TO anon USING (true) WITH CHECK (true);
+            END IF;
+          END \\$\\$;
+        "`,
+        { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 20000 }
+      );
+      console.log(`  ${green('✓')} Schema v0.1.1 columns ${dim('— ready')}`);
+      phase5Done = true;
+    } catch {
+      if (attempt < 2) await new Promise(r => setTimeout(r, 5000));
+      else console.log(`  ${dim('○')} Schema v0.1.1 columns ${dim('— skipped (DB not ready)')}`);
+    }
   }
 
   return true;
@@ -656,6 +882,85 @@ async function ensureHostsEntries(domain) {
   }
 }
 
+// ─── Launch Agent (reboot persistence) ──────────────────────
+async function setupLaunchAgent() {
+  if (process.platform !== 'darwin') return; // macOS only
+
+  const plistPath = join(process.env.HOME, 'Library', 'LaunchAgents', 'com.jarvis.inc.plist');
+  if (existsSync(plistPath)) {
+    console.log(`  ${green('✓')} Launch Agent already installed ${dim('(survives reboots)')}`);
+    return;
+  }
+
+  console.log('');
+  console.log(gold('  ── REBOOT PERSISTENCE ──'));
+
+  if (!AUTO_MODE) {
+    const install = await ask('Install Launch Agent so Jarvis starts on login?', 'y');
+    if (install.toLowerCase() !== 'y') {
+      console.log(dim('  Skipped. Run "npm run jarvis" manually after reboot.'));
+      return;
+    }
+  } else {
+    console.log(dim('  Installing Launch Agent for auto-start on login...'));
+  }
+
+  const projectRoot = join(__dirname, '..');
+  // Find npm path
+  let npmPath;
+  try {
+    npmPath = execSync('which npm', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+  } catch {
+    npmPath = '/usr/local/bin/npm';
+  }
+
+  const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.inc</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${npmPath}</string>
+    <string>run</string>
+    <string>jarvis</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${projectRoot}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/jarvis.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/jarvis.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>`;
+
+  try {
+    const launchDir = join(process.env.HOME, 'Library', 'LaunchAgents');
+    if (!existsSync(launchDir)) {
+      execSync(`mkdir -p "${launchDir}"`);
+    }
+    writeFileSync(plistPath, plistContent);
+    execSync(`launchctl load "${plistPath}"`, { stdio: 'pipe' });
+    console.log(`  ${green('✓')} Launch Agent installed ${dim('— Jarvis starts on login')}`);
+    console.log(dim(`    Logs: /tmp/jarvis.log`));
+    console.log(dim(`    Remove: launchctl unload ~/Library/LaunchAgents/com.jarvis.inc.plist`));
+  } catch (err) {
+    console.log(`  ${dim('○')} Could not install Launch Agent: ${err.message}`);
+    console.log(dim('  See README.md for manual setup instructions.'));
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────
 async function main() {
   const checkOnly = process.argv.includes('--check');
@@ -709,6 +1014,7 @@ async function main() {
       await waitForServices(domain, tls);
       await seedIntelligence(anonKey);
       writeViteEnv(domain, tls, anonKey);
+      await setupLaunchAgent();
       printSystemsOnline(domain, tls);
       rl.close();
       return;
@@ -862,6 +1168,7 @@ SECRET_KEY_BASE=${secretKeyBase}
     await waitForServices(domain, tls);
     await seedIntelligence(anonKey);
     writeViteEnv(domain, tls, anonKey);
+    await setupLaunchAgent();
     printSystemsOnline(domain, tls);
   } else {
     console.log('');

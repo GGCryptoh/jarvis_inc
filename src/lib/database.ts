@@ -1023,6 +1023,11 @@ export async function resetDatabase(options?: { keepMemory?: boolean; clearFinan
       await sb.from('channel_usage').delete().gte('id', 0);
     } catch { /* ignore */ }
   }
+
+  // Clear localStorage marketplace registration (stale instance ID after key regeneration)
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('jarvis-marketplace-registered');
+  }
 }
 
 // ---------------------------------------------------------------------------

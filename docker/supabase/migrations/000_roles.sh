@@ -7,10 +7,13 @@
 #
 # Mounted as /docker-entrypoint-initdb.d/zz_jarvis_roles.sh (sorts AFTER
 # the image's init-scripts/ and migrate.sh).
+#
+# Runs inside the Docker entrypoint as Linux user 'postgres' with peer auth.
+# Supabase image default superuser is supabase_admin (created during initdb).
 
 echo "Jarvis: Bootstrapping role passwords and schemas..."
 
-psql -v ON_ERROR_STOP=0 --dbname "${POSTGRES_DB:-postgres}" <<-EOSQL
+psql -U "${POSTGRES_USER:-supabase_admin}" -v ON_ERROR_STOP=0 --dbname "${POSTGRES_DB:-postgres}" <<-EOSQL
 
   -- ── Set passwords on login roles ───────────────────────
   -- The Supabase image creates these roles but may not set passwords.
@@ -58,7 +61,6 @@ psql -v ON_ERROR_STOP=0 --dbname "${POSTGRES_DB:-postgres}" <<-EOSQL
 
   -- ── Transfer auth objects to supabase_auth_admin ──────
   -- GoTrue needs to own auth functions/tables so it can CREATE OR REPLACE them.
-  -- Supabase init scripts create these owned by postgres/supabase_admin.
   DO \$xfer\$
   DECLARE r RECORD;
   BEGIN

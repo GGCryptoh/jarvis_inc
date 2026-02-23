@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RegisterPayload } from '@/lib/types';
 import {
-  instanceIdFromRepo,
+  instanceIdFromKey,
   hashIP,
   verifySignature,
   buildSignatureData,
@@ -104,8 +104,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // --- Generate instance ID and upsert ---
-    const instanceId = instanceIdFromRepo(body.repo_url);
+    // --- Generate instance ID from public key (unique per installation) ---
+    const instanceId = instanceIdFromKey(body.public_key);
 
     const instance = await upsertInstance({
       id: instanceId,

@@ -1,14 +1,15 @@
--- Jarvis Inc — Consolidated Schema
--- =================================
+-- Jarvis Inc — Consolidated Schema v0.1.1
+-- ========================================
 -- All tables, indexes, RLS policies, and Realtime publication.
--- Consolidates migrations 001-007 into a single file.
--- Date: 2026-02-14
+-- Consolidates ALL migrations (001-011) into a single file.
+-- Date: 2026-02-22
 --
--- Tables (21):
+-- Tables (25):
 --   settings, agents, ceo, missions, audit_log, vault, approvals, skills,
 --   conversations, chat_messages, org_memory, conversation_summaries,
 --   mission_memory, agent_skills, scheduler_state, ceo_action_queue,
---   task_executions, agent_stats, llm_usage, notification_channels, channel_usage
+--   task_executions, agent_stats, llm_usage, notification_channels, channel_usage,
+--   archived_memories, skill_schedules, mission_rounds, agent_questions, test_runs
 
 -- ─── Extensions ──────────────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS vector;      -- pgvector for semantic search
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS public.agents (
   model      TEXT NOT NULL,
   desk_x     REAL DEFAULT NULL,
   desk_y     REAL DEFAULT NULL,
+  metadata   JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -69,7 +71,13 @@ CREATE TABLE IF NOT EXISTS public.missions (
   created_by       TEXT DEFAULT NULL,
   created_at       TIMESTAMPTZ DEFAULT now(),
   recurring_mode   TEXT DEFAULT NULL,         -- 'auto' or 'evaluate'
-  last_recurred_at TIMESTAMPTZ DEFAULT NULL
+  last_recurred_at TIMESTAMPTZ DEFAULT NULL,
+  scheduled_for    TIMESTAMPTZ DEFAULT NULL,
+  task_template    JSONB DEFAULT NULL,
+  current_round    INTEGER NOT NULL DEFAULT 1,
+  description      TEXT DEFAULT NULL,
+  max_runs         INTEGER DEFAULT NULL,
+  run_count        INTEGER NOT NULL DEFAULT 0
 );
 
 -- Audit log (append-only)
@@ -277,6 +285,63 @@ CREATE TABLE IF NOT EXISTS public.channel_usage (
   created_at  TIMESTAMPTZ DEFAULT now()
 );
 
+-- Mission Rounds (multi-round scoring)
+CREATE TABLE IF NOT EXISTS public.mission_rounds (
+  id              TEXT PRIMARY KEY,
+  mission_id      TEXT NOT NULL,
+  round_number    INTEGER NOT NULL DEFAULT 1,
+  agent_id        TEXT DEFAULT NULL,
+  status          TEXT NOT NULL DEFAULT 'in_progress',
+  quality_score       INTEGER DEFAULT NULL,
+  completeness_score  INTEGER DEFAULT NULL,
+  efficiency_score    INTEGER DEFAULT NULL,
+  overall_score       INTEGER DEFAULT NULL,
+  grade               TEXT DEFAULT NULL,
+  ceo_review          TEXT DEFAULT NULL,
+  ceo_recommendation  TEXT DEFAULT NULL,
+  rejection_feedback  TEXT DEFAULT NULL,
+  redo_strategy       TEXT DEFAULT NULL,
+  tokens_used     INTEGER NOT NULL DEFAULT 0,
+  cost_usd        REAL NOT NULL DEFAULT 0,
+  duration_ms     INTEGER DEFAULT NULL,
+  task_count      INTEGER NOT NULL DEFAULT 0,
+  started_at      TIMESTAMPTZ DEFAULT now(),
+  completed_at    TIMESTAMPTZ DEFAULT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Agent Questions (agents flag questions during task execution)
+CREATE TABLE IF NOT EXISTS public.agent_questions (
+  id                TEXT PRIMARY KEY,
+  task_execution_id TEXT NOT NULL,
+  mission_id        TEXT NOT NULL,
+  agent_id          TEXT NOT NULL,
+  question          TEXT NOT NULL,
+  context           TEXT DEFAULT NULL,
+  answer            TEXT DEFAULT NULL,
+  answered_by       TEXT DEFAULT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending',
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answered_at       TIMESTAMPTZ DEFAULT NULL
+);
+
+-- Test Runs (test lab results)
+CREATE TABLE IF NOT EXISTS public.test_runs (
+  id           TEXT PRIMARY KEY,
+  test_id      TEXT NOT NULL,
+  category     TEXT NOT NULL,
+  label        TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending',
+  mode         TEXT NOT NULL DEFAULT 'auto',
+  duration_ms  INTEGER,
+  output       JSONB,
+  verified_by  TEXT,
+  run_by       TEXT,
+  notes        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+
 -- ═════════════════════════════════════════════════════════════════════
 -- INDEXES
 -- ═════════════════════════════════════════════════════════════════════
@@ -299,6 +364,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_context       ON public.llm_usage(conte
 CREATE INDEX IF NOT EXISTS idx_llm_usage_mission       ON public.llm_usage(mission_id) WHERE mission_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_channel_usage_created   ON public.channel_usage(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_channel_usage_channel   ON public.channel_usage(channel_id);
+CREATE INDEX IF NOT EXISTS idx_test_runs_test_id       ON public.test_runs(test_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_runs_category      ON public.test_runs(category);
 
 -- ═════════════════════════════════════════════════════════════════════
 -- ROW LEVEL SECURITY
@@ -326,6 +393,9 @@ ALTER TABLE public.agent_stats            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.llm_usage              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notification_channels  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.channel_usage          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mission_rounds         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agent_questions        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.test_runs              ENABLE ROW LEVEL SECURITY;
 
 -- Single-tenant: both anon and authenticated get full access
 DO $$
@@ -338,7 +408,8 @@ BEGIN
     'org_memory', 'conversation_summaries', 'mission_memory',
     'agent_skills', 'scheduler_state', 'ceo_action_queue',
     'task_executions', 'agent_stats', 'llm_usage',
-    'notification_channels', 'channel_usage'
+    'notification_channels', 'channel_usage',
+    'mission_rounds', 'agent_questions', 'test_runs'
   ])
   LOOP
     EXECUTE format('
@@ -369,6 +440,9 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.ceo;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.ceo_action_queue;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.task_executions;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.mission_rounds;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.agent_questions;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.test_runs;
 
 -- ═════════════════════════════════════════════════════════════════════
 -- STORAGE BUCKETS

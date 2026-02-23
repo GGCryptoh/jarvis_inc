@@ -1,8 +1,14 @@
 import { createHash, createPublicKey, verify } from 'crypto';
 
 /**
- * Generate instance ID from repo URL (deterministic)
+ * Generate instance ID from public key (unique per installation).
+ * Falls back to repo URL for legacy instances without a key.
  */
+export function instanceIdFromKey(publicKey: string): string {
+  return createHash('sha256').update(publicKey).digest('hex');
+}
+
+/** @deprecated Use instanceIdFromKey — kept for legacy lookup */
 export function instanceIdFromRepo(repoUrl: string): string {
   return createHash('sha256').update(repoUrl.toLowerCase().trim()).digest('hex');
 }

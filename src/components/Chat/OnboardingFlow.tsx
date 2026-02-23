@@ -491,11 +491,29 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         2000,
       );
 
-      const firstSkill = getSkillById(FIRST_SKILL_ID)!;
+      const firstSkill = getSkillById(FIRST_SKILL_ID);
       const recommendedIds = recommendSkills(text);
       const recommended = recommendedIds
         .map(id => getSkillById(id))
         .filter((s): s is FullSkillDefinition => s !== undefined);
+
+      // If skills haven't synced yet (fresh install), skip straight to weather/research
+      if (!firstSkill) {
+        if (recommended.length > 0) {
+          const skillNames = recommended.map(s => s.name).join(', ');
+          await typeWithDelay(
+            `Based on your mission, capabilities like ${skillNames} will be useful. Skills are still syncing — you can enable them from the Skills page once they're ready.`,
+            2500,
+          );
+        } else {
+          await typeWithDelay(
+            `Skills are still syncing from the repo. Head to the Skills page in a moment to enable what you need.`,
+            2000,
+          );
+        }
+        await offerWeatherSkill();
+        return;
+      }
 
       // Check if the first skill is already enabled
       const existingSkills = await loadSkills();

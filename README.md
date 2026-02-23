@@ -48,6 +48,75 @@ This runs `setup --auto` (generates secrets, starts Docker, waits for all servic
 | `npm run build` | TypeScript check + Vite production build → `dist/` |
 | `npm run preview` | Preview production build locally |
 
+### Surviving a Mac Reboot
+
+Docker Desktop restarts containers automatically (`restart: unless-stopped`), but the Vite dev server needs to be restarted. Two options:
+
+**Option A: Launch Agent (recommended)**
+
+Create a macOS Launch Agent that runs `npm run jarvis` at login:
+
+```bash
+cat > ~/Library/LaunchAgents/com.jarvis.inc.plist << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.inc</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/npm</string>
+    <string>run</string>
+    <string>jarvis</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>REPLACE_WITH_JARVIS_PATH</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/jarvis.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/jarvis.err</string>
+</dict>
+</plist>
+PLIST
+```
+
+Edit the plist: replace `REPLACE_WITH_JARVIS_PATH` with your actual path (e.g. `/Users/you/jarvis_inc`), and fix the npm path if needed (`which npm`).
+
+```bash
+# Load it (runs at every login)
+launchctl load ~/Library/LaunchAgents/com.jarvis.inc.plist
+
+# To stop
+launchctl unload ~/Library/LaunchAgents/com.jarvis.inc.plist
+```
+
+**Option B: Login Item**
+
+```bash
+cat > ~/start-jarvis.sh << 'EOF'
+#!/bin/bash
+cd /path/to/jarvis_inc
+npm run jarvis >> /tmp/jarvis.log 2>&1
+EOF
+chmod +x ~/start-jarvis.sh
+```
+
+Then: **System Settings > General > Login Items > +** and select `~/start-jarvis.sh`.
+
+**Verify after reboot:**
+
+```bash
+docker ps | grep jarvis          # containers running?
+curl -s http://localhost:5173    # dev server up?
+tail -50 /tmp/jarvis.log         # check logs
+```
+
 ### Docker (Frontend Only)
 
 ```bash

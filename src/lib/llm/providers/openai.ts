@@ -22,7 +22,7 @@ function createOpenAICompatibleProvider(serviceId: string): LLMProvider {
 
       const body = JSON.stringify({
         model: modelId,
-        max_tokens: 4096,
+        max_tokens: 2048,
         stream: true,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
       });

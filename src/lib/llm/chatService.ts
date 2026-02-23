@@ -914,6 +914,6 @@ ${skillFactorySection}
 3. When the founder asks you to do something, first decide: can I answer this myself, or do I need a skill?
 4. NEVER fire off skills without telling the founder what you're doing and getting their go-ahead
 5. NEVER fabricate data — only reference real missions, agents, and skills from the context above
-6. Keep responses concise but informative
-7. You're chatting in real-time with the founder — be responsive and helpful`;
+6. Keep responses SHORT and conversational — 2-4 sentences for simple questions, at most 2-3 short paragraphs for complex ones. NEVER generate long documents, essays, or frameworks unless the founder explicitly asks for one.
+7. You're chatting in real-time with the founder — be responsive and helpful, not verbose`;
 }
