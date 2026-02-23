@@ -404,6 +404,13 @@ export async function saveApproval(approval: Omit<ApprovalRow, 'created_at'>): P
       status: approval.status,
       metadata: approval.metadata,
     });
+
+  // Fire-and-forget: notify Telegram if configured
+  if (approval.status === 'pending') {
+    import('./telegramApprovals').then(({ notifyTelegramApproval }) => {
+      notifyTelegramApproval(approval as ApprovalRow).catch(() => {});
+    }).catch(() => {});
+  }
 }
 
 export async function updateApprovalStatus(id: string, status: string): Promise<void> {
@@ -701,6 +708,22 @@ export async function saveSkill(id: string, enabled: boolean, model: string | nu
       model,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
+}
+
+export async function saveSkillOptions(id: string, optionsConfig: Record<string, unknown>): Promise<void> {
+  await getSupabase()
+    .from('skills')
+    .update({ options_config: optionsConfig, updated_at: new Date().toISOString() })
+    .eq('id', id);
+}
+
+export async function getSkillOptions(id: string): Promise<Record<string, unknown>> {
+  const { data } = await getSupabase()
+    .from('skills')
+    .select('options_config')
+    .eq('id', id)
+    .single();
+  return (data?.options_config as Record<string, unknown>) ?? {};
 }
 
 export async function updateSkillModel(id: string, model: string | null): Promise<void> {

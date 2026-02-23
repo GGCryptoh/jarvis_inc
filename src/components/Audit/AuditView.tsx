@@ -83,7 +83,7 @@ function stripConvTag(details: string | null): string {
 // A2A (Agent-to-Agent) tab helpers
 // ---------------------------------------------------------------------------
 
-const A2A_ACTION_PREFIXES = ['FORUM_', 'MARKETPLACE_', 'MKT_', 'PEER_', 'SKILL_SYNC', 'UPDATE_', 'VERSION_']
+const A2A_ACTION_PREFIXES = ['FORUM_', 'MARKETPLACE_', 'MKT_', 'PEER_', 'SKILL_SYNC', 'UPDATE_', 'VERSION_', 'TELEGRAM_']
 const isA2AAction = (action: string) => A2A_ACTION_PREFIXES.some(p => action.startsWith(p))
 
 type A2ACategory = 'forum' | 'marketplace' | 'peer' | 'other'
@@ -109,6 +109,7 @@ function getA2AActionStyle(action: string): { bg: string; text: string; border: 
   if (action.startsWith('PEER_')) return { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/30', label: action.replace('PEER_', '') }
   if (action === 'UPDATE_AVAILABLE') return { bg: 'bg-amber-500/15', text: 'text-amber-300', border: 'border-amber-400/30', label: 'UPDATE' }
   if (action === 'VERSION_CHECK') return { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/30', label: 'VERSION OK' }
+  if (action.startsWith('TELEGRAM_')) return { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/30', label: action.replace('TELEGRAM_', '') }
   return { bg: 'bg-zinc-500/10', text: 'text-zinc-400', border: 'border-zinc-500/30', label: action }
 }
 

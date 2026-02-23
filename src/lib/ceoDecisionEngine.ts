@@ -2014,6 +2014,25 @@ export async function evaluateCycle(): Promise<CycleResult> {
     console.warn('[CEODecisionEngine] Update check failed:', err);
   }
 
+  // 4f. Telegram approval polling (checks for callback_query responses)
+  try {
+    const { checkTelegramCallbacks } = await import('./telegramApprovals');
+    const telegramResult = await checkTelegramCallbacks();
+    if (telegramResult.resolved > 0) {
+      allActions.push({
+        id: `telegram-${Date.now()}`,
+        action_type: 'send_message',
+        payload: {
+          topic: 'telegram_approvals',
+          message: `Resolved ${telegramResult.resolved} approval(s) via Telegram.`,
+        },
+        priority: 3,
+      });
+    }
+  } catch (err) {
+    console.warn('[CEODecisionEngine] Telegram polling failed:', err);
+  }
+
   // 5. Build diagnostic result
   const result: CycleResult = {
     timestamp: new Date().toISOString(),
