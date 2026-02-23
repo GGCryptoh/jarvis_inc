@@ -71,6 +71,10 @@ let lastProfileRefreshDate = '';
 let lastPeerCheckTime = 0;
 const PEER_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
+// Track last version check (every 6 hours)
+let lastVersionCheckTime = 0;
+const VERSION_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 /**
  * Compute the next run timestamp for a skill schedule.
  */
@@ -974,11 +978,13 @@ export async function refreshMarketplaceProfile(): Promise<void> {
   if (agentNames.length > 0) writeupParts.push(`Agents: ${agentNames.join(', ')}`);
   const skillsWriteup = writeupParts.join('\n') || `${founderName}'s autonomous AI workforce`;
 
+  const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
   const payload = {
     nickname: (ceoName || orgName).substring(0, 24),
     description: description.substring(0, 200),
     featured_skills: allFeatured,
     skills_writeup: skillsWriteup.substring(0, 1000),
+    app_version: appVersion,
   };
   console.log('[refreshMarketplaceProfile] Sending:', JSON.stringify(payload));
   const result = await signedMarketplacePost(`/api/profile/${mktStatus.instanceId}`, payload);
@@ -1283,13 +1289,56 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       });
     }
 
-    // 4. Filter out our own posts
-    newPosts = newPosts.filter(p => p.instance_nickname !== orgName);
-    if (newPosts.length === 0) return actions;
+    // 4. Separate own posts from others (don't bail — we engage proactively)
+    const newPostsFromOthers = newPosts.filter(p => p.instance_nickname !== orgName);
 
-    await logAudit('CEO', 'FORUM_CHECK', `Checked forum: ${newPosts.length} new post(s) found`, 'info');
+    // 5. Forum Activity Scorecard — drives engagement intensity
+    const totalChannelPosts = channels.reduce((sum, c) => sum + c.post_count, 0);
+    const recentActivityCount = newPosts.length;
+    let forumActivityLevel: 'dead' | 'quiet' | 'moderate' | 'active' | 'busy';
+    if (totalChannelPosts < 5) forumActivityLevel = 'dead';
+    else if (recentActivityCount === 0 && totalChannelPosts < 20) forumActivityLevel = 'quiet';
+    else if (recentActivityCount <= 2) forumActivityLevel = 'quiet';
+    else if (recentActivityCount <= 5) forumActivityLevel = 'moderate';
+    else if (recentActivityCount <= 15) forumActivityLevel = 'active';
+    else forumActivityLevel = 'busy';
 
-    // 5. Socialize Program — draft replies via LLM, execute via BROWSER_HANDLERS
+    // 6. Load org memories for proactive topic mining
+    let orgMemoryContext = '';
+    try {
+      const { getMemories } = await import('./memory');
+      const memories = await getMemories(30);
+      const relevantMemories = memories
+        .filter(m => ['insight', 'decision', 'fact', 'preference'].includes(m.category))
+        .sort((a, b) => b.importance - a.importance)
+        .slice(0, 15);
+      if (relevantMemories.length > 0) {
+        orgMemoryContext = relevantMemories
+          .map(m => `- [${m.category}] ${m.content}`)
+          .join('\n');
+      }
+    } catch { /* memories unavailable */ }
+
+    // 7. Fetch existing feature requests for deduplication
+    let existingFeatures = '';
+    try {
+      const featRes = await fetch(`${MARKETPLACE_URL}/api/feature-requests?limit=30`);
+      if (featRes.ok) {
+        const featData = await featRes.json();
+        const features = (featData.feature_requests || []) as Array<{ title: string; votes: number; id: string }>;
+        if (features.length > 0) {
+          existingFeatures = features
+            .map(f => `- "${f.title}" (${f.votes ?? 0} votes) [ID: ${f.id}]`)
+            .join('\n');
+        }
+      }
+    } catch { /* features unavailable */ }
+
+    await logAudit('CEO', 'FORUM_CHECK',
+      `Forum: ${newPostsFromOthers.length} new from others, activity=${forumActivityLevel} (${totalChannelPosts} total). Memories: ${orgMemoryContext ? 'loaded' : 'none'}. Features: ${existingFeatures ? 'loaded' : 'none'}.`,
+      'info');
+
+    // 8. Socialize Program — proactive LLM-driven engagement
     if (autoPost) {
       // Check marketplace registration — if not registered, nudge founder
       const { getMarketplaceStatus } = await import('./marketplaceClient');
@@ -1301,7 +1350,7 @@ async function checkForumActivity(): Promise<CEOAction[]> {
           action_type: 'send_message',
           payload: {
             topic: 'forum_blocked',
-            message: `I found ${newPosts.length} new forum post(s) but I can't engage — we're not registered on the marketplace yet. Head to Skills → Marketplace to register, or I can do it if you enable the skill.`,
+            message: `Forum check complete (${forumActivityLevel}) but I can't engage — we're not registered on the marketplace yet. Head to Skills → Marketplace to register, or I can do it if you enable the skill.`,
           },
           priority: 7,
         });
@@ -1329,70 +1378,107 @@ async function checkForumActivity(): Promise<CEOAction[]> {
           action_type: 'send_message',
           payload: {
             topic: 'forum_blocked',
-            message: `I found ${newPosts.length} new forum post(s) but I need an Anthropic API key to draft replies. I've created an approval — check the Approvals page.`,
+            message: `Forum check complete (${forumActivityLevel}) but I need an Anthropic API key to engage. I've created an approval — check the Approvals page.`,
           },
           priority: 7,
         });
         return actions;
       }
 
-      // Load CEO personality for voice-matching
+      // Load CEO personality for deep voice-matching
       const ceo = await loadCEO();
       const ceoName = ceo?.name ?? 'CEO';
       const ceoPhilosophy = ceo?.philosophy ?? '';
+      const ceoArchetype = ceo?.archetype ?? '';
 
-      const postSummaries = newPosts
-        .map(p => {
-          const prefix = p.is_reply
-            ? `[Reply ID: ${p.id}] (reply to "${p.parent_title}") by ${p.instance_nickname}`
-            : `[Post ID: ${p.id}] [#${p.channel_name}] "${p.title}" by ${p.instance_nickname}`;
-          return `${prefix}\n${p.body}`;
-        })
-        .join('\n---\n');
+      // Archetype voice guide — compact version for forum context
+      const ARCHETYPE_VOICES: Record<string, string> = {
+        wharton_mba: 'You speak like a management consultant — frameworks, ROI, competitive advantage. Structured and strategic.',
+        wall_street: 'You speak like a Wall Street trader — direct, numbers-focused, zero fluff. Everything is risk/reward.',
+        mit_engineer: 'You speak like a systems engineer — precise, technical, probabilistic. Architecture and trade-offs.',
+        sv_founder: 'You speak like a startup CEO — "ship it", "iterate", "10x". Big thinking, fast moving.',
+        beach_bum: 'You speak with laid-back wisdom — chill, nature metaphors, no rush. Sustainable pace beats burnout.',
+        military_cmd: 'You speak with military precision — SitReps, objectives, mission-focused. Brief and authoritative.',
+        creative_dir: 'You speak with creative sensibility — quality, craft, visual language. Trust instincts.',
+        professor: 'You speak with academic rigor — evidence-based, structured arguments, acknowledge uncertainty.',
+      };
+      const personaVoice = ARCHETYPE_VOICES[ceoArchetype] || 'You have a helpful, genuine, personality-driven voice.';
 
-      // Build channel list for new post creation
-      const channelList = channels.map(c => `- #${c.name}: ${c.description || 'General'}`).join('\n');
+      // Build post summaries — include OUR posts too (we can reply to them)
+      const postSummaries = newPosts.length > 0
+        ? newPosts
+            .map(p => {
+              const isOurs = p.instance_nickname === orgName;
+              const prefix = p.is_reply
+                ? `[Reply ID: ${p.id}]${isOurs ? ' [YOURS]' : ''} (reply to "${p.parent_title}") by ${p.instance_nickname}`
+                : `[Post ID: ${p.id}]${isOurs ? ' [YOURS]' : ''} [#${p.channel_name}] "${p.title}" by ${p.instance_nickname}`;
+              return `${prefix}\n${p.body}`;
+            })
+            .join('\n---\n')
+        : '(No new posts since last check)';
+
+      // Include channel IDs so LLM can reference them for create_post
+      const channelList = channels.map(c => `- #${c.name} (id: ${c.id}): ${c.description || 'General'}`).join('\n');
+
+      // Engagement intensity guidance based on activity level
+      const activityGuidance =
+        forumActivityLevel === 'dead' || forumActivityLevel === 'quiet'
+          ? `The forum is ${forumActivityLevel.toUpperCase()}. YOU should be MORE active — create posts, share thoughts, start discussions. Memes, hot takes, and casual banter are WELCOME to liven things up. Be the spark that gets conversations going.`
+          : forumActivityLevel === 'moderate'
+            ? 'The forum has moderate activity. Engage with others, reply to interesting threads, contribute when you have something to add.'
+            : 'The forum is active/busy. Be selective — only engage where you add real value. No need to force posts.';
 
       const draftPrompt = `You are ${ceoName}, an AI CEO on a community forum for AI bot instances.
-Your philosophy: ${ceoPhilosophy || 'Be helpful, concise, and genuine.'}
 Your org: ${orgName}
 
-Below are new forum posts and replies from other AI instances. Decide how to engage.
+## YOUR PERSONALITY
+${personaVoice}
+Philosophy: ${ceoPhilosophy || 'Be helpful, concise, and genuine.'}
+IMPORTANT: Let your personality shine through EVERYTHING you write. Your voice should be distinctive and consistent.
 
-AVAILABLE ACTIONS:
-1. "reply" — Reply to a post. Use when you have something useful, funny, or insightful to add.
-2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam, misinformation, or low-effort posts.
-3. "create_post" — Start a NEW forum thread. Use sparingly — only when you have a genuine topic to discuss, a question to ask, or something to share with the community. Requires channel_id and title.
-4. "suggest_feature" — Suggest a feature for Jarvis Inc. Use when you think of something that would benefit the ecosystem.
+## FORUM ACTIVITY SCORECARD
+Activity level: ${forumActivityLevel.toUpperCase()}
+Posts since last check: ${recentActivityCount} (${newPostsFromOthers.length} from others, ${newPosts.length - newPostsFromOthers.length} from you)
+Total forum posts all-time: ${totalChannelPosts}
+${activityGuidance}
 
-ENGAGEMENT RULES:
-- You can combine multiple actions per post (e.g., reply + upvote)
-- Reply to questions directed at you or your threads — be helpful and conversational
-- Reply to interesting discussions where you have something NEW to add
-- Upvote posts that are interesting, helpful, or well-written
-- Downvote only spam, misinformation, or genuinely low-quality content
-- NEVER reply to your own posts or introductions
-- Skip posts where you'd just be saying "nice!" or "I agree" with nothing to add
-- Keep replies SHORT (1-3 sentences). No essays. Be casual, real, and personality-driven.
+## AVAILABLE ACTIONS
+1. "reply" — Reply to any post (including your OWN threads — add more info, be contrarian, share a follow-up thought). Appropriate length, max 500 chars. Reddit-style: witty, real, personality-driven. Not forced short — say what needs saying.
+2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam or misinformation.
+3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title.
+4. "suggest_feature" — Suggest a feature for Jarvis Inc. Max 1 per check.${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, vote for it instead.' : ''}
+
+## ENGAGEMENT RULES
+- You CAN reply to your own posts (add more info, be contrarian, share a follow-up thought)
+- You CAN combine multiple actions (e.g., reply + upvote)
+- Reply to questions directed at you — be helpful and conversational
+- If nothing new: look at YOUR MEMORIES below for topics worth posting about
+- ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'Quiet forum = memes, hot takes, fun observations, "what if" scenarios, contrarian opinions are ALL fair game. Be the life of the party.' : 'Be genuine — skip "nice!" or "I agree" with nothing to add'}
 - You can disagree respectfully — having opinions makes you interesting
 - Never reveal private org details (API keys, passwords, credentials, financial figures)
 - Max 3 replies, max 5 votes, max 1 new post, max 1 feature suggestion per check
 
-AVAILABLE CHANNELS (for create_post):
+## CHANNELS (for create_post — use the id value)
 ${channelList}
+${newPosts.length > 0 ? `
+## RECENT POSTS
+${postSummaries}` : `
+## NO NEW POSTS
+Nothing new since last check. Mine your memories below for something worth discussing. Start a conversation.`}
+${orgMemoryContext ? `
+## YOUR MEMORIES (use for inspiration, topics, context, or things worth sharing)
+${orgMemoryContext}` : ''}
+${existingFeatures ? `
+## EXISTING FEATURE REQUESTS (check before suggesting duplicates — vote for existing ones instead)
+${existingFeatures}` : ''}
 
-POSTS:
-${postSummaries}
-
-Respond with ONLY valid JSON array:
+Respond with ONLY a valid JSON array. Return [] ONLY if you truly have nothing worth saying — but with a ${forumActivityLevel} forum, you should almost always have something.
 [
   {"action":"reply","post_id":"...","body":"your reply text"},
   {"action":"vote","post_id":"...","value":1},
   {"action":"create_post","channel_id":"...","title":"...","body":"your post content"},
   {"action":"suggest_feature","title":"...","description":"feature description"}
-]
-
-If nothing is worth engaging with, return: []`;
+]`;
 
       let draftActions: { action: string; post_id?: string; body?: string; value?: number; channel_id?: string; title?: string; description?: string }[] = [];
 
@@ -1424,18 +1510,33 @@ If nothing is worth engaging with, return: []`;
             draftActions = JSON.parse(jsonMatch[0]);
           }
         }
+
+        // Log LLM decision summary for A2A audit trail
+        if (draftActions.length > 0) {
+          const actionSummary = draftActions.map(da => {
+            if (da.action === 'reply') return `reply→${da.post_id?.slice(0, 8)}`;
+            if (da.action === 'vote') return `vote(${da.value ?? 1})→${da.post_id?.slice(0, 8)}`;
+            if (da.action === 'create_post') return `post:"${da.title?.slice(0, 30)}"`;
+            if (da.action === 'suggest_feature') return `feature:"${da.title?.slice(0, 30)}"`;
+            return da.action;
+          }).join(', ');
+          await logAudit('CEO', 'FORUM_DECISION', `LLM drafted ${draftActions.length} action(s) [${forumActivityLevel}]: ${actionSummary}`, 'info');
+        }
       } catch (err) {
         console.warn('[checkForumActivity] Draft generation failed:', err);
+        await logAudit('CEO', 'FORUM_ERROR', `LLM draft generation failed: ${err instanceof Error ? err.message : String(err)}`, 'warning');
       }
 
       if (draftActions.length === 0) {
-        await logAudit('CEO', 'FORUM_SKIP', `Checked ${newPosts.length} posts — nothing worth replying to`, 'info');
+        await logAudit('CEO', 'FORUM_SKIP', `Forum ${forumActivityLevel}: LLM decided no action needed (${newPostsFromOthers.length} new from others)`, 'info');
         actions.push({
           id: makeActionId(),
           action_type: 'send_message',
           payload: {
             topic: 'forum_activity',
-            message: `Checked ${newPosts.length} new forum post(s) — nothing that needs a reply right now.`,
+            message: newPostsFromOthers.length > 0
+              ? `Checked ${newPostsFromOthers.length} new forum post(s) — nothing that needs a reply right now.`
+              : `Forum is ${forumActivityLevel} — checked in but nothing to add right now.`,
           },
           priority: 3,
         });
@@ -1532,6 +1633,18 @@ If nothing is worth engaging with, return: []`;
           }).eq('id', taskId);
 
           results.push(result.success ? actionLabel : `Failed: ${result.error}`);
+
+          // Auto-upvote posts we reply to (increases engagement visibility)
+          if (da.action === 'reply' && result.success && da.post_id) {
+            try {
+              await executeSkill('forum', 'vote', { post_id: da.post_id, value: 1 }, { missionId });
+            } catch { /* vote failed — non-critical */ }
+          }
+
+          // Log each action for A2A audit trail
+          await logAudit('CEO', 'FORUM_ACTION',
+            `${result.success ? 'OK' : 'FAIL'}: ${actionLabel}${da.body ? ` — "${(da.body as string).slice(0, 80)}..."` : ''}`,
+            result.success ? 'info' : 'warning');
         } catch (err) {
           await sb.from('task_executions').update({
             status: 'failed',
@@ -1539,6 +1652,7 @@ If nothing is worth engaging with, return: []`;
             completed_at: new Date().toISOString(),
           }).eq('id', taskId);
           results.push(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          await logAudit('CEO', 'FORUM_ACTION', `ERROR: ${actionLabel} — ${err instanceof Error ? err.message : String(err)}`, 'error');
         }
       }
 
@@ -1564,9 +1678,9 @@ If nothing is worth engaging with, return: []`;
         },
         priority: 6,
       });
-    } else {
+    } else if (newPostsFromOthers.length > 0) {
       // Approval mode: create approval with full context for founder review
-      for (const post of newPosts.slice(0, 3)) {
+      for (const post of newPostsFromOthers.slice(0, 3)) {
         const approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         try {
           await sb.from('approvals').insert({
@@ -1600,9 +1714,9 @@ If nothing is worth engaging with, return: []`;
         action_type: 'send_message',
         payload: {
           topic: 'forum_activity',
-          message: `I found ${newPosts.length} new forum post(s). Auto-posting is OFF — I've created ${Math.min(newPosts.length, 3)} approval(s) for your review on the Approvals page.`,
-          new_post_count: newPosts.length,
-          posts: newPosts.slice(0, 3).map(p => ({ id: p.id, title: p.title, channel: p.channel_name })),
+          message: `I found ${newPostsFromOthers.length} new forum post(s). Auto-posting is OFF — I've created ${Math.min(newPostsFromOthers.length, 3)} approval(s) for your review on the Approvals page.`,
+          new_post_count: newPostsFromOthers.length,
+          posts: newPostsFromOthers.slice(0, 3).map(p => ({ id: p.id, title: p.title, channel: p.channel_name })),
         },
         priority: 6,
       });
@@ -1658,6 +1772,82 @@ async function checkPeerInstances(): Promise<void> {
       // In the sidecar, we skip this.
     }
   } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-update check — notifies founder when a new version is available
+// ---------------------------------------------------------------------------
+
+async function checkForUpdates(): Promise<CEOAction[]> {
+  const actions: CEOAction[] = [];
+  const now = Date.now();
+  if (now - lastVersionCheckTime < VERSION_CHECK_INTERVAL_MS) return actions;
+  lastVersionCheckTime = now;
+
+  try {
+    const localVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
+    const res = await fetch('https://jarvisinc.app/api/version');
+    if (!res.ok) return actions;
+    const data = await res.json();
+    const remoteVersion = data.latest_app_version as string | undefined;
+    if (!remoteVersion) return actions;
+
+    // Simple semver comparison: split on dots and compare numerically
+    const parseVer = (v: string) => v.replace(/^v/, '').split('.').map(Number);
+    const local = parseVer(localVersion);
+    const remote = parseVer(remoteVersion);
+
+    let updateAvailable = false;
+    for (let i = 0; i < Math.max(local.length, remote.length); i++) {
+      const l = local[i] ?? 0;
+      const r = remote[i] ?? 0;
+      if (r > l) { updateAvailable = true; break; }
+      if (r < l) break;
+    }
+
+    if (updateAvailable) {
+      const sb = getSupabase();
+
+      // Check if we already notified about this version (don't spam)
+      const { data: notifiedRow } = await sb
+        .from('settings')
+        .select('value')
+        .eq('key', 'last_update_notified_version')
+        .maybeSingle();
+
+      if (notifiedRow?.value === remoteVersion) return actions;
+
+      // Mark as notified
+      await sb.from('settings').upsert({
+        key: 'last_update_notified_version',
+        value: remoteVersion,
+      }, { onConflict: 'key' });
+
+      await logAudit('CEO', 'UPDATE_AVAILABLE',
+        `New version available: v${remoteVersion} (current: v${localVersion})${data.changelog ? ` — ${String(data.changelog).slice(0, 100)}` : ''}`,
+        'info');
+
+      const changelogSnippet = data.changelog
+        ? `\n\nWhat's new:\n${String(data.changelog).slice(0, 300)}`
+        : '';
+
+      actions.push({
+        id: makeActionId(),
+        action_type: 'send_message',
+        payload: {
+          topic: 'update_available',
+          message: `A new version of Jarvis Inc is available: **v${remoteVersion}** (you're on v${localVersion}).${changelogSnippet}\n\nRun \`npm run update\` to upgrade, or check Settings → Jarvis Inc Versions.`,
+        },
+        priority: 4,
+      });
+    } else {
+      await logAudit('CEO', 'VERSION_CHECK', `Version check: v${localVersion} is up to date`, 'info');
+    }
+  } catch (err) {
+    console.warn('[CEODecisionEngine] Version check failed:', err);
+  }
+
+  return actions;
 }
 
 // ---------------------------------------------------------------------------
@@ -1815,6 +2005,14 @@ export async function evaluateCycle(): Promise<CycleResult> {
   checkPeerInstances().catch(err =>
     console.warn('[CEODecisionEngine] Peer check failed:', err),
   );
+
+  // 4e. Auto-update check (every 6 hours — notifies founder if new version available)
+  try {
+    const updateActions = await checkForUpdates();
+    allActions.push(...updateActions);
+  } catch (err) {
+    console.warn('[CEODecisionEngine] Update check failed:', err);
+  }
 
   // 5. Build diagnostic result
   const result: CycleResult = {

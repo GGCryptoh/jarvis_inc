@@ -337,6 +337,7 @@ export async function registerOnMarketplace(
   const timestamp = Date.now();
 
   // Build payload (without signature — added after signing)
+  const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
   const payload: Record<string, unknown> = {
     nickname: `${orgName.substring(0, 19)}-${Math.random().toString(36).substring(2, 6)}`,
     description: description.substring(0, 200),
@@ -345,6 +346,7 @@ export async function registerOnMarketplace(
     avatar_border: '#ff79c6',
     featured_skills: featuredSkills,
     skills_writeup: skillsWriteup.substring(0, 1000),
+    app_version: appVersion,
     public_key: publicKeyBase64,
     timestamp,
   };
