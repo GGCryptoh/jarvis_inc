@@ -338,8 +338,6 @@ export async function registerOnMarketplace(
 
   // Build payload (without signature — added after signing)
   const payload: Record<string, unknown> = {
-    repo_url: 'https://github.com/GGCryptoh/jarvis_inc',
-    repo_type: 'github',
     nickname: `${orgName.substring(0, 19)}-${Math.random().toString(36).substring(2, 6)}`,
     description: description.substring(0, 200),
     avatar_color: '#50fa7b',

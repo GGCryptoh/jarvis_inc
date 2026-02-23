@@ -90,26 +90,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (
-      !body.repo_url ||
-      (!body.repo_url.startsWith('https://github.com/') &&
-        !body.repo_url.startsWith('https://gitlab.com/'))
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            'repo_url must start with https://github.com/ or https://gitlab.com/',
-        },
-        { status: 400 }
-      );
-    }
-
     // --- Generate instance ID from public key (unique per installation) ---
     const instanceId = instanceIdFromKey(body.public_key);
 
     const instance = await upsertInstance({
       id: instanceId,
-      repo_url: body.repo_url,
+      repo_url: body.repo_url || '',
       repo_type: body.repo_type || 'github',
       nickname: body.nickname,
       description: body.description || '',

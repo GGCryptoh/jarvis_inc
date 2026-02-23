@@ -12,7 +12,7 @@ async function setup() {
   await sql`
     CREATE TABLE IF NOT EXISTS instances (
       id              TEXT PRIMARY KEY,
-      repo_url        TEXT NOT NULL UNIQUE,
+      repo_url        TEXT DEFAULT '',
       repo_type       TEXT NOT NULL DEFAULT 'github',
       nickname        TEXT NOT NULL,
       description     TEXT NOT NULL DEFAULT '',
