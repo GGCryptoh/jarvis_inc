@@ -11,6 +11,7 @@
 
 import { createInterface } from 'readline';
 import { createHmac, randomBytes } from 'crypto';
+import { createServer } from 'net';
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -65,6 +66,40 @@ function generatePassword(length = 20) {
   return Array.from(randomBytes(length))
     .map(b => chars[b % chars.length])
     .join('');
+}
+
+// ─── Port Configuration ────────────────────────────────────
+// Module-level port state — set during scanning or from existing .env
+let activeKongPort = 8000;
+let activeGatewayPort = 3001;
+
+/** Check if a TCP port is available on 127.0.0.1 */
+function checkPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+/** Find an available port starting from preferred, scanning upward */
+async function findAvailablePort(preferred, maxAttempts = 20) {
+  for (let offset = 0; offset < maxAttempts; offset++) {
+    const port = preferred + offset;
+    if (await checkPortAvailable(port)) return port;
+  }
+  return preferred; // fallback to preferred
+}
+
+/** Extract port config from existing .env content */
+function extractPortsFromEnv(envContent) {
+  const kong = envContent.match(/^KONG_HTTP_PORT=(\d+)$/m);
+  if (kong) activeKongPort = parseInt(kong[1], 10);
+  const gw = envContent.match(/^GATEWAY_PORT=(\d+)$/m);
+  if (gw) activeGatewayPort = parseInt(gw[1], 10);
 }
 
 // ─── Secret Generation ──────────────────────────────────────
@@ -350,10 +385,10 @@ async function healthCheck(domain, tls) {
   const proto = tls === 'off' ? 'http' : 'https';
   const services = [
     { name: 'Jarvis Frontend', url: `${proto}://${domain}/` },
-    { name: 'Supabase API (Kong)', url: `http://localhost:8000/rest/v1/` },
-    { name: 'Supabase Auth (GoTrue)', url: `http://localhost:8000/auth/v1/health` },
-    { name: 'Edge Functions', url: `http://localhost:8000/functions/v1/health`, optional: true },
-    { name: 'Supabase Storage', url: `http://localhost:8000/storage/v1/status`, optional: true },
+    { name: 'Supabase API (Kong)', url: `http://localhost:${activeKongPort}/rest/v1/` },
+    { name: 'Supabase Auth (GoTrue)', url: `http://localhost:${activeKongPort}/auth/v1/health` },
+    { name: 'Edge Functions', url: `http://localhost:${activeKongPort}/functions/v1/health`, optional: true },
+    { name: 'Supabase Storage', url: `http://localhost:${activeKongPort}/storage/v1/status`, optional: true },
     { name: 'Supabase Studio', url: `${proto}://studio.${domain}/` },
   ];
 
@@ -540,10 +575,10 @@ async function waitForServices(domain, tls) {
   // Phase 2: Wait for HTTP services via Kong directly (no Caddy/TLS dependency)
   // GoTrue needs extra time on fresh installs — it runs its own migrations on first boot.
   const httpServices = [
-    { name: 'Kong API Gateway', url: `http://localhost:8000/rest/v1/`, timeout: 60000 },
-    { name: 'GoTrue Auth', url: `http://localhost:8000/auth/v1/health`, timeout: 90000 },
-    { name: 'Edge Functions', url: `http://localhost:8000/functions/v1/health`, optional: true, timeout: 20000 },
-    { name: 'Supabase Storage', url: `http://localhost:8000/storage/v1/status`, optional: true, timeout: 20000 },
+    { name: 'Kong API Gateway', url: `http://localhost:${activeKongPort}/rest/v1/`, timeout: 60000 },
+    { name: 'GoTrue Auth', url: `http://localhost:${activeKongPort}/auth/v1/health`, timeout: 90000 },
+    { name: 'Edge Functions', url: `http://localhost:${activeKongPort}/functions/v1/health`, optional: true, timeout: 20000 },
+    { name: 'Supabase Storage', url: `http://localhost:${activeKongPort}/storage/v1/status`, optional: true, timeout: 20000 },
   ];
 
   for (const svc of httpServices) {
@@ -559,8 +594,8 @@ async function waitForServices(domain, tls) {
   }
 
   // If GoTrue or Kong didn't come up, give one more restart attempt
-  const gotrueOk = await checkService('GoTrue', 'http://localhost:8000/auth/v1/health', 3000);
-  const kongOk = await checkService('Kong', 'http://localhost:8000/rest/v1/', 3000);
+  const gotrueOk = await checkService('GoTrue', `http://localhost:${activeKongPort}/auth/v1/health`, 3000);
+  const kongOk = await checkService('Kong', `http://localhost:${activeKongPort}/rest/v1/`, 3000);
   if (!gotrueOk || !kongOk) {
     console.log(`  ${dim('⟳')} Some services still starting — restarting once more...`);
     try {
@@ -782,7 +817,7 @@ async function seedIntelligence(anonKey) {
     const content = raw.replace(/<!--[\s\S]*?-->/g, '').trim();
 
     try {
-      const res = await fetch('http://localhost:8000/rest/v1/settings', {
+      const res = await fetch(`http://localhost:${activeKongPort}/rest/v1/settings`, {
         method: 'POST',
         headers: {
           'apikey': anonKey,
@@ -817,11 +852,11 @@ function writeViteEnv(domain, tls, anonKey) {
   // For local dev, point directly at Kong (HTTP) to avoid self-signed TLS issues.
   // Production builds use Caddy (HTTPS) via api.${domain}.
   const content = `# Generated by setup.mjs — Supabase connection for Vite dev server
-VITE_SUPABASE_URL=http://localhost:8000
+VITE_SUPABASE_URL=http://localhost:${activeKongPort}
 VITE_SUPABASE_ANON_KEY=${anonKey}
 `;
   writeFileSync(viteEnvPath, content);
-  console.log(`  ${green('✓')} ${bold('.env.development written')} ${dim('(Vite → Kong on localhost:8000)')}`);
+  console.log(`  ${green('✓')} ${bold('.env.development written')} ${dim(`(Vite → Kong on localhost:${activeKongPort})`)}`);
 }
 
 // ─── Hosts File ─────────────────────────────────────────────
@@ -987,6 +1022,7 @@ async function main() {
       process.exit(1);
     }
     const env = readFileSync(ENV_PATH, 'utf-8');
+    extractPortsFromEnv(env);
     const domain = env.match(/^DOMAIN=(.+)$/m)?.[1] || 'jarvis.local';
     const tls = env.match(/^CADDY_TLS=(.*)$/m)?.[1] || 'internal';
     if (domain.endsWith('.local') || !domain.includes('.')) {
@@ -1002,6 +1038,7 @@ async function main() {
     if (AUTO_MODE) {
       console.log(dim('  Existing .env found — reusing.'));
       const env = readFileSync(ENV_PATH, 'utf-8');
+      extractPortsFromEnv(env);
       const domain = env.match(/^DOMAIN=(.+)$/m)?.[1] || 'jarvis.local';
       const tls = env.match(/^CADDY_TLS=(.*)$/m)?.[1] || 'internal';
       const anonKey = env.match(/^ANON_KEY=(.+)$/m)?.[1] || '';
@@ -1024,6 +1061,7 @@ async function main() {
     if (overwrite.toLowerCase() !== 'y') {
       console.log(dim('  Keeping existing .env.'));
       const env = readFileSync(ENV_PATH, 'utf-8');
+      extractPortsFromEnv(env);
       const domain = env.match(/^DOMAIN=(.+)$/m)?.[1] || 'jarvis.local';
       const tls = env.match(/^CADDY_TLS=(.*)$/m)?.[1] || 'internal';
       const anonKey = env.match(/^ANON_KEY=(.+)$/m)?.[1] || '';
@@ -1114,9 +1152,43 @@ async function main() {
   const serviceRoleKey = generateJWT(jwtSecret, 'service_role');
   console.log(`  ${green('✓')} Service role key generated`);
 
+  // ─── Port Scanning ─────────────────────────────
+  console.log('');
+  console.log(gold('  ── PORT SCAN ──'));
+
+  const portDefaults = {
+    POSTGRES_PORT: 5432,
+    KONG_HTTP_PORT: 8000,
+    GATEWAY_PORT: 3001,
+    CADDY_HTTP_PORT: 80,
+    CADDY_HTTPS_PORT: 443,
+  };
+  const ports = {};
+  for (const [name, defaultPort] of Object.entries(portDefaults)) {
+    const available = await checkPortAvailable(defaultPort);
+    if (available) {
+      ports[name] = defaultPort;
+      console.log(`  ${green('✓')} ${name} ${dim(`= ${defaultPort}`)}`);
+    } else {
+      const alt = await findAvailablePort(defaultPort + 1);
+      ports[name] = alt;
+      console.log(`  ${gold('⚡')} ${name} ${dim(`${defaultPort} busy → ${alt}`)}`);
+    }
+  }
+
+  // Update module-level ports for use in health checks
+  activeKongPort = ports.KONG_HTTP_PORT;
+  activeGatewayPort = ports.GATEWAY_PORT;
+
+  // Generate unique COMPOSE_PROJECT_NAME so two stacks don't collide
+  const composeProjectName = `jarvis-${randomBytes(2).toString('hex')}`;
+  console.log(`  ${green('✓')} COMPOSE_PROJECT_NAME ${dim(`= ${composeProjectName}`)}`);
+
   // ─── Write .env ─────────────────────────────
   const envContent = `# Jarvis Inc — Generated by setup.mjs
 # ${new Date().toISOString()}
+
+COMPOSE_PROJECT_NAME=${composeProjectName}
 
 DOMAIN=${domain}
 CADDY_TLS=${tls}
@@ -1127,7 +1199,12 @@ STUDIO_PASS_HASH=${studioHash.replace(/\$/g, '$$$$')}
 
 POSTGRES_PASSWORD=${pgPassword}
 POSTGRES_DB=postgres
-POSTGRES_PORT=5432
+POSTGRES_PORT=${ports.POSTGRES_PORT}
+
+KONG_HTTP_PORT=${ports.KONG_HTTP_PORT}
+GATEWAY_PORT=${ports.GATEWAY_PORT}
+CADDY_HTTP_PORT=${ports.CADDY_HTTP_PORT}
+CADDY_HTTPS_PORT=${ports.CADDY_HTTPS_PORT}
 
 JWT_SECRET=${jwtSecret}
 JWT_EXP=3600

@@ -106,6 +106,8 @@ export async function POST(request: NextRequest) {
       skills_writeup: body.skills_writeup || '',
       public_key: body.public_key,
       ip_hash: ipHash,
+      local_ports: body.local_ports || null,
+      lan_hostname: body.lan_hostname || null,
     });
 
     return NextResponse.json(

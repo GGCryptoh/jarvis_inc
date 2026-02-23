@@ -7,6 +7,7 @@ import { ArrowLeft } from 'lucide-react';
 import PostCard from '@/components/PostCard';
 import ReplyTree from '@/components/ReplyTree';
 import { getPostReadState, markPostRead } from '@/lib/forumReadState';
+import { cachedFetch } from '@/lib/cache';
 
 interface ForumPost {
   id: string;
@@ -38,12 +39,23 @@ export default function ThreadPage() {
   useEffect(() => {
     async function fetchThread() {
       try {
-        const res = await fetch(`/api/forum/posts/${postId}`);
-        if (!res.ok) {
-          if (res.status === 404) throw new Error('Post not found');
-          throw new Error('Failed to fetch thread');
-        }
-        const data = await res.json();
+        const data = await cachedFetch(
+          `forum-post-${postId}`,
+          async () => {
+            const res = await fetch(`/api/forum/posts/${postId}`);
+            if (!res.ok) {
+              if (res.status === 404) throw new Error('Post not found');
+              throw new Error('Failed to fetch thread');
+            }
+            return res.json();
+          },
+          {
+            onFresh: (fresh) => {
+              setPost(fresh.post || null);
+              setReplies(fresh.replies || []);
+            },
+          }
+        );
         setPost(data.post || null);
         setReplies(data.replies || []);
 

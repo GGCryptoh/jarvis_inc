@@ -30,7 +30,7 @@ export default function GoogleOAuthWizard({
   const clientVaultService = `${providerName} OAuth Client`;
   const redirectUri = `${window.location.origin}/oauth/callback`;
 
-  // Check for existing client credentials on mount
+  // Check for existing client credentials on mount — skip to step 3 if found
   useEffect(() => {
     (async () => {
       const entry = await getVaultEntryByService(clientVaultService);
@@ -41,6 +41,8 @@ export default function GoogleOAuthWizard({
             setClientId(creds.client_id);
             setClientSecret(creds.client_secret);
             setExistingClient(true);
+            // Auto-skip to authorize step — credentials are already saved
+            setStep(3);
           }
         } catch { /* not JSON — ignore */ }
       }
@@ -329,6 +331,17 @@ export default function GoogleOAuthWizard({
                 <p className="text-sm text-jarvis-text leading-relaxed">
                   Click below to authorize Jarvis to access your <span className="text-cyan-400 font-medium">{skillName}</span> data.
                 </p>
+                <div className="flex items-start gap-2 px-3 py-2.5 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <AlertCircle size={14} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-yellow-300 leading-relaxed">
+                    <span className="font-semibold">Scope Notice:</span> This skill requests{' '}
+                    <span className="font-medium">{oauthConfig.scopes?.some(s => s.includes('readonly')) ? 'read-only' : 'full'} access</span>.
+                    {oauthConfig.scopes?.some(s => s.includes('readonly'))
+                      ? ' Jarvis can only read data — it cannot send emails, create events, or modify anything.'
+                      : ' Jarvis will have full read/write access. Only authorize this if you want Jarvis to take actions on your behalf.'}
+                    {' '}In Google&apos;s consent screen, review the requested permissions before granting access.
+                  </div>
+                </div>
                 <p className="text-xs text-jarvis-muted leading-relaxed">
                   A Google sign-in popup will open. After you grant access, the window will close automatically.
                 </p>

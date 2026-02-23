@@ -15,6 +15,8 @@ export interface JarvisInstance {
   registered_at: string;
   updated_at: string;
   ip_hash: string; // sha256(ip) for rate limiting
+  local_ports: Record<string, unknown> | null; // e.g. { "dashboard": 5173, "gateway": 3001 }
+  lan_hostname: string | null; // e.g. "geoffs-mac.local"
 }
 
 export interface FeatureRequest {
@@ -61,6 +63,8 @@ export interface RegisterPayload {
   public_key: string;
   timestamp: number;
   signature: string; // Ed25519 signature of the payload
+  local_ports?: Record<string, unknown> | null; // optional peer discovery ports
+  lan_hostname?: string | null; // optional LAN hostname
 }
 
 export interface HeartbeatPayload {

@@ -28,7 +28,9 @@ export async function GET(
 
     const posts = await listChannelPosts(slug, since, limit, offset);
 
-    return NextResponse.json({ channel, posts });
+    const res = NextResponse.json({ channel, posts });
+    res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    return res;
   } catch (error) {
     console.error('List channel posts error:', error);
     return NextResponse.json(

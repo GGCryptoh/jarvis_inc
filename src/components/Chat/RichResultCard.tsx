@@ -38,6 +38,21 @@ const DOCUMENT_RE = /https?:\/\/\S+\.(pdf|docx?|xlsx?|csv)(\?\S*)?/gi;
 const GENERIC_URL_RE = /https?:\/\/\S+/gi;
 const COLLATERAL_RE = /collateral/i;
 
+/** Strip trailing punctuation that the LLM often appends to URLs (parens, commas, periods, brackets) */
+function cleanUrl(raw: string): string {
+  // Strip trailing chars that are almost never part of a real URL path
+  let url = raw.replace(/[),.:;!?\]}>'"]+$/, '');
+  // Balance parens: if there are more closing than opening, strip the extras from the end
+  const opens = (url.match(/\(/g) || []).length;
+  const closes = (url.match(/\)/g) || []).length;
+  if (closes > opens) {
+    for (let i = 0; i < closes - opens; i++) {
+      url = url.replace(/\)$/, '');
+    }
+  }
+  return url;
+}
+
 /** Scan message text for rich content (images, docs, links, collateral references) */
 export function detectRichContent(text: string): DetectedContent[] {
   const results: DetectedContent[] = [];
@@ -54,10 +69,11 @@ export function detectRichContent(text: string): DetectedContent[] {
   while ((m = IMAGE_RE.exec(text)) !== null) {
     if (!isConsumed(m.index, m.index + m[0].length)) {
       consume(m.index, m.index + m[0].length);
+      const url = cleanUrl(m[0]);
       results.push({
         type: 'image',
-        url: m[0],
-        label: extractFilename(m[0]),
+        url,
+        label: extractFilename(url),
       });
     }
   }
@@ -80,11 +96,12 @@ export function detectRichContent(text: string): DetectedContent[] {
   while ((m = DOCUMENT_RE.exec(text)) !== null) {
     if (!isConsumed(m.index, m.index + m[0].length)) {
       consume(m.index, m.index + m[0].length);
-      const filename = extractFilename(m[0]);
+      const url = cleanUrl(m[0]);
+      const filename = extractFilename(url);
       const ext = filename.split('.').pop()?.toLowerCase() ?? '';
       results.push({
         type: 'document',
-        url: m[0],
+        url,
         label: filename,
         mimeType: ext,
       });
@@ -96,7 +113,7 @@ export function detectRichContent(text: string): DetectedContent[] {
   while ((m = GENERIC_URL_RE.exec(text)) !== null) {
     if (!isConsumed(m.index, m.index + m[0].length)) {
       consume(m.index, m.index + m[0].length);
-      const url = m[0];
+      const url = cleanUrl(m[0]);
 
       // Check if nearby text mentions collateral
       const vicinity = text.slice(Math.max(0, m.index - 60), m.index + m[0].length + 60);

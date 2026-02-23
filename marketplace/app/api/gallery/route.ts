@@ -18,7 +18,9 @@ export async function GET(request: NextRequest) {
 
     const instances = await listInstances(limit, offset);
 
-    return NextResponse.json({ instances });
+    const res = NextResponse.json({ instances });
+    res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    return res;
   } catch (error) {
     console.error('Gallery error:', error);
     return NextResponse.json(

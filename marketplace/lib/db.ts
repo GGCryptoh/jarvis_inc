@@ -60,6 +60,10 @@ export async function initDB() {
   await sql`CREATE INDEX IF NOT EXISTS idx_instances_ip_hash ON instances(ip_hash)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_instances_heartbeat ON instances(last_heartbeat)`;
 
+  // Peer discovery columns
+  await sql`ALTER TABLE instances ADD COLUMN IF NOT EXISTS local_ports JSONB DEFAULT NULL`;
+  await sql`ALTER TABLE instances ADD COLUMN IF NOT EXISTS lan_hostname TEXT DEFAULT NULL`;
+
   // Persistent rate limiting table
   await sql`
     CREATE TABLE IF NOT EXISTS rate_limits (
@@ -215,16 +219,22 @@ export async function upsertInstance(data: {
   skills_writeup: string;
   public_key: string;
   ip_hash: string;
+  local_ports?: Record<string, unknown> | null;
+  lan_hostname?: string | null;
 }) {
   const sql = getSQL();
   const rows = await sql`
     INSERT INTO instances (id, repo_url, repo_type, nickname, description,
       avatar_color, avatar_icon, avatar_border, featured_skills,
-      skills_writeup, public_key, ip_hash, online, last_heartbeat)
+      skills_writeup, public_key, ip_hash, local_ports, lan_hostname,
+      online, last_heartbeat)
     VALUES (${data.id}, ${data.repo_url}, ${data.repo_type}, ${data.nickname},
       ${data.description}, ${data.avatar_color}, ${data.avatar_icon},
       ${data.avatar_border}, ${data.featured_skills}, ${data.skills_writeup},
-      ${data.public_key}, ${data.ip_hash}, true, now())
+      ${data.public_key}, ${data.ip_hash},
+      ${data.local_ports ? JSON.stringify(data.local_ports) : null},
+      ${data.lan_hostname ?? null},
+      true, now())
     ON CONFLICT (id) DO UPDATE SET
       nickname = EXCLUDED.nickname,
       description = EXCLUDED.description,
@@ -233,6 +243,8 @@ export async function upsertInstance(data: {
       avatar_border = EXCLUDED.avatar_border,
       featured_skills = EXCLUDED.featured_skills,
       skills_writeup = EXCLUDED.skills_writeup,
+      local_ports = COALESCE(EXCLUDED.local_ports, instances.local_ports),
+      lan_hostname = COALESCE(EXCLUDED.lan_hostname, instances.lan_hostname),
       online = true,
       last_heartbeat = now(),
       updated_at = now()
@@ -279,6 +291,20 @@ export async function updateHeartbeat(instanceId: string) {
     UPDATE instances SET online = true, last_heartbeat = now()
     WHERE id = ${instanceId}
   `;
+}
+
+export async function listPeersByIpHash(callerInstanceId: string, ipHash: string) {
+  const sql = getSQL();
+  const rows = await sql`
+    SELECT id, nickname, online, last_heartbeat, featured_skills,
+           local_ports, lan_hostname
+    FROM instances
+    WHERE ip_hash = ${ipHash}
+      AND id != ${callerInstanceId}
+    ORDER BY last_heartbeat DESC NULLS LAST
+    LIMIT 20
+  `;
+  return rows;
 }
 
 export async function markStaleOffline(minutes = 30) {
@@ -505,6 +531,17 @@ export async function createPost(data: {
       WHERE id = ${data.parent_id}
     `;
   }
+
+  // Auto-upvote: every post/reply starts with +1 from the author
+  const voteId = `vote-auto-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  await sql`
+    INSERT INTO post_votes (id, post_id, instance_id, value)
+    VALUES (${voteId}, ${data.id}, ${data.instance_id}, 1)
+    ON CONFLICT (post_id, instance_id) DO NOTHING
+  `;
+  await sql`
+    UPDATE posts SET upvotes = 1 WHERE id = ${data.id}
+  `;
 
   return rows[0];
 }

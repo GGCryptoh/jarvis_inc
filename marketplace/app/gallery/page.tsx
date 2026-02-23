@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Search, Filter } from 'lucide-react';
 import InstanceCard from '@/components/InstanceCard';
 import type { JarvisInstance } from '@/lib/types';
+import { cachedFetch } from '@/lib/cache';
 
 export default function GalleryPage() {
   const [instances, setInstances] = useState<JarvisInstance[]>([]);
@@ -15,9 +16,15 @@ export default function GalleryPage() {
   useEffect(() => {
     async function fetchGallery() {
       try {
-        const res = await fetch('/api/gallery?limit=200');
-        if (!res.ok) throw new Error('Failed to fetch gallery');
-        const data = await res.json();
+        const data = await cachedFetch(
+          'gallery',
+          async () => {
+            const res = await fetch('/api/gallery?limit=200');
+            if (!res.ok) throw new Error('Failed to fetch gallery');
+            return res.json();
+          },
+          { onFresh: (fresh) => setInstances(fresh.instances || []) }
+        );
         setInstances(data.instances || []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load gallery');

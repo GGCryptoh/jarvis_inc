@@ -9,10 +9,23 @@ import RichResultCard, { detectRichContent } from './RichResultCard';
 // Lightweight markdown renderer (bold, italic, code, bullets, ordered lists)
 // ---------------------------------------------------------------------------
 
+/** Strip trailing punctuation from URLs (parens, commas, periods etc.) */
+function cleanInlineUrl(raw: string): string {
+  let url = raw.replace(/[),.:;!?\]}>'"]+$/, '');
+  const opens = (url.match(/\(/g) || []).length;
+  const closes = (url.match(/\)/g) || []).length;
+  if (closes > opens) {
+    for (let i = 0; i < closes - opens; i++) {
+      url = url.replace(/\)$/, '');
+    }
+  }
+  return url;
+}
+
 function renderInlineMarkdown(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
-  // Match: **bold**, *italic*, `code`, [link](url)
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|\[(.+?)\]\((.+?)\))/g;
+  // Match: **bold**, *italic*, `code`, [link](url), bare URLs
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|\[(.+?)\]\((.+?)\)|https?:\/\/\S+)/g;
   let lastIdx = 0;
   let match: RegExpExecArray | null;
   let key = 0;
@@ -30,11 +43,30 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
         </code>
       );
     } else if (match[5] && match[6]) {
+      // Markdown link [text](url) — clean the URL
+      const href = cleanInlineUrl(match[6]);
       parts.push(
-        <a key={key++} href={match[6]} target="_blank" rel="noopener noreferrer" className="text-emerald-400 underline hover:text-emerald-300">
+        <a key={key++} href={href} target="_blank" rel="noopener noreferrer" className="text-emerald-400 underline hover:text-emerald-300">
           {match[5]}
         </a>
       );
+      // If URL was shorter than match, skip the leftover chars in the source
+      const trimmed = match[6].length - href.length;
+      if (trimmed > 0) {
+        // The trailing chars after the cleaned URL were consumed by regex but aren't part of the link
+        // They'll be included in the next text segment naturally
+      }
+    } else if (match[0].startsWith('http')) {
+      // Bare URL — clean trailing punctuation and render as link
+      const href = cleanInlineUrl(match[0]);
+      parts.push(
+        <a key={key++} href={href} target="_blank" rel="noopener noreferrer" className="text-emerald-400 underline hover:text-emerald-300">
+          {href}
+        </a>
+      );
+      // Push back any trailing chars that were stripped
+      const leftover = match[0].slice(href.length);
+      if (leftover) parts.push(leftover);
     }
     lastIdx = match.index + match[0].length;
   }

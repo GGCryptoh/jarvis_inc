@@ -79,11 +79,60 @@ function oauthTokenProxy(): Plugin {
   };
 }
 
+// Dev-only mDNS peer discovery — advertises this Jarvis instance on the LAN.
+// Runs on the host (not in Docker) so mDNS works natively.
+function peerDiscoveryPlugin(): Plugin {
+  return {
+    name: 'peer-discovery',
+    configureServer(server) {
+      // Read instance config from .env.development and settings
+      const envPath = './docker/.env';
+      let kongPort = 8000;
+      let gatewayPort = 3001;
+      let instanceId = 'unknown';
+      let nickname = 'Jarvis';
+      try {
+        const env = readFileSync(envPath, 'utf-8');
+        const kongMatch = env.match(/^KONG_HTTP_PORT=(\d+)$/m);
+        if (kongMatch) kongPort = parseInt(kongMatch[1], 10);
+        const gwMatch = env.match(/^GATEWAY_PORT=(\d+)$/m);
+        if (gwMatch) gatewayPort = parseInt(gwMatch[1], 10);
+        const composeMatch = env.match(/^COMPOSE_PROJECT_NAME=(.+)$/m);
+        if (composeMatch) instanceId = composeMatch[1];
+        const domainMatch = env.match(/^DOMAIN=(.+)$/m);
+        if (domainMatch) nickname = domainMatch[1];
+      } catch { /* .env may not exist yet */ }
+
+      import('./src/lib/peerDiscovery').then(({ startPeerDiscovery }) => {
+        startPeerDiscovery({
+          instanceId,
+          nickname,
+          kongPort,
+          gatewayPort,
+          version: pkg.version,
+          devPort: server.config.server.port ?? 5173,
+        }).catch((err: Error) => {
+          console.warn('[PeerDiscovery] Failed to start:', err.message);
+        });
+      }).catch(() => {
+        // bonjour-service not installed — skip silently
+      });
+
+      // Stop on server close
+      server.httpServer?.on('close', () => {
+        import('./src/lib/peerDiscovery').then(({ stopPeerDiscovery }) => {
+          stopPeerDiscovery();
+        }).catch(() => {});
+      });
+    },
+  };
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
-  plugins: [react(), fetchProxyPlugin(), oauthTokenProxy()],
+  plugins: [react(), fetchProxyPlugin(), oauthTokenProxy(), peerDiscoveryPlugin()],
   server: {
     proxy: {
       '/api/openai': {

@@ -22,7 +22,9 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(result);
+    const res = NextResponse.json(result);
+    res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    return res;
   } catch (error) {
     console.error('Get post error:', error);
     return NextResponse.json(

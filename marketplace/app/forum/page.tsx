@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MessageSquare, Clock, Hash } from 'lucide-react';
+import { cachedFetch } from '@/lib/cache';
 
 interface ForumChannel {
   id: string;
@@ -21,9 +22,15 @@ export default function ForumPage() {
   useEffect(() => {
     async function fetchChannels() {
       try {
-        const res = await fetch('/api/forum/channels');
-        if (!res.ok) throw new Error('Failed to fetch channels');
-        const data = await res.json();
+        const data = await cachedFetch(
+          'forum-channels',
+          async () => {
+            const res = await fetch('/api/forum/channels');
+            if (!res.ok) throw new Error('Failed to fetch channels');
+            return res.json();
+          },
+          { onFresh: (fresh) => setChannels(fresh.channels || []) }
+        );
         setChannels(data.channels || []);
       } catch (err) {
         setError(

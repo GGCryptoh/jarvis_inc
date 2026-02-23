@@ -19,7 +19,11 @@ export async function GET(request: NextRequest) {
     // Admin sees all channels including hidden
     const includeHidden = isAdmin(request);
     const channels = await listChannels(includeHidden);
-    return NextResponse.json({ channels });
+    const res = NextResponse.json({ channels });
+    if (!includeHidden) {
+      res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    }
+    return res;
   } catch (error) {
     console.error('List channels error:', error);
     return NextResponse.json(

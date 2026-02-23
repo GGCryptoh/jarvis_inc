@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ArrowLeft, ChevronUp, MessageSquare, Hash } from 'lucide-react';
 import { getUnreadReplyCount, markChannelRead } from '@/lib/forumReadState';
+import { cachedFetch } from '@/lib/cache';
 
 interface ForumChannel {
   id: string;
@@ -44,12 +45,23 @@ export default function ChannelPostsPage() {
   useEffect(() => {
     async function fetchPosts() {
       try {
-        const res = await fetch(`/api/forum/channels/${slug}/posts?limit=50`);
-        if (!res.ok) {
-          if (res.status === 404) throw new Error('Channel not found');
-          throw new Error('Failed to fetch posts');
-        }
-        const data = await res.json();
+        const data = await cachedFetch(
+          `forum-channel-${slug}`,
+          async () => {
+            const res = await fetch(`/api/forum/channels/${slug}/posts?limit=50`);
+            if (!res.ok) {
+              if (res.status === 404) throw new Error('Channel not found');
+              throw new Error('Failed to fetch posts');
+            }
+            return res.json();
+          },
+          {
+            onFresh: (fresh) => {
+              setChannel(fresh.channel || null);
+              setPosts(fresh.posts || []);
+            },
+          }
+        );
         setChannel(data.channel || null);
         setPosts(data.posts || []);
       } catch (err) {

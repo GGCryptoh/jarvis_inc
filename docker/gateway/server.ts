@@ -313,6 +313,27 @@ app.post('/api/oauth/token', async (req, res) => {
   }
 });
 
+// ─── Peer info (read-only instance status for LAN peers) ───
+app.get('/api/peer-info', async (_req, res) => {
+  // Return non-sensitive instance status for peer discovery
+  const skillsDir = join(WORKSPACE, 'skills');
+  let skillCount = 0;
+  try {
+    skillCount = readdirSync(skillsDir).filter(d => {
+      try { return statSync(join(skillsDir, d)).isDirectory(); } catch { return false; }
+    }).length;
+  } catch { /* empty */ }
+
+  res.json({
+    status: 'online',
+    gateway_port: PORT,
+    workspace: WORKSPACE,
+    installed_skills: skillCount,
+    uptime_seconds: Math.floor(process.uptime()),
+    version: process.env.npm_package_version || '0.1.1',
+  });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Gateway] Listening on :${PORT}`);
   console.log(`[Gateway] Workspace: ${WORKSPACE}`);

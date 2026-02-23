@@ -104,11 +104,11 @@ export async function assessForumPostRisk(
     const prompt = `You are a content risk assessor for an AI organization's public forum posts.
 
 Classify the proposed post into exactly one risk level:
-- "safe": Introductions, greetings, factual replies, votes, simple observations, pleasantries
-- "moderate": Technical opinions, recommendations, comparisons, sharing non-sensitive workflow details
-- "risky": Controversial opinions, political/social commentary, disclosing private business details (revenue, strategy, internal decisions), claims about capabilities, criticizing companies/people, or topics matching SENSITIVE ORG MEMORY below
+- "safe": Introductions, greetings, factual replies, votes, simple observations, pleasantries, general agreement/disagreement
+- "moderate": Business ideas, opinions, strategy discussion, feature suggestions, recommendations, comparisons, sharing workflow details, general business commentary, technical topics, constructive criticism
+- "risky": ONLY flag as risky if the post contains: actual secrets (API keys, passwords, credentials, tokens), financial figures (revenue, costs, credit card numbers), personal identifying information (SSNs, addresses, phone numbers), or content that directly reveals items from SENSITIVE ORG MEMORY below. General business ideas and opinions are NOT risky — they are moderate.
 
-SENSITIVE ORG MEMORY (do NOT let the post reveal these):
+SENSITIVE ORG MEMORY (do NOT let the post reveal these specific items):
 ${memoryBlock}
 
 PROPOSED POST:
@@ -584,6 +584,24 @@ async function executeBrowserHandler(
   return handler(params, options, startTime);
 }
 
+/**
+ * Wait for marketplace registration to complete (handles concurrent dispatch race).
+ * Returns true if registered, false if still not registered after timeout.
+ */
+async function waitForMarketplaceRegistration(maxWaitMs = 12_000): Promise<boolean> {
+  if (getMarketplaceStatus().registered) return true;
+  // Registration might be in-flight from a concurrent mission — wait and retry
+  const intervals = [2_000, 3_000, 4_000, 5_000];
+  let waited = 0;
+  for (const delay of intervals) {
+    if (waited >= maxWaitMs) break;
+    await new Promise(r => setTimeout(r, delay));
+    waited += delay;
+    if (getMarketplaceStatus().registered) return true;
+  }
+  return false;
+}
+
 const BROWSER_HANDLERS: Record<
   string,
   (
@@ -691,14 +709,14 @@ const BROWSER_HANDLERS: Record<
   },
 
   'marketplace:submit_feature': async (params, options, startTime) => {
-    const status = getMarketplaceStatus();
-    if (!status.registered) {
+    if (!await waitForMarketplaceRegistration()) {
       return {
         success: false, output: '', tokens_used: 0, cost_usd: 0,
         duration_ms: Date.now() - startTime,
         error: 'Not registered on the marketplace yet. Register first via /key.',
       };
     }
+    const status = getMarketplaceStatus();
 
     const validCategories = ['skill', 'feature', 'integration', 'improvement'];
     let category = String(params.category || 'feature').toLowerCase();
@@ -1029,14 +1047,14 @@ Respond with JSON:
   // ---------------------------------------------------------------------------
 
   'forum:create_post': async (params, options, startTime) => {
-    const status = getMarketplaceStatus();
-    if (!status.registered) {
+    if (!await waitForMarketplaceRegistration()) {
       return {
         success: false, output: '', tokens_used: 0, cost_usd: 0,
         duration_ms: Date.now() - startTime,
         error: 'Not registered on the marketplace yet. Register first via marketplace:register.',
       };
     }
+    const status = getMarketplaceStatus();
 
     const channelId = String(params.channel_id || '');
     const title = String(params.title || '');
@@ -1131,14 +1149,14 @@ Respond with JSON:
   },
 
   'forum:reply': async (params, options, startTime) => {
-    const status = getMarketplaceStatus();
-    if (!status.registered) {
+    if (!await waitForMarketplaceRegistration()) {
       return {
         success: false, output: '', tokens_used: 0, cost_usd: 0,
         duration_ms: Date.now() - startTime,
         error: 'Not registered on the marketplace yet.',
       };
     }
+    const status = getMarketplaceStatus();
 
     const postId = String(params.post_id || '');
     const body = String(params.body || '');
@@ -1225,14 +1243,17 @@ Respond with JSON:
   },
 
   'forum:vote': async (params, options, startTime) => {
-    const status = getMarketplaceStatus();
-    if (!status.registered) {
-      return {
-        success: false, output: '', tokens_used: 0, cost_usd: 0,
-        duration_ms: Date.now() - startTime,
-        error: 'Not registered on the marketplace yet.',
-      };
+    if (!getMarketplaceStatus().registered) {
+      const ready = await waitForMarketplaceRegistration();
+      if (!ready) {
+        return {
+          success: false, output: '', tokens_used: 0, cost_usd: 0,
+          duration_ms: Date.now() - startTime,
+          error: 'Not registered on the marketplace yet. Registration may still be in progress — try again shortly.',
+        };
+      }
     }
+    const status = getMarketplaceStatus();
 
     const postId = String(params.post_id || '');
     const value = Number(params.value);
@@ -1270,14 +1291,17 @@ Respond with JSON:
   },
 
   'forum:introduce': async (params, options, startTime) => {
-    const status = getMarketplaceStatus();
-    if (!status.registered) {
-      return {
-        success: false, output: '', tokens_used: 0, cost_usd: 0,
-        duration_ms: Date.now() - startTime,
-        error: 'Not registered on the marketplace yet. Register first via marketplace:register.',
-      };
+    if (!getMarketplaceStatus().registered) {
+      const ready = await waitForMarketplaceRegistration();
+      if (!ready) {
+        return {
+          success: false, output: '', tokens_used: 0, cost_usd: 0,
+          duration_ms: Date.now() - startTime,
+          error: 'Not registered on the marketplace yet. Registration may still be in progress — try again shortly.',
+        };
+      }
     }
+    const status = getMarketplaceStatus();
 
     // Gather instance info for the introduction
     let orgName = 'Unknown';

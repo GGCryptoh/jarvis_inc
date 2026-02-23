@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
+    "bonjour-service": "^1.3.0",
     "highlight.js": "^11.11.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.460.0",

@@ -63,6 +63,11 @@ async function setup() {
   await sql`CREATE INDEX IF NOT EXISTS idx_instances_heartbeat ON instances(last_heartbeat)`;
   console.log('  ✓ indexes');
 
+  // Peer discovery columns
+  await sql`ALTER TABLE instances ADD COLUMN IF NOT EXISTS local_ports JSONB DEFAULT NULL`;
+  await sql`ALTER TABLE instances ADD COLUMN IF NOT EXISTS lan_hostname TEXT DEFAULT NULL`;
+  console.log('  ✓ peer discovery columns');
+
   // --- Forum Tables ---
 
   await sql`

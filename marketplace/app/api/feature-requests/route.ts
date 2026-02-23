@@ -34,7 +34,9 @@ export async function GET(request: NextRequest) {
       offset
     );
 
-    return NextResponse.json({ feature_requests: featureRequests });
+    const res = NextResponse.json({ feature_requests: featureRequests });
+    res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    return res;
   } catch (error) {
     console.error('List feature requests error:', error);
     return NextResponse.json(

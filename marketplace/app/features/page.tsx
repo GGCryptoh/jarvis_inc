@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import FeatureCard from '@/components/FeatureCard';
 import type { FeatureRequest } from '@/lib/types';
+import { cachedFetch } from '@/lib/cache';
 
 const CATEGORIES = ['all', 'skill', 'feature', 'integration', 'improvement'] as const;
 type CategoryFilter = (typeof CATEGORIES)[number];
@@ -30,11 +31,17 @@ export default function FeaturesPage() {
       try {
         const categoryParam =
           activeCategory !== 'all' ? `&category=${activeCategory}` : '';
-        const res = await fetch(
-          `/api/feature-requests?status=open${categoryParam}&limit=100`
+        const data = await cachedFetch(
+          `features-${activeCategory}`,
+          async () => {
+            const res = await fetch(
+              `/api/feature-requests?status=open${categoryParam}&limit=100`
+            );
+            if (!res.ok) throw new Error('Failed to fetch feature requests');
+            return res.json();
+          },
+          { onFresh: (fresh) => setFeatures(fresh.feature_requests || []) }
         );
-        if (!res.ok) throw new Error('Failed to fetch feature requests');
-        const data = await res.json();
         setFeatures(data.feature_requests || []);
       } catch (err) {
         setError(

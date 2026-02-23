@@ -67,6 +67,10 @@ let lastConsolidationDate = '';
 // Track last marketplace profile refresh date (once per day)
 let lastProfileRefreshDate = '';
 
+// Track last peer check time (throttled: every 4 hours, same cadence as forum)
+let lastPeerCheckTime = 0;
+const PEER_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
 /**
  * Compute the next run timestamp for a skill schedule.
  */
@@ -878,7 +882,13 @@ async function checkSkillSchedules(): Promise<CEOAction[]> {
 // ---------------------------------------------------------------------------
 
 let lastForumCheckTime = 0;
-const DEFAULT_FORUM_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const DEFAULT_FORUM_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+/** Forum only runs during business hours (8am-6pm local) */
+function isForumBusinessHours(): boolean {
+  const hour = new Date().getHours();
+  return hour >= 8 && hour < 18;
+}
 
 // Marketplace forum config — cached for 30 minutes
 interface MarketplaceForumConfig {
@@ -973,6 +983,29 @@ export async function refreshMarketplaceProfile(): Promise<void> {
   console.log('[refreshMarketplaceProfile] Sending:', JSON.stringify(payload));
   const result = await signedMarketplacePost(`/api/profile/${mktStatus.instanceId}`, payload);
   console.log('[refreshMarketplaceProfile] Result:', JSON.stringify(result));
+
+  // Auto-recovery: if marketplace says "Instance not found", re-register and retry once
+  if (!result.success && result.error && /not found/i.test(result.error)) {
+    console.log('[refreshMarketplaceProfile] Instance not found — attempting re-registration...');
+    const { registerOnMarketplace, getCachedRawPrivateKey: getRawKey } = await import('./marketplaceClient');
+    const { loadKeyFromLocalStorage: loadKeyLS } = await import('./jarvisKey');
+    const keyData = loadKeyLS();
+    const rawKey = getRawKey();
+    if (keyData && rawKey) {
+      const regResult = await registerOnMarketplace(rawKey, keyData.publicKey);
+      if (regResult.success) {
+        console.log('[refreshMarketplaceProfile] Re-registered. Retrying profile update...');
+        const newStatus = getMarketplaceStatus();
+        if (newStatus.registered && newStatus.instanceId) {
+          const retry = await signedMarketplacePost(`/api/profile/${newStatus.instanceId}`, payload);
+          if (!retry.success) throw new Error(retry.error || 'Profile update failed after re-registration');
+          return; // Success on retry
+        }
+      }
+    }
+    throw new Error('Profile update failed: instance not found and re-registration failed');
+  }
+
   if (!result.success) throw new Error(result.error || 'Profile update failed');
 }
 
@@ -1016,6 +1049,9 @@ async function checkForumActivity(): Promise<CEOAction[]> {
   const actions: CEOAction[] = [];
 
   try {
+    // Forum only runs during business hours (8am-6pm local) unless in burst mode
+    if (!isForumBusinessHours() && !forumBurstState.active) return actions;
+
     const skills = await loadSkills();
     const forumSkill = skills.find(s => s.id === 'forum' && s.enabled);
     if (!forumSkill) return actions;
@@ -1314,35 +1350,51 @@ async function checkForumActivity(): Promise<CEOAction[]> {
         })
         .join('\n---\n');
 
+      // Build channel list for new post creation
+      const channelList = channels.map(c => `- #${c.name}: ${c.description || 'General'}`).join('\n');
+
       const draftPrompt = `You are ${ceoName}, an AI CEO on a community forum for AI bot instances.
 Your philosophy: ${ceoPhilosophy || 'Be helpful, concise, and genuine.'}
 Your org: ${orgName}
 
 Below are new forum posts and replies from other AI instances. Decide how to engage.
 
+AVAILABLE ACTIONS:
+1. "reply" — Reply to a post. Use when you have something useful, funny, or insightful to add.
+2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam, misinformation, or low-effort posts.
+3. "create_post" — Start a NEW forum thread. Use sparingly — only when you have a genuine topic to discuss, a question to ask, or something to share with the community. Requires channel_id and title.
+4. "suggest_feature" — Suggest a feature for Jarvis Inc. Use when you think of something that would benefit the ecosystem.
+
 ENGAGEMENT RULES:
-- You can VOTE and REPLY on the SAME post (emit both actions)
-- Reply to questions directed at you or your threads — be helpful
+- You can combine multiple actions per post (e.g., reply + upvote)
+- Reply to questions directed at you or your threads — be helpful and conversational
 - Reply to interesting discussions where you have something NEW to add
 - Upvote posts that are interesting, helpful, or well-written
+- Downvote only spam, misinformation, or genuinely low-quality content
 - NEVER reply to your own posts or introductions
 - Skip posts where you'd just be saying "nice!" or "I agree" with nothing to add
-- Keep replies SHORT (1-3 sentences). No essays. Be casual and real.
-- Never reveal private org details (revenue, strategy, internal decisions)
-- Max 3 replies. You can upvote more liberally (up to 5).
+- Keep replies SHORT (1-3 sentences). No essays. Be casual, real, and personality-driven.
+- You can disagree respectfully — having opinions makes you interesting
+- Never reveal private org details (API keys, passwords, credentials, financial figures)
+- Max 3 replies, max 5 votes, max 1 new post, max 1 feature suggestion per check
+
+AVAILABLE CHANNELS (for create_post):
+${channelList}
 
 POSTS:
 ${postSummaries}
 
-Respond with ONLY valid JSON array. You can emit multiple actions per post (reply + vote):
+Respond with ONLY valid JSON array:
 [
   {"action":"reply","post_id":"...","body":"your reply text"},
-  {"action":"vote","post_id":"...","value":1}
+  {"action":"vote","post_id":"...","value":1},
+  {"action":"create_post","channel_id":"...","title":"...","body":"your post content"},
+  {"action":"suggest_feature","title":"...","description":"feature description"}
 ]
 
 If nothing is worth engaging with, return: []`;
 
-      let draftActions: { action: string; post_id: string; body?: string; value?: number }[] = [];
+      let draftActions: { action: string; post_id?: string; body?: string; value?: number; channel_id?: string; title?: string; description?: string }[] = [];
 
       try {
         const { anthropicProvider } = await import('./llm/providers/anthropic');
@@ -1407,27 +1459,71 @@ If nothing is worth engaging with, return: []`;
 
       for (const da of draftActions) {
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        const isReply = da.action === 'reply';
+
+        // Map action type to skill/command/params
+        let skillId = 'forum';
+        let commandName: string;
+        let params: Record<string, unknown>;
+        let actionLabel: string;
+
+        switch (da.action) {
+          case 'reply':
+            commandName = 'reply';
+            params = { post_id: da.post_id, body: da.body };
+            actionLabel = `Replied to "${newPosts.find(p => p.id === da.post_id)?.title || da.post_id}"`;
+            break;
+          case 'vote':
+            commandName = 'vote';
+            params = { post_id: da.post_id, value: da.value ?? 1 };
+            actionLabel = `${(da.value ?? 1) > 0 ? 'Upvoted' : 'Downvoted'} "${newPosts.find(p => p.id === da.post_id)?.title || da.post_id}"`;
+            break;
+          case 'create_post':
+            commandName = 'create_post';
+            params = { channel_id: da.channel_id, title: da.title, body: da.body };
+            actionLabel = `Created post "${da.title}" in #${channels.find(c => c.id === da.channel_id)?.name || da.channel_id}`;
+            break;
+          case 'suggest_feature':
+            skillId = 'marketplace';
+            commandName = 'submit_feature';
+            params = { title: da.title, description: da.description };
+            actionLabel = `Suggested feature: "${da.title}"`;
+            break;
+          default:
+            continue; // Skip unknown actions
+        }
 
         await sb.from('task_executions').insert({
           id: taskId,
           mission_id: missionId,
           agent_id: 'ceo',
-          skill_id: 'forum',
-          command_name: isReply ? 'reply' : 'vote',
-          params: isReply ? { post_id: da.post_id, body: da.body } : { post_id: da.post_id, value: da.value ?? 1 },
+          skill_id: skillId,
+          command_name: commandName,
+          params,
           model: 'none',
           status: 'running',
           started_at: new Date().toISOString(),
         });
 
-        try {
-          const result = await executeSkill(
-            'forum',
-            isReply ? 'reply' : 'vote',
-            isReply ? { post_id: da.post_id, body: da.body } : { post_id: da.post_id, value: da.value ?? 1 },
-            { missionId },
+        // Risk check for content-generating actions (reply, create_post)
+        if ((da.action === 'reply' || da.action === 'create_post') && da.body) {
+          const { assessForumPostRisk, isAutoPostAllowed } = await import('./skillExecutor');
+          const assessment = await assessForumPostRisk(
+            da.body as string,
+            da.action === 'create_post' ? da.title as string : undefined,
           );
+          if (!isAutoPostAllowed(autoPostLevel as 'off' | 'safe' | 'normal' | 'all', assessment.risk_level)) {
+            await sb.from('task_executions').update({
+              status: 'failed',
+              result: { output: '', error: `Blocked by ${autoPostLevel} safety: ${assessment.reason}` },
+              completed_at: new Date().toISOString(),
+            }).eq('id', taskId);
+            results.push(`Blocked (${assessment.risk_level}): ${actionLabel}`);
+            continue;
+          }
+        }
+
+        try {
+          const result = await executeSkill(skillId, commandName, params, { missionId });
 
           await sb.from('task_executions').update({
             status: result.success ? 'completed' : 'failed',
@@ -1435,9 +1531,7 @@ If nothing is worth engaging with, return: []`;
             completed_at: new Date().toISOString(),
           }).eq('id', taskId);
 
-          results.push(result.success
-            ? `${isReply ? 'Replied to' : 'Upvoted'} "${newPosts.find(p => p.id === da.post_id)?.title || da.post_id}"`
-            : `Failed: ${result.error}`);
+          results.push(result.success ? actionLabel : `Failed: ${result.error}`);
         } catch (err) {
           await sb.from('task_executions').update({
             status: 'failed',
@@ -1518,6 +1612,52 @@ If nothing is worth engaging with, return: []`;
   }
 
   return actions;
+}
+
+// ---------------------------------------------------------------------------
+// Peer awareness — marketplace + LAN discovery
+// ---------------------------------------------------------------------------
+
+async function checkPeerInstances(): Promise<void> {
+  const now = Date.now();
+  if (now - lastPeerCheckTime < PEER_CHECK_INTERVAL_MS) return;
+  lastPeerCheckTime = now;
+
+  const sb = getSupabase();
+
+  // 1. Marketplace peers (same public IP = same LAN/household)
+  try {
+    const { fetchPeers } = await import('./marketplaceClient');
+    const result = await fetchPeers();
+    if (result.success && result.peers) {
+      const peerData = result.peers.map(p => ({
+        id: p.id,
+        nickname: p.nickname,
+        online: p.online,
+        last_heartbeat: p.last_heartbeat,
+        featured_skills: p.featured_skills?.slice(0, 10) ?? [],
+        lan_hostname: p.lan_hostname,
+      }));
+      await sb.from('settings').upsert({
+        key: 'peer_instances',
+        value: JSON.stringify(peerData),
+      }, { onConflict: 'key' });
+      if (peerData.length > 0) {
+        console.log(`[CEODecisionEngine] Marketplace peers: ${peerData.map(p => p.nickname).join(', ')}`);
+      }
+    }
+  } catch (err) {
+    console.warn('[CEODecisionEngine] Marketplace peer check failed:', err);
+  }
+
+  // 2. LAN peers (mDNS — only available in browser/Vite dev mode)
+  try {
+    if (typeof window !== 'undefined') {
+      // Browser environment — mDNS runs on the Vite server, not here.
+      // LAN peers are fetched via the Vite dev server's peerDiscovery module.
+      // In the sidecar, we skip this.
+    }
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -1670,6 +1810,11 @@ export async function evaluateCycle(): Promise<CycleResult> {
       .then(() => console.log('[CEODecisionEngine] Daily marketplace profile refresh done.'))
       .catch(err => console.warn('[CEODecisionEngine] Marketplace profile refresh failed:', err));
   }
+
+  // 4d. Peer instance check (marketplace peers — every 4 hours)
+  checkPeerInstances().catch(err =>
+    console.warn('[CEODecisionEngine] Peer check failed:', err),
+  );
 
   // 5. Build diagnostic result
   const result: CycleResult = {

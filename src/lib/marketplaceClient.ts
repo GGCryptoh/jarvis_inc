@@ -486,3 +486,61 @@ export async function sendHeartbeat(): Promise<void> {
     });
   } catch { /* silent — best effort */ }
 }
+
+// ---------------------------------------------------------------------------
+// Peer Discovery (marketplace-based)
+// ---------------------------------------------------------------------------
+
+export interface MarketplacePeer {
+  id: string;
+  nickname: string;
+  online: boolean;
+  last_heartbeat: string;
+  featured_skills: string[];
+  local_ports: Record<string, number> | null;
+  lan_hostname: string | null;
+}
+
+/**
+ * Fetch peer instances that share the same public IP (same LAN/household).
+ * Requires a signed request — the marketplace uses ip_hash to find peers.
+ */
+export async function fetchPeers(): Promise<{ success: boolean; peers?: MarketplacePeer[]; error?: string }> {
+  const keyData = loadKeyFromLocalStorage();
+  if (!keyData) return { success: false, error: 'No marketplace identity key found' };
+
+  const rawKey = getCachedRawPrivateKey();
+  if (!rawKey) return { success: false, error: 'Session signing is locked' };
+
+  const status = getMarketplaceStatus();
+  if (!status.registered || !status.instanceId) return { success: false, error: 'Not registered on marketplace' };
+
+  const timestamp = Date.now();
+  const payload: Record<string, unknown> = {
+    instance_id: status.instanceId,
+    public_key: keyData.publicKey,
+    timestamp,
+  };
+
+  try {
+    const signature = await signPayload(rawKey, payload);
+
+    const params = new URLSearchParams({
+      instance_id: status.instanceId,
+      public_key: keyData.publicKey,
+      timestamp: String(timestamp),
+      signature,
+    });
+
+    const res = await fetch(`${MARKETPLACE_URL}/api/peers?${params.toString()}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      return { success: false, error: err.error || `Request failed (${res.status})` };
+    }
+
+    const data = await res.json();
+    return { success: true, peers: data.peers || [] };
+  } catch {
+    return { success: false, error: 'Network error — marketplace may be unreachable' };
+  }
+}
