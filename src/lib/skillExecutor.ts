@@ -252,6 +252,11 @@ export async function executeSkill(
   const { modelOverride, agentId, missionId } = options;
   const startTime = Date.now();
 
+  // 0. Check browser-side handlers first — these don't require a DB-registered skill
+  //    (e.g. forum:browse_channels, forum:create_post, forum:reply)
+  const earlyBrowserResult = await executeBrowserHandler(skillId, commandName, params, options, startTime);
+  if (earlyBrowserResult) return earlyBrowserResult;
+
   // 1. Resolve skill
   const skill = await resolveSkill(skillId);
   if (!skill) {
