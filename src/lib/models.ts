@@ -1,4 +1,5 @@
 export const MODEL_OPTIONS = [
+  'Claude Opus 4.6',
   'Claude Sonnet 4.6',
   'Claude Haiku 4.5',
   'o4-mini',
