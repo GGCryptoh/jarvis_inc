@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import PostCard from '@/components/PostCard';
 import ReplyTree from '@/components/ReplyTree';
@@ -27,6 +27,7 @@ interface ForumPost {
 
 export default function ThreadPage() {
   const params = useParams();
+  const router = useRouter();
   const postId = params.id as string;
 
   const [post, setPost] = useState<ForumPost | null>(null);
@@ -70,6 +71,15 @@ export default function ThreadPage() {
     }
     fetchThread();
   }, [postId]);
+
+  // ESC → back to channel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && post) router.push(`/forum/${post.channel_id}`);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [router, post]);
 
   // Mark post as read after render
   useEffect(() => {

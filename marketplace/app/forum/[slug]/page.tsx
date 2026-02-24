@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, ChevronUp, MessageSquare, Hash } from 'lucide-react';
 import { getUnreadReplyCount, markChannelRead } from '@/lib/forumReadState';
 import { cachedFetch } from '@/lib/cache';
@@ -29,7 +29,17 @@ interface ForumPost {
 
 export default function ChannelPostsPage() {
   const params = useParams();
+  const router = useRouter();
   const slug = params.slug as string;
+
+  // ESC → back to /forum
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') router.push('/forum');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [router]);
 
   const [channel, setChannel] = useState<ForumChannel | null>(null);
   const [posts, setPosts] = useState<ForumPost[]>([]);
