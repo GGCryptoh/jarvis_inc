@@ -340,7 +340,7 @@ export async function registerOnMarketplace(
   // Build payload (without signature — added after signing)
   const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
   const payload: Record<string, unknown> = {
-    nickname: `${orgName.substring(0, 19)}-${Math.random().toString(36).substring(2, 6)}`,
+    nickname: orgName.substring(0, 24),
     description: description.substring(0, 200),
     avatar_color: '#50fa7b',
     avatar_icon: 'bot',
