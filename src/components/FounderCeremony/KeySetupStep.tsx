@@ -175,8 +175,8 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
       saveKeyToLocalStorage(fileData);
 
       // Cache raw key for browser-side skill handlers (CEO marketplace commands)
-      // Set unlock to 'day' so signing persists through page reloads after ceremony
-      setUnlockDuration('day');
+      // Set unlock to 'week' so signing persists through ceremony + sidecar gets vault key
+      setUnlockDuration('week');
       cacheRawPrivateKey(keyPair.privateKey);
 
       // Auto-register on marketplace (fire-and-forget, we have the raw private key)
