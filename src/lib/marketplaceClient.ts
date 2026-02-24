@@ -489,9 +489,9 @@ export async function sendHeartbeat(): Promise<void> {
     try {
       const { getVaultEntryByService } = await import('./database');
       const entry = await getVaultEntryByService('marketplace_identity');
-      if (entry?.data) {
-        const data = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
-        publicKey = data.publicKey ?? null;
+      if (entry?.key_value) {
+        const parsed = typeof entry.key_value === 'string' ? JSON.parse(entry.key_value) : entry.key_value;
+        publicKey = parsed.publicKey ?? null;
       }
     } catch { /* vault not available */ }
   }
