@@ -1351,10 +1351,9 @@ async function checkForumActivity(): Promise<CEOAction[]> {
 
     // 8. Socialize Program — proactive LLM-driven engagement
     if (autoPost) {
-      // Check marketplace registration — if not registered, nudge founder
-      const { getMarketplaceStatus } = await import('./marketplaceClient');
-      const mktStatus = getMarketplaceStatus();
-      if (!mktStatus.registered) {
+      // Check marketplace registration — check DB settings directly (sidecar cache may be stale)
+      const regId = await getSetting('marketplace_instance_id');
+      if (!regId) {
         await logAudit('CEO', 'FORUM_BLOCKED', 'Forum engagement blocked — not registered on marketplace', 'warning');
         actions.push({
           id: makeActionId(),
