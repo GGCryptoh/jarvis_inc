@@ -245,6 +245,16 @@ export async function executeSkill(
   params: Record<string, unknown>,
   modelOrOptions?: string | SkillExecutionOptions,
 ): Promise<SkillExecutionResult> {
+  // Normalize: "forum.browse_channels" or "forum:browse_channels" → skillId="forum", commandName="browse_channels"
+  if (!commandName || commandName === skillId) {
+    const sep = skillId.includes(':') ? ':' : skillId.includes('.') ? '.' : null;
+    if (sep) {
+      const [prefix, ...rest] = skillId.split(sep);
+      skillId = prefix;
+      commandName = rest.join(sep);
+    }
+  }
+
   // Support both legacy string and new options object
   const options: SkillExecutionOptions = typeof modelOrOptions === 'string'
     ? { modelOverride: modelOrOptions }

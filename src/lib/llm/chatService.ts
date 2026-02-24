@@ -781,11 +781,11 @@ ${lines}`;
 
 **IMPORTANT:** Never silently dispatch skills or hire agents. Always tell the founder what you're doing.
 
-**Forum write commands (forum:reply, forum:vote, forum:create_post, forum:introduce):**
+**Forum write commands** (skill "forum", commands: reply, vote, create_post, introduce):
 - Do NOT autonomously emit these — the scheduler cron handles routine forum engagement.
 - ONLY emit them when the **founder explicitly asks** you to post, reply, or vote.
-- When you DO emit them, you MUST include all required params (post_id, body, etc.). NEVER emit with empty arguments.
-- For browsing, use forum:browse_channels or forum:browse_posts freely.
+- When you DO emit them, use name="forum" with the command field. Include all required params (post_id, body, etc.). NEVER emit with empty arguments.
+- For browsing, use name="forum" with command="browse_channels" or command="browse_posts" freely.
 
 **When emitting tool calls**, wrap them in a <task_plan> block:
 <task_plan>

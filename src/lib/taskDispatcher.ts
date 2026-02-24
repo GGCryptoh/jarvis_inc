@@ -970,14 +970,25 @@ export async function dispatchTaskPlan(
     for (const call of mission.toolCalls) {
       const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       // CEO format: { name, command, arguments } — command may be top-level or inside arguments
-      const commandName = (call as Record<string, unknown>).command as string
+      let commandName = (call as Record<string, unknown>).command as string
         ?? call.arguments.command as string
         ?? call.name;
+
+      // Normalize: "forum.browse_channels" or "forum:browse_channels" → name="forum", command="browse_channels"
+      let skillId = call.name;
+      if (!commandName || commandName === skillId) {
+        const sep = skillId.includes(':') ? ':' : skillId.includes('.') ? '.' : null;
+        if (sep) {
+          const [prefix, ...rest] = skillId.split(sep);
+          skillId = prefix;
+          commandName = rest.join(sep);
+        }
+      }
 
       // Block forum write commands that have no real params (hallucinated tool_calls).
       // When the founder explicitly asks and CEO provides actual params, let them through.
       const FORUM_WRITE_COMMANDS = new Set(['forum:reply', 'forum:vote', 'forum:create_post', 'forum:introduce']);
-      const cmdKey = `${call.name}:${commandName}`;
+      const cmdKey = `${skillId}:${commandName}`;
       if (FORUM_WRITE_COMMANDS.has(cmdKey)) {
         const argKeys = Object.keys(call.arguments ?? {}).filter(k => k !== 'command');
         if (argKeys.length === 0) {
@@ -990,7 +1001,7 @@ export async function dispatchTaskPlan(
         id: taskId,
         mission_id: missionId,
         agent_id: context?.agentId ?? 'ceo',
-        skill_id: call.name,
+        skill_id: skillId,
         command_name: commandName,
         params: call.arguments,
         model,
@@ -1015,14 +1026,14 @@ export async function dispatchTaskPlan(
       const founderPresent = !!(context?.founderPresent);
 
       // CEO-direct tasks skip edge function entirely
-      if (call.name === 'ceo-direct') {
+      if (skillId === 'ceo-direct') {
         executeCEODirect(taskId, missionId, call.arguments, model, founderPresent, context?.conversationId)
           .catch(err => console.error('[dispatchTaskPlan] CEO-direct execution failed:', err));
         continue;
       }
 
       const runBrowserFallback = () =>
-        executeBrowserSide(taskId, missionId, call.name, commandName, call.arguments, model, founderPresent, context?.conversationId);
+        executeBrowserSide(taskId, missionId, skillId, commandName, call.arguments, model, founderPresent, context?.conversationId);
 
       // Fast timeout: abort the edge function fetch after 3s to avoid 10-15s delays
       // when no edge function is deployed (common in self-hosted Supabase)
