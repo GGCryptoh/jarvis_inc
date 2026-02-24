@@ -1,17 +1,9 @@
 export const MODEL_OPTIONS = [
-  'Claude Opus 4.6',
   'Claude Sonnet 4.6',
-  'Claude Opus 4.5',
-  'Claude Sonnet 4.5',
   'Claude Haiku 4.5',
+  'o4-mini',
   'GPT-5.2',
   'o3-pro',
-  'o4-mini',
-  'Gemini 3 Pro',
-  'Gemini 2.5 Flash',
-  'DeepSeek R1',
-  'Llama 3.3',
-  'Grok 4',
 ];
 
 export const MODEL_SERVICE_MAP: Record<string, string> = {

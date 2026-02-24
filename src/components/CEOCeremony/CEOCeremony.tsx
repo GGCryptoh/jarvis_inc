@@ -47,7 +47,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
 
   // Form state
   const [ceoName, setCeoName] = useState('');
-  const [model, setModel] = useState('Claude Opus 4.6');
+  const [model, setModel] = useState('Claude Sonnet 4.6');
   const [philosophy, setPhilosophy] = useState('');
   const [customPhilosophy, setCustomPhilosophy] = useState('');
   const [showCustomPhilosophy, setShowCustomPhilosophy] = useState(false);
