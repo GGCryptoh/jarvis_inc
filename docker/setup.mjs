@@ -68,13 +68,14 @@ function generatePassword(length = 20) {
 }
 
 // ─── Multi-Instance Configuration ─────────────────────────
-// Max 2 instances per machine. Each instance gets deterministic ports.
-const MAX_INSTANCES = 2;
+// Max 3 instances per machine. Each instance gets deterministic ports.
+const MAX_INSTANCES = 3;
 
 // Port allocation per instance slot (1-indexed)
 const PORT_TABLE = {
   1: { POSTGRES_PORT: 5432, KONG_HTTP_PORT: 8000, GATEWAY_PORT: 3001, CADDY_HTTP_PORT: 80,  CADDY_HTTPS_PORT: 443 },
   2: { POSTGRES_PORT: 5433, KONG_HTTP_PORT: 8001, GATEWAY_PORT: 3002, CADDY_HTTP_PORT: 81,  CADDY_HTTPS_PORT: 444 },
+  3: { POSTGRES_PORT: 5434, KONG_HTTP_PORT: 8002, GATEWAY_PORT: 3003, CADDY_HTTP_PORT: 82,  CADDY_HTTPS_PORT: 445 },
 };
 
 // Domain per instance slot

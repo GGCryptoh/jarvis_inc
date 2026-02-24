@@ -25,10 +25,10 @@ export default function App() {
   const { ready, initialized, ceoInitialized, error, reset, reinit } = useDatabase()
   const navigate = useNavigate()
 
-  // After ceremony, reinit DB state AND navigate to /surveillance
+  // After ceremony, reinit DB state AND navigate to /chat for CEO onboarding
   const handleCeremonyComplete = useCallback(async () => {
     await reinit()
-    navigate('/surveillance', { replace: true })
+    navigate('/chat', { replace: true })
   }, [reinit, navigate])
 
   // Fire CEO: remove CEO row + ceremony settings, then re-check DB state

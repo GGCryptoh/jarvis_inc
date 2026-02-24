@@ -223,17 +223,17 @@ export async function upsertInstance(data: {
   lan_hostname?: string | null;
 }) {
   const sql = getSQL();
+  // Core upsert without optional peer-discovery columns (local_ports, lan_hostname)
+  // to avoid 500s if those columns haven't been migrated yet
   const rows = await sql`
     INSERT INTO instances (id, repo_url, repo_type, nickname, description,
       avatar_color, avatar_icon, avatar_border, featured_skills,
-      skills_writeup, public_key, ip_hash, local_ports, lan_hostname,
+      skills_writeup, public_key, ip_hash,
       online, last_heartbeat)
     VALUES (${data.id}, ${data.repo_url}, ${data.repo_type}, ${data.nickname},
       ${data.description}, ${data.avatar_color}, ${data.avatar_icon},
       ${data.avatar_border}, ${data.featured_skills}, ${data.skills_writeup},
       ${data.public_key}, ${data.ip_hash},
-      ${data.local_ports ? JSON.stringify(data.local_ports) : null},
-      ${data.lan_hostname ?? null},
       true, now())
     ON CONFLICT (id) DO UPDATE SET
       nickname = EXCLUDED.nickname,
@@ -243,13 +243,24 @@ export async function upsertInstance(data: {
       avatar_border = EXCLUDED.avatar_border,
       featured_skills = EXCLUDED.featured_skills,
       skills_writeup = EXCLUDED.skills_writeup,
-      local_ports = COALESCE(EXCLUDED.local_ports, instances.local_ports),
-      lan_hostname = COALESCE(EXCLUDED.lan_hostname, instances.lan_hostname),
       online = true,
       last_heartbeat = now(),
       updated_at = now()
     RETURNING *
   `;
+
+  // Update optional peer-discovery columns if provided (ignore errors if columns don't exist)
+  if (data.local_ports || data.lan_hostname) {
+    try {
+      await sql`
+        UPDATE instances SET
+          local_ports = COALESCE(${data.local_ports ? JSON.stringify(data.local_ports) : null}::jsonb, local_ports),
+          lan_hostname = COALESCE(${data.lan_hostname ?? null}, lan_hostname)
+        WHERE id = ${data.id}
+      `;
+    } catch { /* columns may not exist yet — safe to ignore */ }
+  }
+
   return rows[0];
 }
 

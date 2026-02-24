@@ -388,8 +388,8 @@ export async function registerOnMarketplace(
       return { success: true, instanceId };
     } else {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      console.warn('[Marketplace] Registration failed:', err.error, err.debug ?? '');
-      return { success: false, error: err.error };
+      console.warn('[Marketplace] Registration failed:', res.status, err.error, err.detail ?? '', err.debug ?? '');
+      return { success: false, error: `${err.error}${err.detail ? ': ' + err.detail : ''}` };
     }
   } catch (err) {
     console.warn('[Marketplace] Registration request failed:', err);

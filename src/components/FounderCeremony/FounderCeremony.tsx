@@ -231,7 +231,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                     placeholder="Enter your name"
                     maxLength={30}
                     autoFocus
-                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
+                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40 transition-colors"
                     style={{ textShadow: '0 0 4px rgba(0,255,136,0.3)' }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -257,7 +257,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
                     onChange={(e) => setOrgName(e.target.value)}
                     placeholder="Enter org name"
                     maxLength={40}
-                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
+                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40 transition-colors"
                     style={{ textShadow: '0 0 4px rgba(0,255,136,0.3)' }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleActivate();
@@ -341,7 +341,7 @@ export default function FounderCeremony({ onComplete }: FounderCeremonyProps) {
               SYSTEMS ONLINE
             </div>
             <div className="font-pixel text-sm text-pixel-green/60 tracking-wider">
-              Welcome aboard, {founderName.toUpperCase()}. Entering command center...
+              Welcome aboard, {founderName.trim().toUpperCase()}. Entering command center...
             </div>
           </div>
         )}

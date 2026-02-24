@@ -175,21 +175,12 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
       saveKeyToLocalStorage(fileData);
 
       // Cache raw key for browser-side skill handlers (CEO marketplace commands)
-      // Set unlock to 'week' so signing persists through ceremony + sidecar gets vault key
-      setUnlockDuration('week');
+      // Auto-unlock forever during ceremony so founder never needs to manually unlock
+      setUnlockDuration('forever');
       cacheRawPrivateKey(keyPair.privateKey);
 
-      // Auto-register on marketplace (fire-and-forget, we have the raw private key)
-      registerOnMarketplace(keyPair.privateKey, keyPair.publicKey)
-        .then((result) => {
-          if (result.success) {
-            setMarketplaceResult('registered');
-          } else {
-            setMarketplaceResult('failed');
-            console.warn('[KeySetup] Marketplace registration failed:', result.error);
-          }
-        })
-        .catch(() => setMarketplaceResult('failed'));
+      // Marketplace registration deferred to after CEO ceremony (so we have full instance data)
+      // The raw key is cached above — registration happens in CEOCeremony or onboarding
 
       // Complete the progress animation
       setGenerationProgress(100);
@@ -427,7 +418,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                       onChange={(e) => { setUnlockPassword(e.target.value); setUnlockError(''); }}
                       placeholder="Master password"
                       autoFocus
-                      className="flex-1 bg-black border border-pixel-green/30 text-pixel-green font-mono text-sm px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20"
+                      className="flex-1 bg-black border border-pixel-green/30 text-pixel-green font-mono text-sm px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40"
                       onKeyDown={(e) => { if (e.key === 'Enter') handleUnlockSession(); }}
                     />
                     <button
@@ -527,10 +518,35 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                             </div>
                           ) : (
                             <button
-                              onClick={() => setShowRegisterForm(true)}
-                              className="font-pixel text-[8px] tracking-wider px-2 py-1 rounded border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 transition-colors"
+                              onClick={async () => {
+                                // If key is already unlocked, register immediately
+                                const rawKey = getCachedRawPrivateKey();
+                                if (rawKey && existingKey) {
+                                  setRegistering(true);
+                                  try {
+                                    const result = await registerOnMarketplace(rawKey, existingKey.publicKey);
+                                    if (result.success) {
+                                      setMarketplaceResult('registered');
+                                    } else {
+                                      setRegisterError(result.error || 'Registration failed');
+                                      setShowRegisterForm(true);
+                                    }
+                                  } catch {
+                                    setShowRegisterForm(true);
+                                  }
+                                  setRegistering(false);
+                                } else {
+                                  setShowRegisterForm(true);
+                                }
+                              }}
+                              disabled={registering}
+                              className={`font-pixel text-[8px] tracking-wider px-2 py-1 rounded border transition-colors ${
+                                registering
+                                  ? 'border-pixel-green/20 text-pixel-green/30 cursor-not-allowed'
+                                  : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
+                              }`}
                             >
-                              REGISTER NOW
+                              {registering ? 'REGISTERING...' : 'REGISTER NOW'}
                             </button>
                           )}
                         </div>
@@ -544,7 +560,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                               <input type="password" value={registerPassword}
                                 onChange={(e) => { setRegisterPassword(e.target.value); setRegisterError(''); }}
                                 placeholder="Master password" autoFocus
-                                className="flex-1 bg-black border border-pixel-green/30 text-pixel-green font-mono text-sm px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20"
+                                className="flex-1 bg-black border border-pixel-green/30 text-pixel-green font-mono text-sm px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40"
                                 onKeyDown={(e) => { if (e.key === 'Enter') handleRegisterExisting(); }}
                               />
                               <button onClick={handleRegisterExisting} disabled={!registerPassword || registering}
@@ -658,7 +674,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                                 <input type="text" value={profileNickname}
                                   onChange={(e) => setProfileNickname(e.target.value.substring(0, 24))} maxLength={24}
                                   placeholder="Max 24 characters"
-                                  className="w-full bg-black border border-pixel-green/30 text-pixel-green font-mono text-xs px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20"
+                                  className="w-full bg-black border border-pixel-green/30 text-pixel-green font-mono text-xs px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40"
                                 />
                               </div>
                               <div>
@@ -669,7 +685,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                                 <input type="text" value={profileDescription}
                                   onChange={(e) => setProfileDescription(e.target.value.substring(0, 200))} maxLength={200}
                                   placeholder="Max 200 characters"
-                                  className="w-full bg-black border border-pixel-green/30 text-pixel-green font-mono text-xs px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20"
+                                  className="w-full bg-black border border-pixel-green/30 text-pixel-green font-mono text-xs px-3 py-2 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40"
                                 />
                               </div>
                             </div>
@@ -880,7 +896,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                     }}
                     placeholder="Min 8 characters"
                     autoFocus
-                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
+                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40 transition-colors"
                     style={{ textShadow: '0 0 4px rgba(0,255,136,0.3)' }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -909,7 +925,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                       setError('');
                     }}
                     placeholder="Repeat password"
-                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/20 transition-colors"
+                    className="w-full bg-black border-2 border-pixel-green/30 text-pixel-green font-pixel text-base tracking-wider px-7 py-3 rounded-sm focus:outline-none focus:border-pixel-green/70 placeholder:text-pixel-green/40 transition-colors"
                     style={{ textShadow: '0 0 4px rgba(0,255,136,0.3)' }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleGenerate();
@@ -1086,34 +1102,8 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
                 <span className="font-pixel text-[10px] text-pixel-green/40 tracking-wider">
                   MARKETPLACE
                 </span>
-                <span className={`font-mono text-xs ${
-                  marketplaceResult === 'registered' ? 'text-pixel-green/70' :
-                  marketplaceResult === 'failed' ? 'text-amber-400/70' :
-                  marketplaceResult === 'retrying' ? 'text-pixel-cyan/70 animate-pulse' :
-                  'text-pixel-green/40 animate-pulse'
-                }`}>
-                  {marketplaceResult === 'registered' ? 'Registered' :
-                   marketplaceResult === 'retrying' ? 'Retrying...' :
-                   marketplaceResult === 'failed' ? (
-                     <button
-                       onClick={async () => {
-                         const rawKey = getCachedRawPrivateKey();
-                         const pub = keyData?.publicKey;
-                         if (!rawKey || !pub) return;
-                         setMarketplaceResult('retrying');
-                         try {
-                           const result = await registerOnMarketplace(rawKey, pub);
-                           setMarketplaceResult(result.success ? 'registered' : 'failed');
-                         } catch {
-                           setMarketplaceResult('failed');
-                         }
-                       }}
-                       className="text-amber-400/70 hover:text-amber-300 underline underline-offset-2 cursor-pointer"
-                     >
-                       Retry now
-                     </button>
-                   ) :
-                   'Registering...'}
+                <span className="font-mono text-xs text-pixel-green/40">
+                  After CEO setup
                 </span>
               </div>
             </div>

@@ -81,7 +81,7 @@ export default function NavBar() {
 
   useEffect(() => {
     fetchBadges();
-    const interval = setInterval(fetchBadges, 120_000); // refresh every 2 min
+    const interval = setInterval(fetchBadges, 30_000); // refresh every 30s
     return () => clearInterval(interval);
   }, [fetchBadges]);
 

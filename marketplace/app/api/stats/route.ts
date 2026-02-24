@@ -6,7 +6,7 @@ export async function GET() {
     const stats = await getPublicStats();
     return NextResponse.json(stats, {
       headers: {
-        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+        'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
       },
     });
   } catch (error) {

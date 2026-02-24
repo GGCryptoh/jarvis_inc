@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { getFounderInfo, saveCEO, saveVaultEntry, updateVaultEntry, getVaultEntryByService, saveMission, logAudit, saveApproval, loadApprovals } from '../../lib/database';
 import { MODEL_OPTIONS, getServiceForModel, SERVICE_KEY_HINTS, validateApiKeyFormat } from '../../lib/models';
+import { registerOnMarketplace, getCachedRawPrivateKey } from '../../lib/marketplaceClient';
+import { loadKeyFromLocalStorage } from '../../lib/jarvisKey';
 import { Check, X as XIcon, AlertTriangle } from 'lucide-react';
 
 interface CEOCeremonyProps {
@@ -87,7 +89,7 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
   useEffect(() => {
     if (phase !== 'intro') return;
     const lines = [
-      { text: `FOUNDER ${founderName.toUpperCase()} VERIFIED`, delay: 0 },
+      { text: `${founderName.toUpperCase()} VERIFIED`, delay: 0 },
       { text: '', delay: 400 },
       { text: 'Initializing executive layer...', delay: 800 },
       { text: '[OK] Strategic planning module', delay: 1400 },
@@ -135,9 +137,17 @@ export default function CEOCeremony({ onComplete }: CEOCeremonyProps) {
     }
   }, [phase, activationProgress]);
 
-  // Phase: done — brief pause then complete
+  // Phase: done — register on marketplace then complete
   useEffect(() => {
     if (phase !== 'done') return;
+    // Register on marketplace now that founder + CEO + key are all set
+    const rawKey = getCachedRawPrivateKey();
+    const keyData = loadKeyFromLocalStorage();
+    if (rawKey && keyData?.publicKey) {
+      registerOnMarketplace(rawKey, keyData.publicKey)
+        .then(r => { if (r.success) console.log('[CEOCeremony] Marketplace registered'); })
+        .catch(() => { /* sidecar will retry */ });
+    }
     const t = setTimeout(() => onComplete(), 1800);
     return () => clearTimeout(t);
   }, [phase, onComplete]);

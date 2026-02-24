@@ -254,6 +254,13 @@ function MissionDialog({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [error, setError] = useState('')
 
+  // ESC to close
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
   // Load available assignees
   const [assigneeOptions, setAssigneeOptions] = useState<string[]>([])
   useEffect(() => {
@@ -525,6 +532,12 @@ function MissionReviewDialog({ mission, onClose }: { mission: MissionRow; onClos
       setLoading(false)
     })
   }, [mission.id])
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose])
 
   const totalCost = tasks.reduce((sum: number, t: any) => sum + (t.cost_usd ?? 0), 0)
   const totalTokens = tasks.reduce((sum: number, t: any) => sum + (t.tokens_used ?? 0), 0)

@@ -219,14 +219,16 @@ function checkNoAgentsHired(
   missions: MissionRow[],
 ): CEOAction[] {
   if (agents.length > 0) return [];
-  if (missions.length === 0) return [];
+  // Only count active missions (not done/seeded ceremony ones)
+  const activeMissions = missions.filter(m => m.status !== 'done');
+  if (activeMissions.length === 0) return [];
 
   return [{
     id: makeActionId(),
     action_type: 'send_message',
     payload: {
       topic: 'no_agents',
-      message: `There are ${missions.length} mission(s) but no agents have been hired yet. Consider hiring agents to start working on them.`,
+      message: `There are ${activeMissions.length} mission(s) but no agents have been hired yet. Consider hiring agents to start working on them.`,
     },
     priority: 2,
   }];
@@ -1927,6 +1929,12 @@ async function checkVaultSigningKey(): Promise<CEOAction[]> {
 // ---------------------------------------------------------------------------
 
 export async function evaluateCycle(): Promise<CycleResult> {
+  // 0. Skip evaluation until CEO onboarding meeting is complete
+  const meetingDone = await getSetting('ceo_meeting_done');
+  if (!meetingDone) {
+    return { actions: [], dispatched: [] };
+  }
+
   // 1. Load current org state
   const [agents, missions, skills, approvals, ceo] = await Promise.all([
     loadAgents(),
