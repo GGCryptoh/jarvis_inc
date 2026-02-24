@@ -280,6 +280,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
   function handleDownload() {
     if (keyData) {
       downloadKeyFile(keyData);
+      localStorage.setItem('jarvis-key-downloaded', 'true');
       setDownloaded(true);
     }
   }
@@ -773,7 +774,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
 
                   {/* Action buttons */}
                   <div className="flex gap-3 max-w-lg mx-auto mb-4">
-                    <button onClick={() => { downloadKeyFile(existingKey); setDownloaded(true); }}
+                    <button onClick={() => { downloadKeyFile(existingKey); localStorage.setItem('jarvis-key-downloaded', 'true'); setDownloaded(true); }}
                       className={`flex-1 font-pixel text-[10px] tracking-[0.2em] py-3 rounded-sm border-2 transition-all duration-300 ${
                         downloaded
                           ? 'bg-pixel-green/5 border-pixel-green/30 text-pixel-green/50'

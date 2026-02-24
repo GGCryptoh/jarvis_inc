@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, Crown, Download, DatabaseZap } from 'lucide-react';
+import { AlertTriangle, Crown, Download, DatabaseZap, Key } from 'lucide-react';
 import { loadCEO, getFounderInfo, exportDatabaseAsJSON } from '../../lib/database';
+import { loadKeyFromLocalStorage, downloadKeyFile } from '../../lib/jarvisKey';
 import type { CEORow } from '../../lib/database';
 
 type ActionType = 'fire_ceo' | 'shutter' | 'reset';
@@ -22,11 +23,13 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
   const [clearFinancials, setClearFinancials] = useState(false);
   const [ceoRow, setCeoRow] = useState<CEORow | null>(null);
   const [founderInfo, setFounderInfo] = useState<{ founderName: string; orgName: string } | null>(null);
+  const [keyData, setKeyData] = useState<ReturnType<typeof loadKeyFromLocalStorage>>(null);
+  const [keyBackedUp, setKeyBackedUp] = useState(false);
 
   const ceoName = ceoRow?.name ?? 'CEO';
   const orgName = founderInfo?.orgName ?? 'JARVIS';
 
-  // Load CEO and founder info when dialog opens
+  // Load CEO, founder info, and key status when dialog opens
   useEffect(() => {
     if (open) {
       const load = async () => {
@@ -35,6 +38,9 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
         setFounderInfo(founder);
       };
       load();
+      const key = loadKeyFromLocalStorage();
+      setKeyData(key);
+      setKeyBackedUp(localStorage.getItem('jarvis-key-downloaded') === 'true');
     }
   }, [open]);
 
@@ -112,9 +118,13 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
       }
       // Small extra delay to allow download to start
       await new Promise((r) => setTimeout(r, 500));
+      // Clear all browser-cached keys and marketplace state
+      localStorage.clear();
       onClose();
       onResetDB({ keepMemory, clearFinancials });
     } else {
+      // Clear all browser-cached keys and marketplace state
+      localStorage.clear();
       onClose();
       onResetDB({ keepMemory, clearFinancials });
     }
@@ -268,8 +278,28 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                     <p className="text-zinc-500 text-[10px] mt-0.5">Wipe LLM usage costs and channel usage records</p>
                   </div>
                 </label>
+                {keyData && !keyBackedUp && (
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded bg-amber-500/10 border border-amber-500/30 mb-4">
+                    <Key size={16} className="text-amber-400 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-amber-400 text-xs font-semibold">Signing key not backed up</p>
+                      <p className="text-zinc-500 text-[10px] mt-0.5">Your marketplace identity will be lost without a backup</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        downloadKeyFile(keyData);
+                        localStorage.setItem('jarvis-key-downloaded', 'true');
+                        setKeyBackedUp(true);
+                      }}
+                      className="px-3 py-1.5 text-[10px] font-bold text-amber-400 border border-amber-500/40 rounded hover:bg-amber-500/20 transition-colors whitespace-nowrap"
+                    >
+                      DOWNLOAD KEY
+                    </button>
+                  </div>
+                )}
                 <p className="text-jarvis-muted text-xs">
                   After download, the system will be fully wiped. You&apos;ll return to the Founder Registration ceremony.
+                  {keyData && <span className="text-amber-400/80"> Browser key storage will also be cleared.</span>}
                 </p>
               </>
             )}
@@ -321,8 +351,28 @@ export default function ResetDBDialog({ open, onClose, onResetDB, onFireCEO }: R
                     <p className="text-zinc-500 text-[10px] mt-0.5">Wipe LLM usage costs and channel usage records</p>
                   </div>
                 </label>
+                {keyData && !keyBackedUp && (
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded bg-amber-500/10 border border-amber-500/30 mb-4">
+                    <Key size={16} className="text-amber-400 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-amber-400 text-xs font-semibold">Signing key not backed up</p>
+                      <p className="text-zinc-500 text-[10px] mt-0.5">Your marketplace identity will be lost without a backup</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        downloadKeyFile(keyData);
+                        localStorage.setItem('jarvis-key-downloaded', 'true');
+                        setKeyBackedUp(true);
+                      }}
+                      className="px-3 py-1.5 text-[10px] font-bold text-amber-400 border border-amber-500/40 rounded hover:bg-amber-500/20 transition-colors whitespace-nowrap"
+                    >
+                      DOWNLOAD KEY
+                    </button>
+                  </div>
+                )}
                 <p className="text-jarvis-muted text-xs">
                   You will be returned to the Founder Registration ceremony.
+                  {keyData && <span className="text-amber-400/80"> Browser key storage will also be cleared.</span>}
                 </p>
               </>
             )}
