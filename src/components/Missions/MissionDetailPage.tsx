@@ -500,12 +500,12 @@ export default function MissionDetailPage() {
         )}
       </div>
 
-      {/* CEO Summary — quick-glance output for single-task missions */}
-      {!summaryOutput && regularTasks.length > 0 && regularTasks[0]?.result?.output && (
+      {/* CEO Summary — only show if auto_summary exists (plain text from CEO) */}
+      {!summaryOutput && regularTasks.length > 0 && regularTasks[0]?.result?.auto_summary && (
         <div className="mb-5 bg-jarvis-surface border border-jarvis-border rounded-lg p-4">
           <div className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider mb-2">CEO SUMMARY</div>
-          <div className="text-sm text-zinc-300 leading-relaxed line-clamp-6">
-            <RichResultDisplay text={regularTasks[0].result.auto_summary || regularTasks[0].result.output.slice(0, 1500)} />
+          <div className="text-sm text-zinc-300 leading-relaxed">
+            <RichResultDisplay text={regularTasks[0].result.auto_summary} />
           </div>
         </div>
       )}
