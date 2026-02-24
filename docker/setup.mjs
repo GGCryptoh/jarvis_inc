@@ -615,6 +615,19 @@ async function waitForServices(domain, tls) {
     } catch { /* ignore */ }
   }
 
+  // Restart Kong last — after all upstream services have stabilized — so it resolves
+  // fresh container IPs. Without this, Kong caches stale IPs from before restarts → 502s.
+  try {
+    execSync(
+      'docker compose restart supabase-kong',
+      { cwd: COMPOSE_PATH, encoding: 'utf-8', stdio: 'pipe', timeout: 30000 }
+    );
+    await new Promise(r => setTimeout(r, 3000));
+    console.log(`  ${green('✓')} Kong restarted ${dim('— refreshed upstream IPs')}`);
+  } catch {
+    console.log(`  ${dim('○')} Kong restart ${dim('— skipped')}`);
+  }
+
   // DB readiness gate: if Phase 1.5 timed out, the DB may still have been initializing.
   // Now that HTTP services are online, verify psql can actually connect before Phases 3-5.
   let dbReady = false;
