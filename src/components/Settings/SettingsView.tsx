@@ -962,6 +962,184 @@ export default function SettingsView() {
       </div>
 
       {/* ================================================================ */}
+      {/* System Administration                                            */}
+      {/* ================================================================ */}
+      <div className="mb-6">
+        <button onClick={() => toggleSection('sysadmin')}
+          className="w-full flex items-center gap-3 mb-3 hover:opacity-80 transition-opacity">
+          <ChevronRight size={14} className={`text-emerald-400 transition-transform ${expandedSections.has('sysadmin') ? 'rotate-90' : ''}`} />
+          <Server size={16} className="text-emerald-400" />
+          <h2 className="font-pixel text-[12px] tracking-widest text-emerald-400">SYSTEM ADMINISTRATION</h2>
+        </button>
+
+        {expandedSections.has('sysadmin') && (
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5 space-y-6">
+            {/* Auto-Updates */}
+            <div>
+              <h3 className="font-pixel text-[10px] tracking-wider text-cyan-400 mb-3">AUTO-UPDATES</h3>
+              <p className="text-zinc-400 text-xs mb-3">Keep Jarvis up to date automatically. The update system checks the marketplace for new versions, pulls from git, reinstalls dependencies, and restarts Docker.</p>
+              <div className="space-y-2">
+                {[
+                  { cmd: 'npm run update', desc: 'Check & apply updates' },
+                  { cmd: 'npm run update:cron', desc: 'Install weekly auto-update cron (Mac/Linux)' },
+                  { cmd: 'npm run update:force', desc: 'Force update even if version matches' },
+                ].map(({ cmd, desc }) => (
+                  <div key={cmd} className="flex items-center gap-2 group">
+                    <code className="flex-1 bg-black/40 rounded px-3 py-1.5 text-pixel-green text-xs font-mono">{cmd}</code>
+                    <span className="text-zinc-500 text-[10px] hidden sm:inline">{desc}</span>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(cmd); }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300"
+                      title="Copy"
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-zinc-600 text-[10px] mt-2">Logs: <code className="text-zinc-500">logs/auto-update.log</code></p>
+            </div>
+
+            {/* Reboot Persistence */}
+            <div>
+              <h3 className="font-pixel text-[10px] tracking-wider text-cyan-400 mb-3">REBOOT PERSISTENCE</h3>
+              <p className="text-zinc-400 text-xs mb-3">
+                Docker containers restart automatically (<code className="text-zinc-300">restart: unless-stopped</code>), but the Vite dev server needs a startup entry.
+              </p>
+              {(() => {
+                const ua = navigator.userAgent.toLowerCase();
+                const isMac = ua.includes('mac');
+                const isWindows = ua.includes('win');
+                const isLinux = ua.includes('linux');
+
+                if (isMac) return (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-pixel text-[8px] tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">macOS</span>
+                      <span className="text-zinc-400 text-[10px]">Launch Agent — starts Jarvis on login</span>
+                    </div>
+                    <p className="text-zinc-500 text-[10px]">The setup script offers to install this automatically. To install manually:</p>
+                    {[
+                      'npm run jarvis  # setup creates the Launch Agent if you accept',
+                      'launchctl load ~/Library/LaunchAgents/com.jarvis.inc.plist',
+                      'launchctl unload ~/Library/LaunchAgents/com.jarvis.inc.plist  # to remove',
+                    ].map((cmd) => (
+                      <div key={cmd} className="flex items-center gap-2 group">
+                        <code className="flex-1 bg-black/40 rounded px-3 py-1.5 text-pixel-green text-xs font-mono">{cmd}</code>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(cmd.split('  #')[0]); }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300"
+                          title="Copy"
+                        >
+                          <Copy size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+
+                if (isLinux) return (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-pixel text-[8px] tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">Linux</span>
+                      <span className="text-zinc-400 text-[10px]">systemd service — starts Jarvis on boot</span>
+                    </div>
+                    <details className="group">
+                      <summary className="text-zinc-400 text-xs cursor-pointer hover:text-zinc-300 transition-colors">Show systemd unit file</summary>
+                      <pre className="mt-2 bg-black/40 rounded px-3 py-2 text-pixel-green text-[10px] font-mono overflow-x-auto whitespace-pre">{`[Unit]
+Description=Jarvis Inc
+After=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/jarvis_inc
+ExecStart=/usr/bin/npm run jarvis
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target`}</pre>
+                    </details>
+                    {[
+                      'sudo cp jarvis.service /etc/systemd/system/',
+                      'sudo systemctl enable jarvis && sudo systemctl start jarvis',
+                      'journalctl -u jarvis -f  # view logs',
+                    ].map((cmd) => (
+                      <div key={cmd} className="flex items-center gap-2 group mt-1">
+                        <code className="flex-1 bg-black/40 rounded px-3 py-1.5 text-pixel-green text-xs font-mono">{cmd}</code>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(cmd.split('  #')[0]); }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300"
+                          title="Copy"
+                        >
+                          <Copy size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+
+                if (isWindows) return (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-pixel text-[8px] tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">Windows</span>
+                      <span className="text-zinc-400 text-[10px]">Task Scheduler — starts Jarvis on logon</span>
+                    </div>
+                    <p className="text-zinc-500 text-[10px]">Run in PowerShell as Administrator:</p>
+                    {[
+                      `schtasks /create /tn "Jarvis Inc" /tr "npm run jarvis" /sc onlogon /rl highest`,
+                      `schtasks /delete /tn "Jarvis Inc" /f  # to remove`,
+                    ].map((cmd) => (
+                      <div key={cmd} className="flex items-center gap-2 group">
+                        <code className="flex-1 bg-black/40 rounded px-3 py-1.5 text-pixel-green text-xs font-mono">{cmd}</code>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(cmd.split('  #')[0]); }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300"
+                          title="Copy"
+                        >
+                          <Copy size={12} />
+                        </button>
+                      </div>
+                    ))}
+                    <p className="text-zinc-500 text-[10px] mt-1">Or: <strong>Task Scheduler GUI</strong> &rarr; Create Basic Task &rarr; trigger &ldquo;At log on&rdquo; &rarr; action &ldquo;Start a program&rdquo; &rarr; <code className="text-zinc-400">npm run jarvis</code></p>
+                  </div>
+                );
+
+                // Fallback — show all
+                return (
+                  <p className="text-zinc-500 text-xs">See README.md for platform-specific reboot persistence instructions (Launch Agent, systemd, Task Scheduler).</p>
+                );
+              })()}
+            </div>
+
+            {/* Docker Management */}
+            <div>
+              <h3 className="font-pixel text-[10px] tracking-wider text-cyan-400 mb-3">DOCKER MANAGEMENT</h3>
+              <div className="space-y-2">
+                {[
+                  { cmd: 'docker compose -f docker/docker-compose.yml restart', desc: 'Restart all services' },
+                  { cmd: 'docker compose -f docker/docker-compose.yml build jarvis-ceo && docker compose -f docker/docker-compose.yml up -d jarvis-ceo', desc: 'Rebuild sidecar' },
+                  { cmd: 'docker compose -f docker/docker-compose.yml logs -f jarvis-ceo', desc: 'View sidecar logs' },
+                  { cmd: 'npm run jarvis', desc: 'Full reset — re-run setup' },
+                ].map(({ cmd, desc }) => (
+                  <div key={cmd} className="flex items-center gap-2 group">
+                    <code className="flex-1 bg-black/40 rounded px-3 py-1.5 text-pixel-green text-[10px] font-mono truncate" title={cmd}>{cmd}</code>
+                    <span className="text-zinc-500 text-[10px] hidden sm:inline whitespace-nowrap">{desc}</span>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(cmd); }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-zinc-300 shrink-0"
+                      title="Copy"
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ================================================================ */}
       {/* Intelligence Management                                          */}
       {/* ================================================================ */}
       <div className="mb-6">

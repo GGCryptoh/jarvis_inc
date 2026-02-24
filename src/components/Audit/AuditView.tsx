@@ -327,7 +327,7 @@ export default function AuditView() {
           {/* A2A Log */}
           <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl overflow-hidden">
             {/* Table Header */}
-            <div className="grid grid-cols-[140px_32px_110px_1fr_40px] gap-3 px-5 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+            <div className="grid grid-cols-[140px_32px_140px_1fr_40px] gap-3 px-5 py-3 border-b border-white/[0.06] bg-white/[0.02]">
               <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Time</span>
               <span />
               <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Action</span>
@@ -356,7 +356,7 @@ export default function AuditView() {
                   <div
                     key={entry.id}
                     className={[
-                      'grid grid-cols-[140px_32px_110px_1fr_40px] gap-3 px-5 py-3 border-b border-white/[0.04] border-l-[3px] items-center transition-colors hover:bg-white/[0.03]',
+                      'grid grid-cols-[140px_32px_140px_1fr_40px] gap-3 px-5 py-3 border-b border-white/[0.04] border-l-[3px] items-center transition-colors hover:bg-white/[0.03]',
                       a2aCategoryColors[cat],
                       idx % 2 === 1 ? 'bg-white/[0.015]' : '',
                     ].join(' ')}
@@ -463,7 +463,7 @@ export default function AuditView() {
       {/* Log Table */}
       <div className="bg-jarvis-surface border border-white/[0.06] rounded-xl overflow-hidden">
         {/* Table Header */}
-        <div className="grid grid-cols-[160px_110px_120px_1fr_50px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+        <div className="grid grid-cols-[160px_110px_160px_1fr_50px] gap-4 px-6 py-3 border-b border-white/[0.06] bg-white/[0.02]">
           <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Timestamp</span>
           <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Agent</span>
           <span className="text-xs font-semibold text-jarvis-muted uppercase tracking-wider">Action</span>
@@ -485,7 +485,7 @@ export default function AuditView() {
             <div
               key={entry.id}
               className={[
-                'grid grid-cols-[160px_110px_120px_1fr_50px] gap-4 px-6 py-3.5 border-b border-white/[0.04] border-l-[3px] items-center transition-colors hover:bg-white/[0.03]',
+                'grid grid-cols-[160px_110px_160px_1fr_50px] gap-4 px-6 py-3.5 border-b border-white/[0.04] border-l-[3px] items-center transition-colors hover:bg-white/[0.03]',
                 severityBorderColors[entry.severity] ?? 'border-l-zinc-600',
                 idx % 2 === 1 ? 'bg-white/[0.015]' : '',
               ].join(' ')}
@@ -496,8 +496,8 @@ export default function AuditView() {
               <span className="text-sm font-bold text-jarvis-text">
                 {entry.agent ?? 'SYSTEM'}
               </span>
-              <div>
-                <span className="inline-block px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-jarvis-text bg-white/[0.06] border border-white/[0.1] rounded-md">
+              <div className="overflow-hidden">
+                <span className="inline-block max-w-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-jarvis-text bg-white/[0.06] border border-white/[0.1] rounded-md truncate">
                   {entry.action}
                 </span>
               </div>

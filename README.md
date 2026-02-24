@@ -33,7 +33,9 @@ npm install
 npm run jarvis
 ```
 
-This runs `setup --auto` (generates secrets, starts Docker, waits for all services) then `npm run dev`. Open [http://localhost:5173](http://localhost:5173).
+This runs `setup --auto` (generates secrets, starts Docker, waits for all services) then `npm run dev`. Open [https://jarvis.local](https://jarvis.local) (requires hosts entry — see Step 2 below) or [http://localhost:5173](http://localhost:5173).
+
+> **Important:** Always use `jarvis.local` instead of `localhost:PORT`. Your marketplace identity, chat history, and session data are stored in localStorage which is per-origin. Switching ports loses your data.
 
 > **Prerequisites:** Node.js >= 18, Docker (running), git. The install script checks all of these and tells you what's missing.
 
@@ -48,13 +50,13 @@ This runs `setup --auto` (generates secrets, starts Docker, waits for all servic
 | `npm run build` | TypeScript check + Vite production build → `dist/` |
 | `npm run preview` | Preview production build locally |
 
-### Surviving a Mac Reboot
+### Surviving a Reboot
 
-Docker Desktop restarts containers automatically (`restart: unless-stopped`), but the Vite dev server needs to be restarted. Two options:
+Docker containers restart automatically (`restart: unless-stopped`), but the Vite dev server needs a startup entry. Choose your platform:
 
-**Option A: Launch Agent (recommended)**
+#### macOS — Launch Agent (recommended)
 
-Create a macOS Launch Agent that runs `npm run jarvis` at login:
+The setup script (`npm run jarvis`) offers to install this automatically. To install manually:
 
 ```bash
 cat > ~/Library/LaunchAgents/com.jarvis.inc.plist << 'PLIST'
@@ -96,25 +98,57 @@ launchctl load ~/Library/LaunchAgents/com.jarvis.inc.plist
 launchctl unload ~/Library/LaunchAgents/com.jarvis.inc.plist
 ```
 
-**Option B: Login Item**
+**Alternative: Login Item** — Create `~/start-jarvis.sh` with `npm run jarvis`, then add via **System Settings > General > Login Items**.
+
+#### Linux — systemd
 
 ```bash
-cat > ~/start-jarvis.sh << 'EOF'
-#!/bin/bash
-cd /path/to/jarvis_inc
-npm run jarvis >> /tmp/jarvis.log 2>&1
+sudo tee /etc/systemd/system/jarvis.service << 'EOF'
+[Unit]
+Description=Jarvis Inc
+After=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/jarvis_inc
+ExecStart=/usr/bin/npm run jarvis
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
 EOF
-chmod +x ~/start-jarvis.sh
+
+# Enable and start
+sudo systemctl enable jarvis
+sudo systemctl start jarvis
+
+# View logs
+journalctl -u jarvis -f
 ```
 
-Then: **System Settings > General > Login Items > +** and select `~/start-jarvis.sh`.
+Replace `/path/to/jarvis_inc` with your actual path. Adjust the npm path if needed (`which npm`).
 
-**Verify after reboot:**
+#### Windows — Task Scheduler
+
+**PowerShell (as Administrator):**
+
+```powershell
+schtasks /create /tn "Jarvis Inc" /tr "cmd /c cd /d C:\path\to\jarvis_inc && npm run jarvis" /sc onlogon /rl highest
+```
+
+**Or via GUI:** Task Scheduler > Create Basic Task > trigger "At log on" > action "Start a program" > `npm run jarvis` with "Start in" set to your jarvis_inc folder.
+
+```powershell
+# To remove
+schtasks /delete /tn "Jarvis Inc" /f
+```
+
+#### Verify after reboot
 
 ```bash
 docker ps | grep jarvis          # containers running?
 curl -s http://localhost:5173    # dev server up?
-tail -50 /tmp/jarvis.log         # check logs
+tail -50 /tmp/jarvis.log         # check logs (Mac/Linux)
 ```
 
 ### Docker (Frontend Only)

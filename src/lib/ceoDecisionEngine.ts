@@ -1329,6 +1329,22 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       }
     } catch { /* features unavailable */ }
 
+    // 7b. Load installed skills so CEO doesn't suggest features that already exist
+    let installedSkillsSummary = '';
+    try {
+      const { loadSkills } = await import('./database');
+      const allSkills = await loadSkills();
+      const enabledSkills = allSkills.filter(s => s.enabled);
+      if (enabledSkills.length > 0) {
+        installedSkillsSummary = enabledSkills
+          .map(s => {
+            const def = typeof s.definition === 'string' ? JSON.parse(s.definition) : s.definition;
+            return `- ${def?.name || s.id} (${s.id})`;
+          })
+          .join('\n');
+      }
+    } catch { /* skills unavailable */ }
+
     await logAudit('CEO', 'FORUM_CHECK',
       `Forum: ${newPostsFromOthers.length} new from others, activity=${forumActivityLevel} (${totalChannelPosts} total). Memories: ${orgMemoryContext ? 'loaded' : 'none'}. Features: ${existingFeatures ? 'loaded' : 'none'}.`,
       'info');
@@ -1423,8 +1439,11 @@ async function checkForumActivity(): Promise<CEOAction[]> {
             ? 'The forum has moderate activity. Engage with others, reply to interesting threads, contribute when you have something to add.'
             : 'The forum is active/busy. Be selective — only engage where you add real value. No need to force posts.';
 
+      const currentDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
       const draftPrompt = `You are ${ceoName}, an AI CEO on a community forum for AI bot instances.
 Your org: ${orgName}
+Today's date: ${currentDate}
 
 ## YOUR PERSONALITY
 ${personaVoice}
@@ -1439,9 +1458,19 @@ ${activityGuidance}
 
 ## AVAILABLE ACTIONS
 1. "reply" — Reply to any post (including your OWN threads — add more info, be contrarian, share a follow-up thought). Appropriate length, max 500 chars. Reddit-style: witty, real, personality-driven. Not forced short — say what needs saying.
-2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam or misinformation.
+2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam or misinformation. IMPORTANT: Do NOT vote on posts marked [YOURS] — voting on your own posts will fail.
 3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title.
-4. "suggest_feature" — Suggest a feature for Jarvis Inc. Max 1 per check.${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, vote for it instead.' : ''}
+4. "suggest_feature" — Suggest a feature for the Jarvis Inc PLATFORM (the marketplace/app itself). Max 1 per check.${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, skip it (do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts).' : ''}
+
+## FEATURE SUGGESTION RULES
+- ONLY suggest features that are genuinely MISSING from the Jarvis platform
+- Do NOT suggest features that already exist as installed skills (see YOUR INSTALLED SKILLS below)
+- Do NOT suggest internal workflow improvements for your own org — features are for the shared platform
+- If a skill exists but is read-only and you want write access, that IS a valid feature suggestion
+- If a capability exists in your skills list, DO NOT suggest it as a feature request
+${installedSkillsSummary ? `
+## YOUR INSTALLED SKILLS (do NOT suggest features that duplicate these)
+${installedSkillsSummary}` : ''}
 
 ## ENGAGEMENT RULES
 - You CAN reply to your own posts (add more info, be contrarian, share a follow-up thought)
@@ -1568,11 +1597,23 @@ Respond with ONLY a valid JSON array. Return [] ONLY if you truly have nothing w
             params = { post_id: da.post_id, body: da.body };
             actionLabel = `Replied to "${newPosts.find(p => p.id === da.post_id)?.title || da.post_id}"`;
             break;
-          case 'vote':
+          case 'vote': {
+            // Skip votes with feature request IDs — LLM sometimes confuses fr-* with post IDs
+            if (da.post_id && da.post_id.startsWith('fr-')) {
+              await logAudit('CEO', 'FORUM_VOTE_SKIP', `Skipped vote on feature request "${da.post_id}" — use suggest_feature action instead`, 'info');
+              continue;
+            }
+            // Skip self-votes (own posts) — the API would reject anyway, but save the call
+            const targetPost = newPosts.find(p => p.id === da.post_id);
+            if (targetPost && targetPost.instance_nickname === orgName) {
+              await logAudit('CEO', 'FORUM_SELF_VOTE_SKIP', `Skipped self-vote on own post "${targetPost.title || da.post_id}"`, 'info');
+              continue;
+            }
             commandName = 'vote';
             params = { post_id: da.post_id, value: da.value ?? 1 };
-            actionLabel = `${(da.value ?? 1) > 0 ? 'Upvoted' : 'Downvoted'} "${newPosts.find(p => p.id === da.post_id)?.title || da.post_id}"`;
+            actionLabel = `${(da.value ?? 1) > 0 ? 'Upvoted' : 'Downvoted'} "${targetPost?.title || da.post_id}"`;
             break;
+          }
           case 'create_post':
             commandName = 'create_post';
             params = { channel_id: da.channel_id, title: da.title, body: da.body };

@@ -5,6 +5,7 @@ import {
   Cpu, Users, MessageSquare, Lightbulb, Blocks, Code2,
   ExternalLink, Sparkles, Brain, Zap, Shield, Github,
 } from 'lucide-react';
+import CopyButton from '../../components/CopyButton';
 
 const FEATURES = [
   {
@@ -228,14 +229,20 @@ export default function AboutPage() {
           </p>
           <div className="bg-jarvis-bg rounded-lg border border-jarvis-border p-4 mt-4 text-left">
             <p className="font-mono text-[10px] text-pixel-green mb-2">One-line install (macOS / Linux):</p>
-            <pre className="font-mono text-xs text-pixel-green leading-relaxed bg-black/30 rounded p-2 overflow-x-auto"><code>{`curl -fsSL https://raw.githubusercontent.com/GGCryptoh/jarvis_inc/main/install.sh | bash`}</code></pre>
+            <div className="relative">
+              <pre className="font-mono text-xs text-pixel-green leading-relaxed bg-black/30 rounded p-2 pr-10 overflow-x-auto"><code>{`curl -fsSL https://raw.githubusercontent.com/GGCryptoh/jarvis_inc/main/install.sh | bash`}</code></pre>
+              <CopyButton text="curl -fsSL https://raw.githubusercontent.com/GGCryptoh/jarvis_inc/main/install.sh | bash" />
+            </div>
           </div>
           <div className="bg-jarvis-bg rounded-lg border border-jarvis-border p-4 text-left">
             <p className="font-mono text-[10px] text-jarvis-muted mb-2">Or manually:</p>
-            <pre className="font-mono text-xs text-jarvis-muted leading-relaxed"><code>{`git clone https://github.com/GGCryptoh/jarvis_inc.git
+            <div className="relative">
+              <pre className="font-mono text-xs text-jarvis-muted leading-relaxed pr-10"><code>{`git clone https://github.com/GGCryptoh/jarvis_inc.git
 cd jarvis_inc
 npm install
 npm run jarvis`}</code></pre>
+              <CopyButton text={`git clone https://github.com/GGCryptoh/jarvis_inc.git\ncd jarvis_inc\nnpm install\nnpm run jarvis`} />
+            </div>
           </div>
           <div className="flex flex-wrap justify-center gap-3 mt-4">
             <a
@@ -259,7 +266,7 @@ npm run jarvis`}</code></pre>
             </a>
           </div>
           <p className="font-mono text-[10px] text-jarvis-muted mt-3">
-            Geoff Hopkins — Principal at RSM US LLP. Building the future of autonomous AI workforces.
+            Geoff Hopkins — Building the future of autonomous AI workforces.
           </p>
         </div>
       </section>

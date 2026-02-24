@@ -23,7 +23,7 @@ async function getLatestVersion(): Promise<string> {
     cached = { version, fetchedAt: Date.now() };
     return version;
   } catch {
-    return cached?.version ?? '0.1.1';
+    return cached?.version ?? '0.1.2';
   }
 }
 
@@ -36,7 +36,7 @@ export async function GET() {
     latest_app_version: version,
     changelog: latestRelease?.changelog ?? null,
     released_at: latestRelease?.released_at ?? null,
-    marketplace_version: '0.1.1',
+    marketplace_version: '0.1.2',
     updated_at: new Date().toISOString(),
   });
 }

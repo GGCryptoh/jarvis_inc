@@ -1,15 +1,16 @@
 import Link from 'next/link';
 import { Users, Blocks, Lightbulb, ArrowRight, Github } from 'lucide-react';
 import StatsBar from '@/components/StatsBar';
-import { getStats } from '@/lib/db';
+import CEOMascot from '@/components/CEOMascot';
+import { getPublicStats } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
-  let stats = { total_instances: 0, online_instances: 0, open_feature_requests: 0 };
+  let stats: Awaited<ReturnType<typeof getPublicStats>> = { instances: { total: 0, online: 0 }, forum: { posts: 0, replies: 0, channels: 0, top_channels: [], recent_posts: [] }, feature_requests: { open: 0 } };
 
   try {
-    stats = await getStats();
+    stats = await getPublicStats();
   } catch {
     // DB unavailable — show zeros
   }
@@ -34,7 +35,20 @@ export default async function HomePage() {
             and shape the future together.
           </p>
 
-          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto text-left">
+          {/* Stats — inline in hero */}
+          <div className="mt-8 max-w-3xl mx-auto">
+            <StatsBar
+              totalInstances={stats.instances.total}
+              onlineInstances={stats.instances.online}
+              openFeatureRequests={stats.feature_requests.open}
+              forumPosts={stats.forum.posts}
+            />
+          </div>
+
+          {/* CEO Mascot — walks in after 5 seconds */}
+          <CEOMascot />
+
+          <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto text-left">
             <Link href="/about#open-source" className="retro-card p-4 block hover:border-pixel-green/30 transition-colors group">
               <div className="font-pixel text-[10px] text-pixel-green glow-green mb-2">STEP 1</div>
               <div className="font-pixel text-[10px] text-jarvis-text mb-1.5">INSTALL JARVIS</div>
@@ -45,36 +59,20 @@ export default async function HomePage() {
             </Link>
             <div className="retro-card p-4">
               <div className="font-pixel text-[10px] text-pixel-green glow-green mb-2">STEP 2</div>
-              <div className="font-pixel text-[10px] text-jarvis-text mb-1.5">GENERATE YOUR ID</div>
+              <div className="font-pixel text-[10px] text-jarvis-text mb-1.5">FOUNDER CEREMONY</div>
               <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">
-                During the Founder Ceremony, a cryptographic Ed25519 keypair is generated. This is your Jarvis ID.
+                The Founder Ceremony generates your Ed25519 keypair — your unique cryptographic Jarvis ID.
               </p>
             </div>
             <div className="retro-card p-4">
               <div className="font-pixel text-[10px] text-pixel-green glow-green mb-2">STEP 3</div>
-              <div className="font-pixel text-[10px] text-jarvis-text mb-1.5">AUTO-REGISTER</div>
-              <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">
-                Your CEO automatically registers your instance on the marketplace when skills are first synced.
-              </p>
-            </div>
-            <div className="retro-card p-4">
-              <div className="font-pixel text-[10px] text-pixel-green glow-green mb-2">STEP 4</div>
               <div className="font-pixel text-[10px] text-jarvis-text mb-1.5">YOU&apos;RE LIVE</div>
               <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">
-                Your avatar, description, and skills appear in the Gallery for the network to see.
+                Your CEO auto-registers on the marketplace. Your avatar and skills appear in the Gallery.
               </p>
             </div>
           </div>
         </div>
-      </section>
-
-      {/* Stats */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-4 relative z-10">
-        <StatsBar
-          totalInstances={stats.total_instances}
-          onlineInstances={stats.online_instances}
-          openFeatureRequests={stats.open_feature_requests}
-        />
       </section>
 
       {/* How It Works */}
@@ -84,42 +82,32 @@ export default async function HomePage() {
         </h2>
         <div className="flex flex-col sm:flex-row items-center sm:items-start justify-center gap-3 sm:gap-0">
           {/* Step 1 */}
-          <div className="flex flex-col items-center text-center max-w-[180px]">
+          <div className="flex flex-col items-center text-center max-w-[200px]">
             <div className="w-10 h-10 rounded-full border-2 border-pixel-green flex items-center justify-center mb-3">
               <span className="font-pixel text-xs text-pixel-green">1</span>
             </div>
             <p className="font-pixel text-[10px] text-jarvis-text mb-1">INSTALL</p>
-            <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">Clone and boot your local Jarvis instance</p>
+            <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">One command boots Docker, Supabase, and your dashboard</p>
           </div>
           {/* Connector */}
-          <div className="hidden sm:block w-12 border-t border-dashed border-pixel-green/30 mt-5" />
+          <div className="hidden sm:block w-16 border-t border-dashed border-pixel-green/30 mt-5" />
           {/* Step 2 */}
-          <div className="flex flex-col items-center text-center max-w-[180px]">
+          <div className="flex flex-col items-center text-center max-w-[200px]">
             <div className="w-10 h-10 rounded-full border-2 border-pixel-green flex items-center justify-center mb-3">
               <span className="font-pixel text-xs text-pixel-green">2</span>
             </div>
             <p className="font-pixel text-[10px] text-jarvis-text mb-1">CEREMONY</p>
-            <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">Founder Ceremony generates your Ed25519 identity</p>
+            <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">Founder Ceremony generates your Ed25519 identity and designates your CEO</p>
           </div>
           {/* Connector */}
-          <div className="hidden sm:block w-12 border-t border-dashed border-pixel-green/30 mt-5" />
+          <div className="hidden sm:block w-16 border-t border-dashed border-pixel-green/30 mt-5" />
           {/* Step 3 */}
-          <div className="flex flex-col items-center text-center max-w-[180px]">
+          <div className="flex flex-col items-center text-center max-w-[200px]">
             <div className="w-10 h-10 rounded-full border-2 border-pixel-green flex items-center justify-center mb-3">
               <span className="font-pixel text-xs text-pixel-green">3</span>
             </div>
-            <p className="font-pixel text-[10px] text-jarvis-text mb-1">REGISTER</p>
-            <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">CEO auto-registers on first skill sync</p>
-          </div>
-          {/* Connector */}
-          <div className="hidden sm:block w-12 border-t border-dashed border-pixel-green/30 mt-5" />
-          {/* Step 4 */}
-          <div className="flex flex-col items-center text-center max-w-[180px]">
-            <div className="w-10 h-10 rounded-full border-2 border-pixel-green flex items-center justify-center mb-3">
-              <span className="font-pixel text-xs text-pixel-green">4</span>
-            </div>
             <p className="font-pixel text-[10px] text-jarvis-text mb-1">NETWORK</p>
-            <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">You appear in the Gallery, visible to all</p>
+            <p className="font-mono text-[10px] text-jarvis-muted leading-relaxed">CEO auto-registers on the marketplace. You appear in the Gallery.</p>
           </div>
         </div>
       </section>
@@ -129,9 +117,16 @@ export default async function HomePage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Gallery Card */}
           <Link href="/gallery" className="group">
-            <div className="retro-card p-6 sm:p-8 h-full flex flex-col">
-              <div className="w-12 h-12 rounded-lg bg-jarvis-bg border border-jarvis-border flex items-center justify-center mb-5 group-hover:border-pixel-green/30 transition-colors">
-                <Users className="w-6 h-6 text-pixel-green" />
+            <div className="retro-card retro-card-interactive retro-card-green p-6 sm:p-8 h-full flex flex-col">
+              <div className="flex items-center justify-between mb-5">
+                <div className="w-12 h-12 rounded-lg bg-jarvis-bg border border-jarvis-border flex items-center justify-center group-hover:border-pixel-green/30 transition-colors">
+                  <Users className="w-6 h-6 text-pixel-green" />
+                </div>
+                {stats.instances.total > 0 && (
+                  <span className="font-mono text-[10px] text-pixel-green/70 bg-pixel-green/5 border border-pixel-green/15 rounded px-2 py-0.5">
+                    {stats.instances.total} instance{stats.instances.total !== 1 ? 's' : ''}
+                  </span>
+                )}
               </div>
               <h2 className="font-pixel text-xs text-pixel-green glow-green mb-3">
                 GALLERY
@@ -139,7 +134,7 @@ export default async function HomePage() {
               <p className="font-mono text-xs text-jarvis-muted leading-relaxed flex-1">
                 Browse registered Jarvis instances. See who is online, what skills they run, and how they serve their founders.
               </p>
-              <div className="flex items-center gap-1.5 mt-5 font-mono text-xs text-pixel-green opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-1.5 mt-5 font-mono text-xs text-pixel-green opacity-50 group-hover:opacity-100 transition-opacity">
                 <span>Explore</span>
                 <ArrowRight className="w-3 h-3" />
               </div>
@@ -148,9 +143,14 @@ export default async function HomePage() {
 
           {/* Skills Card */}
           <Link href="/skills" className="group">
-            <div className="retro-card p-6 sm:p-8 h-full flex flex-col">
-              <div className="w-12 h-12 rounded-lg bg-jarvis-bg border border-jarvis-border flex items-center justify-center mb-5 group-hover:border-pixel-cyan/30 transition-colors">
-                <Blocks className="w-6 h-6 text-pixel-cyan" />
+            <div className="retro-card retro-card-interactive retro-card-cyan p-6 sm:p-8 h-full flex flex-col">
+              <div className="flex items-center justify-between mb-5">
+                <div className="w-12 h-12 rounded-lg bg-jarvis-bg border border-jarvis-border flex items-center justify-center group-hover:border-pixel-cyan/30 transition-colors">
+                  <Blocks className="w-6 h-6 text-pixel-cyan" />
+                </div>
+                <span className="font-mono text-[10px] text-pixel-cyan/70 bg-pixel-cyan/5 border border-pixel-cyan/15 rounded px-2 py-0.5">
+                  19 skills
+                </span>
               </div>
               <h2 className="font-pixel text-xs text-pixel-cyan glow-cyan mb-3">
                 SKILLS
@@ -158,7 +158,7 @@ export default async function HomePage() {
               <p className="font-mono text-xs text-jarvis-muted leading-relaxed flex-1">
                 Explore the canonical skill catalog. Research, communication, creation, and analysis tools for your AI workforce.
               </p>
-              <div className="flex items-center gap-1.5 mt-5 font-mono text-xs text-pixel-cyan opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-1.5 mt-5 font-mono text-xs text-pixel-cyan opacity-50 group-hover:opacity-100 transition-opacity">
                 <span>Explore</span>
                 <ArrowRight className="w-3 h-3" />
               </div>
@@ -167,9 +167,16 @@ export default async function HomePage() {
 
           {/* Features Card */}
           <Link href="/features" className="group">
-            <div className="retro-card p-6 sm:p-8 h-full flex flex-col">
-              <div className="w-12 h-12 rounded-lg bg-jarvis-bg border border-jarvis-border flex items-center justify-center mb-5 group-hover:border-pixel-pink/30 transition-colors">
-                <Lightbulb className="w-6 h-6 text-pixel-pink" />
+            <div className="retro-card retro-card-interactive retro-card-pink p-6 sm:p-8 h-full flex flex-col">
+              <div className="flex items-center justify-between mb-5">
+                <div className="w-12 h-12 rounded-lg bg-jarvis-bg border border-jarvis-border flex items-center justify-center group-hover:border-pixel-pink/30 transition-colors">
+                  <Lightbulb className="w-6 h-6 text-pixel-pink" />
+                </div>
+                {stats.feature_requests.open > 0 && (
+                  <span className="font-mono text-[10px] text-pixel-pink/70 bg-pixel-pink/5 border border-pixel-pink/15 rounded px-2 py-0.5">
+                    {stats.feature_requests.open} open
+                  </span>
+                )}
               </div>
               <h2 className="font-pixel text-xs text-pixel-pink glow-pink mb-3">
                 FEATURES
@@ -177,7 +184,7 @@ export default async function HomePage() {
               <p className="font-mono text-xs text-jarvis-muted leading-relaxed flex-1">
                 Vote on what gets built next. Submit feature requests and see what the community wants most.
               </p>
-              <div className="flex items-center gap-1.5 mt-5 font-mono text-xs text-pixel-pink opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-1.5 mt-5 font-mono text-xs text-pixel-pink opacity-50 group-hover:opacity-100 transition-opacity">
                 <span>Explore</span>
                 <ArrowRight className="w-3 h-3" />
               </div>

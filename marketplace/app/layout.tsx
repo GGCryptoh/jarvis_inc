@@ -49,7 +49,7 @@ export default function RootLayout({
                     Jarvis Inc
                   </span>
                 </p>
-                <p className="font-mono text-[9px] text-pixel-yellow mt-0.5">v0.1.1</p>
+                <p className="font-mono text-[9px] text-pixel-yellow mt-0.5">v0.1.2</p>
               </div>
               <div className="flex items-center gap-6">
                 <a

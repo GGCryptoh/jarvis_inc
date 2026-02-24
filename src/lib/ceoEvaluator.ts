@@ -1,6 +1,21 @@
 import { loadCEO, getVaultEntryByService, getPrompt } from './database';
-import { MODEL_SERVICE_MAP, MODEL_API_IDS } from './models';
+import { MODEL_SERVICE_MAP, MODEL_API_IDS, MODEL_COSTS } from './models';
 import { logUsage } from './llmUsage';
+
+const MAX_EVAL_CHARS = 48_000; // ~12K tokens — fits any 128K+ model with room for system prompt
+
+/** Find the cheapest model for a given service (by total per-1M cost) */
+function cheapestModelForService(service: string): string | null {
+  let best: string | null = null;
+  let bestCost = Infinity;
+  for (const [model, svc] of Object.entries(MODEL_SERVICE_MAP)) {
+    if (svc !== service) continue;
+    const [inp, out] = MODEL_COSTS[model] ?? [Infinity, Infinity];
+    const total = inp + out;
+    if (total < bestCost) { bestCost = total; best = model; }
+  }
+  return best;
+}
 
 export interface MissionScore {
   quality: number;        // 0-100
@@ -36,7 +51,9 @@ export async function evaluateMission(
     const provider = providers[service];
     if (!provider) return null;
 
-    const apiModelId = MODEL_API_IDS[ceo.model] ?? ceo.model;
+    // Use cheapest model for the same service — evaluation doesn't need the CEO's main model
+    const evalModel = cheapestModelForService(service) ?? ceo.model;
+    const apiModelId = MODEL_API_IDS[evalModel] ?? evalModel;
 
     const hardcodedEvalPrompt = `You are a CEO evaluating mission results. Score the work on four dimensions (0-100 each):
 - Quality: How good is the output? Is it thorough, accurate, well-structured?
@@ -48,7 +65,7 @@ IMPORTANT SCORING GUIDELINES:
 - For very low-cost tasks (under $0.05): Be lenient. If the task was completed and produced a result, don't fail it. A simple lookup or list operation costing a penny is fine — grade C+ or above if it returned useful data.
 - For moderate-cost tasks ($0.05-$0.50): Normal scoring. Expect solid output proportional to cost.
 - For expensive tasks ($0.50+): High standards. Expect thorough, well-structured, comprehensive results.
-- If output appears truncated, assess what IS present rather than penalizing for missing content — the full result may exist but was cut for evaluation.
+- If output is marked as [OUTPUT TRUNCATED], the full result WAS delivered to the user successfully. Score completeness based on what IS shown — do not penalize for truncation. The task completed fully.
 
 Assign a letter grade: A+ (95-100), A (90-94), B+ (85-89), B (80-84), B- (75-79), C+ (70-74), C (65-69), C- (60-64), D (50-59), F (0-49).
 
@@ -66,7 +83,12 @@ Tasks completed: ${taskResults.length}
 Total cost: $${totalCost.toFixed(4)}
 
 Results:
-${taskResults.map((t, i) => `--- Task ${i + 1}: ${t.skill_id} (${t.tokens} tokens, $${t.cost.toFixed(4)}) ---\n${t.output.slice(0, 8000)}`).join('\n\n')}
+${taskResults.map((t, i) => {
+  const outputText = t.output.length > MAX_EVAL_CHARS
+    ? t.output.slice(0, MAX_EVAL_CHARS) + `\n\n[OUTPUT TRUNCATED — showing ${MAX_EVAL_CHARS} of ${t.output.length} chars. The full output was delivered successfully.]`
+    : t.output;
+  return `--- Task ${i + 1}: ${t.skill_id} (${t.tokens} tokens, $${t.cost.toFixed(4)}) ---\n${outputText}`;
+}).join('\n\n')}
 
 Score this mission.`;
 
@@ -88,7 +110,7 @@ Score this mission.`;
     const outputTokens = Math.ceil(rawResponse.length / 4);
     logUsage({
       provider: service,
-      model: ceo.model,
+      model: evalModel,
       inputTokens,
       outputTokens,
       context: 'skill_execution',

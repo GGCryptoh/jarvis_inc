@@ -1,23 +1,43 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu, X, Cpu, Shield } from 'lucide-react';
+import SoundToggle, { isSoundEnabled } from '@/components/SoundToggle';
+import { playNotificationDing } from '@/lib/sounds';
 
 const NAV_LINKS = [
   { href: '/gallery', label: 'Gallery' },
   { href: '/skills', label: 'Skills' },
-  { href: '/features', label: 'Features' },
-  { href: '/forum', label: 'Forum' },
+  { href: '/features', label: 'Features', countKey: 'features' as const },
+  { href: '/forum', label: 'Forum', countKey: 'forum' as const },
   { href: '/screenshots', label: 'Screenshots' },
   { href: '/about', label: 'About' },
 ];
+
+type CountKey = 'forum' | 'features';
+
+const STORAGE_PREFIX = 'nav_last_seen_';
+
+function getLastSeen(key: CountKey): number {
+  try {
+    return parseInt(localStorage.getItem(`${STORAGE_PREFIX}${key}`) || '0', 10);
+  } catch { return 0; }
+}
+
+function setLastSeen(key: CountKey, count: number) {
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}${key}`, String(count));
+  } catch { /* ignore */ }
+}
 
 export default function NavBar() {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [badges, setBadges] = useState<Record<CountKey, number>>({ forum: 0, features: 0 });
+  const prevBadgesRef = useRef<Record<CountKey, number>>({ forum: 0, features: 0 });
 
   // Check for admin key in localStorage
   useEffect(() => {
@@ -26,6 +46,69 @@ export default function NavBar() {
     window.addEventListener('admin-auth-changed', check);
     return () => window.removeEventListener('admin-auth-changed', check);
   }, []);
+
+  // Fetch stats for badge counts
+  const fetchBadges = useCallback(async () => {
+    try {
+      const res = await fetch('/api/stats');
+      if (!res.ok) return;
+      const stats = await res.json();
+
+      const totalForumPosts = (stats.forum?.posts ?? 0) + (stats.forum?.replies ?? 0);
+      const openFeatures = stats.feature_requests?.open ?? 0;
+
+      const lastSeenForum = getLastSeen('forum');
+      const lastSeenFeatures = getLastSeen('features');
+
+      const newBadges = {
+        forum: Math.max(0, totalForumPosts - lastSeenForum),
+        features: Math.max(0, openFeatures - lastSeenFeatures),
+      };
+
+      // Play ding if counts increased
+      const prev = prevBadgesRef.current;
+      if (
+        (newBadges.forum > prev.forum || newBadges.features > prev.features) &&
+        isSoundEnabled()
+      ) {
+        playNotificationDing();
+      }
+      prevBadgesRef.current = newBadges;
+
+      setBadges(newBadges);
+    } catch { /* stats unavailable */ }
+  }, []);
+
+  useEffect(() => {
+    fetchBadges();
+    const interval = setInterval(fetchBadges, 120_000); // refresh every 2 min
+    return () => clearInterval(interval);
+  }, [fetchBadges]);
+
+  // Mark as seen when navigating to a section
+  useEffect(() => {
+    const markSeen = async () => {
+      let key: CountKey | null = null;
+      if (pathname === '/forum' || pathname?.startsWith('/forum/')) key = 'forum';
+      if (pathname === '/features' || pathname?.startsWith('/features/')) key = 'features';
+      if (!key) return;
+
+      try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) return;
+        const stats = await res.json();
+
+        if (key === 'forum') {
+          setLastSeen('forum', (stats.forum?.posts ?? 0) + (stats.forum?.replies ?? 0));
+        } else {
+          setLastSeen('features', stats.feature_requests?.open ?? 0);
+        }
+
+        setBadges(prev => ({ ...prev, [key]: 0 }));
+      } catch { /* ignore */ }
+    };
+    markSeen();
+  }, [pathname]);
 
   const allLinks = isAdmin
     ? [...NAV_LINKS, { href: '/admin', label: 'Admin' }]
@@ -48,11 +131,13 @@ export default function NavBar() {
             </span>
           </Link>
 
-          {/* Desktop Links */}
+          {/* Desktop Links + Sound Toggle */}
           <div className="hidden md:flex items-center gap-8">
             {allLinks.map((link) => {
               const isActive = pathname === link.href || pathname?.startsWith(link.href + '/');
               const isAdminLink = link.href === '/admin';
+              const countKey = 'countKey' in link ? (link as { countKey: CountKey }).countKey : null;
+              const badgeCount = countKey ? badges[countKey] : 0;
               return (
                 <Link
                   key={link.href}
@@ -67,6 +152,11 @@ export default function NavBar() {
                 >
                   {isAdminLink && <Shield className="w-3.5 h-3.5" />}
                   {link.label}
+                  {badgeCount > 0 && !isActive && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-pixel-green/20 text-pixel-green border border-pixel-green/40 leading-none">
+                      {badgeCount > 99 ? '99+' : badgeCount}
+                    </span>
+                  )}
                   {isActive && (
                     <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${
                       isAdminLink ? 'bg-pixel-pink' : 'bg-pixel-green'
@@ -75,16 +165,20 @@ export default function NavBar() {
                 </Link>
               );
             })}
+            <SoundToggle />
           </div>
 
-          {/* Mobile Hamburger */}
-          <button
-            className="md:hidden p-2 text-jarvis-muted hover:text-jarvis-text transition-colors"
-            onClick={() => setMenuOpen(!menuOpen)}
-            aria-label="Toggle menu"
-          >
-            {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+          {/* Mobile: Sound Toggle + Hamburger */}
+          <div className="md:hidden flex items-center gap-2">
+            <SoundToggle />
+            <button
+              className="p-2 text-jarvis-muted hover:text-jarvis-text transition-colors"
+              onClick={() => setMenuOpen(!menuOpen)}
+              aria-label="Toggle menu"
+            >
+              {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -95,6 +189,8 @@ export default function NavBar() {
             {allLinks.map((link) => {
               const isActive = pathname === link.href || pathname?.startsWith(link.href + '/');
               const isAdminLink = link.href === '/admin';
+              const countKey = 'countKey' in link ? (link as { countKey: CountKey }).countKey : null;
+              const badgeCount = countKey ? badges[countKey] : 0;
               return (
                 <Link
                   key={link.href}
@@ -110,6 +206,11 @@ export default function NavBar() {
                 >
                   {isAdminLink && <Shield className="w-3.5 h-3.5" />}
                   {link.label}
+                  {badgeCount > 0 && !isActive && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-pixel-green/20 text-pixel-green border border-pixel-green/40 leading-none ml-auto">
+                      {badgeCount > 99 ? '99+' : badgeCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}

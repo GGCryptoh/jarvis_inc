@@ -9,6 +9,12 @@ const RISK_COLORS: Record<string, string> = {
   dangerous: 'text-pixel-red border-pixel-red/20 bg-pixel-red/5',
 };
 
+const RISK_LABELS: Record<string, string> = {
+  safe: 'SAFE',
+  moderate: 'CAUTION',
+  dangerous: 'RISKY',
+};
+
 const CATEGORY_COLORS: Record<string, string> = {
   research: 'text-pixel-cyan',
   communication: 'text-pixel-pink',
@@ -89,15 +95,13 @@ export default async function SkillsPage() {
                       <h3 className="font-pixel text-xs text-pixel-green leading-relaxed">
                         {skill.title || skill.name || skill.id}
                       </h3>
-                      {skill.risk_level && (
-                        <span
-                          className={`inline-block px-2 py-0.5 text-[9px] font-pixel uppercase rounded border ${
-                            RISK_COLORS[skill.risk_level] || RISK_COLORS.safe
-                          }`}
-                        >
-                          {skill.risk_level}
-                        </span>
-                      )}
+                      <span
+                        className={`inline-block px-2 py-0.5 text-[9px] font-pixel uppercase rounded border flex-shrink-0 ${
+                          RISK_COLORS[skill.risk_level] || RISK_COLORS.safe
+                        }`}
+                      >
+                        {RISK_LABELS[skill.risk_level] || 'SAFE'}
+                      </span>
                     </div>
                     <p className="font-mono text-xs text-jarvis-muted leading-relaxed line-clamp-3">
                       {skill.description}
