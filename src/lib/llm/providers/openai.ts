@@ -20,9 +20,15 @@ function createOpenAICompatibleProvider(serviceId: string): LLMProvider {
         return controller;
       }
 
+      // Newer OpenAI models (o1, o3, gpt-4o, etc.) require max_completion_tokens
+      const useNewParam = /^(o[0-9]|gpt-4o|gpt-4\.5)/.test(modelId);
+      const tokenParam = useNewParam
+        ? { max_completion_tokens: 2048 }
+        : { max_tokens: 2048 };
+
       const body = JSON.stringify({
         model: modelId,
-        max_tokens: 2048,
+        ...tokenParam,
         stream: true,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
       });
