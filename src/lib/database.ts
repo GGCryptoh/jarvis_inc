@@ -541,6 +541,21 @@ export async function getNewCollateralCount(): Promise<number> {
   return count ?? 0;
 }
 
+export async function getNewForumActivityCount(): Promise<number> {
+  const lastSeen = localStorage.getItem('jarvis_forum_last_seen');
+  let query = getSupabase()
+    .from('task_executions')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'completed')
+    .eq('skill_id', 'forum')
+    .not('result', 'is', null);
+  if (lastSeen) {
+    query = query.gt('completed_at', lastSeen);
+  }
+  const { count } = await query;
+  return count ?? 0;
+}
+
 export async function loadTaskExecutions(missionId: string): Promise<any[]> {
   const { data } = await getSupabase()
     .from('task_executions')
