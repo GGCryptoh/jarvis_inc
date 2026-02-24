@@ -402,11 +402,17 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   // Offer Weather CLI skill (after first skill test, before market research)
   const offerWeatherSkill = useCallback(async () => {
     // Check if weather-cli exists in DB (synced from repo)
-    const allSkills = await loadSkills();
-    const weatherRow = allSkills.find(s => s.id === SECOND_SKILL_ID);
+    // Retry a few times — on fresh installs the skill seed may still be running
+    let weatherRow: Awaited<ReturnType<typeof loadSkills>>[number] | undefined;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const allSkills = await loadSkills();
+      weatherRow = allSkills.find(s => s.id === SECOND_SKILL_ID);
+      if (weatherRow) break;
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000));
+    }
 
     if (!weatherRow) {
-      // Not synced yet — skip to market research
+      // Not synced after retries — skip to market research
       await offerMarketResearch();
       return;
     }
