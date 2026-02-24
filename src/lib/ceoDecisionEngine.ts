@@ -1932,7 +1932,7 @@ export async function evaluateCycle(): Promise<CycleResult> {
   // 0. Skip evaluation until CEO onboarding meeting is complete
   const meetingDone = await getSetting('ceo_meeting_done');
   if (!meetingDone) {
-    return { actions: [], dispatched: [] };
+    return { timestamp: new Date().toISOString(), actions: [], checks: {} };
   }
 
   // 1. Load current org state
