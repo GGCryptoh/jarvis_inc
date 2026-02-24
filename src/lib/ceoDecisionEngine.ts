@@ -17,12 +17,16 @@ import {
   loadCEO,
   getDueSkillSchedules,
   updateSkillScheduleRun,
+  getVaultEntryByService,
+  getSetting,
+  setSetting,
   type AgentRow,
   type MissionRow,
   type SkillRow,
   type ApprovalRow,
   type CEORow,
   logAudit,
+  getSkillOptions,
 } from './database';
 import { seedSkillsFromRepo } from './skillResolver';
 import { synthesizeMissionSummary } from './taskDispatcher';
@@ -36,7 +40,7 @@ import { getCurrentMonthSpend } from './llmUsage';
 
 export interface CEOAction {
   id: string;
-  action_type: 'hire_agent' | 'assign_mission' | 'request_approval' | 'send_message' | 'enable_skill';
+  action_type: 'hire_agent' | 'assign_mission' | 'request_approval' | 'send_message' | 'enable_skill' | 'needs_attention';
   payload: Record<string, unknown>;
   priority: number;  // 1-10 (1 = highest)
 }
@@ -1055,12 +1059,16 @@ async function checkForumActivity(): Promise<CEOAction[]> {
   const actions: CEOAction[] = [];
 
   try {
-    // Forum only runs during business hours (8am-6pm local) unless in burst mode
-    if (!isForumBusinessHours() && !forumBurstState.active) return actions;
-
     const skills = await loadSkills();
     const forumSkill = skills.find(s => s.id === 'forum' && s.enabled);
     if (!forumSkill) return actions;
+
+    // Load forum skill options (options_config from skills table)
+    const forumOpts = await getSkillOptions('forum');
+    const forum24h = forumOpts.forum_24h === true;
+
+    // Forum only runs during business hours (8am-6pm local) unless 24h mode or burst
+    if (!forum24h && !isForumBusinessHours() && !forumBurstState.active) return actions;
 
     const now = Date.now();
     const sb = getSupabase();
@@ -1069,6 +1077,9 @@ async function checkForumActivity(): Promise<CEOAction[]> {
     const forumConfig = await fetchForumConfig();
     const defaultInterval = forumConfig?.recommended_check_interval_ms ?? DEFAULT_FORUM_CHECK_INTERVAL_MS;
 
+    const forumFreq = (forumOpts.forum_check_frequency as string) || null;
+    const forumAutoPostRaw = (forumOpts.forum_auto_post as string) ?? 'normal';
+
     // Burst mode: use shorter intervals after posting/replying
     let intervalMs: number;
     if (forumBurstState.active) {
@@ -1076,23 +1087,13 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       if (idx >= BURST_INTERVALS_MS.length) {
         // Burst exhausted, revert to normal
         forumBurstState.active = false;
-        const { data: freqRow } = await sb
-          .from('settings')
-          .select('value')
-          .eq('key', 'forum_check_frequency')
-          .maybeSingle();
-        intervalMs = freqRow?.value ? parseCronToMs(freqRow.value) : defaultInterval;
+        intervalMs = forumFreq ? parseCronToMs(forumFreq) : defaultInterval;
       } else {
         intervalMs = BURST_INTERVALS_MS[idx];
       }
     } else {
-      // Normal cron-based interval — local setting overrides marketplace recommendation
-      const { data: freqRow } = await sb
-        .from('settings')
-        .select('value')
-        .eq('key', 'forum_check_frequency')
-        .maybeSingle();
-      intervalMs = freqRow?.value ? parseCronToMs(freqRow.value) : defaultInterval;
+      // Normal cron-based interval — skill option overrides marketplace recommendation
+      intervalMs = forumFreq ? parseCronToMs(forumFreq) : defaultInterval;
     }
 
     if (now - lastForumCheckTime < intervalMs) return actions;
@@ -1101,17 +1102,11 @@ async function checkForumActivity(): Promise<CEOAction[]> {
 
     const MARKETPLACE_URL = 'https://jarvisinc.app';
 
-    // Check forum_auto_post setting — graduated risk tiers (off/safe/normal/all)
-    const { data: autoPostRow } = await sb
-      .from('settings')
-      .select('value')
-      .eq('key', 'forum_auto_post')
-      .maybeSingle();
-    const autoPostRaw = autoPostRow?.value ?? 'normal';
+    // Forum auto-post level — graduated risk tiers (off/safe/normal/all)
     const autoPostLevel =
-      autoPostRaw === 'true' ? 'all' :
-      autoPostRaw === 'false' ? 'off' :
-      (['off', 'safe', 'normal', 'all'].includes(autoPostRaw) ? autoPostRaw : 'normal');
+      forumAutoPostRaw === 'true' ? 'all' :
+      forumAutoPostRaw === 'false' ? 'off' :
+      (['off', 'safe', 'normal', 'all'].includes(forumAutoPostRaw) ? forumAutoPostRaw : 'normal');
     const autoPost = autoPostLevel !== 'off';
 
     const { data: lastCheckRow } = await sb
@@ -1851,6 +1846,43 @@ async function checkForUpdates(): Promise<CEOAction[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Vault signing key check — remind founder to sync key for sidecar signing
+// ---------------------------------------------------------------------------
+
+let lastVaultKeyCheckTime = 0;
+const VAULT_KEY_CHECK_INTERVAL = 6 * ONE_HOUR_MS; // throttle: once per 6 hours
+
+async function checkVaultSigningKey(): Promise<CEOAction[]> {
+  const now = Date.now();
+  if (now - lastVaultKeyCheckTime < VAULT_KEY_CHECK_INTERVAL) return [];
+  lastVaultKeyCheckTime = now;
+
+  try {
+    // Check if there's a key in vault
+    const entry = await getVaultEntryByService('marketplace-signing');
+    if (entry) return []; // Key present — all good
+
+    // Check if marketplace is even registered
+    const registered = await getSetting('marketplace_registered');
+    if (!registered) return []; // Not registered — no point reminding
+
+    // No key in vault but registered — CEO should remind founder
+    return [{
+      id: makeActionId(),
+      action_type: 'needs_attention',
+      payload: {
+        topic: 'vault_signing_key_missing',
+        message: 'Your marketplace signing key isn\'t synced to the vault yet — I can\'t sign forum posts or engage on the marketplace without it. Head to Settings, unlock your signing key, and hit "SYNC KEY TO VAULT".',
+        navigateTo: '/settings',
+      },
+      priority: 2,
+    }];
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main evaluation
 // ---------------------------------------------------------------------------
 
@@ -1923,6 +1955,10 @@ export async function evaluateCycle(): Promise<CycleResult> {
     const forumActions = await checkForumActivity();
     allActions.push(...forumActions);
   }
+
+  // 2b. Vault signing key check — runs regardless of budget state
+  const vaultKeyActions = await checkVaultSigningKey();
+  allActions.push(...vaultKeyActions);
 
   // 3. Insert produced actions into ceo_action_queue (deduplicated)
   if (allActions.length > 0) {

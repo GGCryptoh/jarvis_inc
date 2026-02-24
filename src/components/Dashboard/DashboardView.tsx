@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Pencil, X, Target, Check, RefreshCw, Crown } from 'lucide-react'
+import { Pencil, X, Target, Check, RefreshCw, Crown, Terminal, Copy, ChevronDown } from 'lucide-react'
 import { getSetting, setSetting, loadMissions, loadAgents, loadCEO, logAudit, type MissionRow, type AgentRow, type CEORow } from '../../lib/database'
 import { getCurrentMonthSpend } from '../../lib/llmUsage'
 import { useSystemHealth, type ServiceHealth } from '../../hooks/useSystemHealth'
@@ -204,7 +204,35 @@ function StatusDot({ status }: { status: ServiceHealth['status'] }) {
   return <span className={`w-2 h-2 rounded-full flex-shrink-0 ${color}`} />;
 }
 
+const DOCKER_SERVICE_MAP: Record<string, string> = {
+  'Database': 'supabase-db',
+  'Auth': 'supabase-auth',
+  'Realtime': 'supabase-realtime',
+  'Storage': 'supabase-storage',
+  'Edge Functions': 'supabase-edge-functions',
+  'CEO Sidecar': 'jarvis-ceo',
+  'Gateway': 'jarvis-gateway',
+};
+
+function getRestartCommand(serviceName: string): string {
+  const docker = DOCKER_SERVICE_MAP[serviceName];
+  if (!docker) return '';
+  return `docker compose -f docker/docker-compose.yml restart ${docker}`;
+}
+
 function SystemHealthCard({ services, allUp }: { services: ServiceHealth[]; allUp: boolean }) {
+  const [showRestart, setShowRestart] = useState(false);
+  const [copied, setCopied] = useState('');
+
+  const downServices = services.filter(s => s.status === 'down');
+
+  function copyCmd(cmd: string) {
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(cmd);
+      setTimeout(() => setCopied(''), 2000);
+    });
+  }
+
   return (
     <div className="bg-jarvis-surface border border-jarvis-border rounded-lg p-4 flex flex-col">
       <div className="flex items-center gap-2 mb-3">
@@ -212,6 +240,16 @@ function SystemHealthCard({ services, allUp }: { services: ServiceHealth[]; allU
         <span className="text-xs font-medium text-jarvis-muted uppercase tracking-wider">
           System Health
         </span>
+        {downServices.length > 0 && (
+          <button
+            onClick={() => setShowRestart(!showRestart)}
+            className="ml-auto flex items-center gap-1 text-[10px] text-red-400 hover:text-red-300 transition-colors"
+            title="Show restart commands"
+          >
+            <Terminal size={10} />
+            <ChevronDown size={10} className={`transition-transform ${showRestart ? 'rotate-180' : ''}`} />
+          </button>
+        )}
       </div>
       <div className="flex flex-col gap-1.5">
         {services.map(svc => (
@@ -221,6 +259,46 @@ function SystemHealthCard({ services, allUp }: { services: ServiceHealth[]; allU
           </div>
         ))}
       </div>
+      {showRestart && downServices.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-jarvis-border">
+          <div className="text-[10px] text-zinc-500 mb-2">Restart commands:</div>
+          {downServices.map(svc => {
+            const cmd = getRestartCommand(svc.name);
+            if (!cmd) return null;
+            return (
+              <div key={svc.name} className="flex items-center gap-2 mb-1.5 group">
+                <code className="flex-1 text-[9px] text-zinc-400 bg-zinc-900 px-2 py-1 rounded font-mono truncate">
+                  {cmd}
+                </code>
+                <button
+                  onClick={() => copyCmd(cmd)}
+                  className="flex-shrink-0 p-1 text-zinc-600 hover:text-zinc-300 transition-colors"
+                  title="Copy command"
+                >
+                  {copied === cmd ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+                </button>
+              </div>
+            );
+          })}
+          {downServices.length > 1 && (() => {
+            const allCmd = 'docker compose -f docker/docker-compose.yml restart';
+            return (
+              <div className="flex items-center gap-2 mt-2 pt-2 border-t border-zinc-800/50">
+                <code className="flex-1 text-[9px] text-amber-400/80 bg-zinc-900 px-2 py-1 rounded font-mono truncate">
+                  {allCmd}
+                </code>
+                <button
+                  onClick={() => copyCmd(allCmd)}
+                  className="flex-shrink-0 p-1 text-zinc-600 hover:text-zinc-300 transition-colors"
+                  title="Copy restart all command"
+                >
+                  {copied === allCmd ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+                </button>
+              </div>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 }

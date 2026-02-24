@@ -765,6 +765,9 @@ async function waitForServices(domain, tls) {
             END IF;
           END \\$\\$;
 
+          -- skills options_config from 005_skill_options
+          ALTER TABLE public.skills ADD COLUMN IF NOT EXISTS options_config JSONB DEFAULT '{}';
+
           -- test_runs table from 011
           CREATE TABLE IF NOT EXISTS public.test_runs (
             id TEXT PRIMARY KEY, test_id TEXT NOT NULL, category TEXT NOT NULL, label TEXT NOT NULL,

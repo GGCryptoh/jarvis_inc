@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Archive, Search, Layers, FileDown, BookOpen, ExternalLink, FileText, Image as ImageIcon, AppWindow, Code, PackageOpen, ChevronDown, FolderOpen } from 'lucide-react';
 import { getSupabase, hasSupabaseConfig } from '../../lib/supabase';
 import { getSkillById } from '../../lib/skillsCache';
@@ -123,6 +123,83 @@ function formatCommandName(name: string): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
+/** Get smart card title based on skill_id and context */
+function getSmartTitle(a: { skill_id: string; command_name: string; result: { output?: string; summary?: string } }): string {
+  const params = (a as Record<string, unknown>).params as Record<string, unknown> | undefined;
+  switch (a.skill_id) {
+    case 'research-web': {
+      const query = params?.query as string | undefined;
+      if (query) return `Search: ${query.slice(0, 50)}`;
+      // Try to extract query from output
+      const firstLine = a.result?.summary?.split('\n')[0] || a.result?.output?.split('\n')[0] || '';
+      const clean = stripMarkdown(firstLine).slice(0, 50);
+      return clean || 'Web Research';
+    }
+    case 'forum': {
+      const cmd = a.command_name;
+      const title = params?.title as string | undefined;
+      const body = params?.body as string | undefined;
+      const excerpt = title || (body ? body.slice(0, 40) : '');
+      if (cmd === 'create_post') return excerpt ? `Forum Post: ${excerpt}` : 'Forum Post';
+      if (cmd === 'reply') return excerpt ? `Forum Reply: ${excerpt}` : 'Forum Reply';
+      if (cmd === 'vote') return 'Forum Vote';
+      return `Forum: ${formatCommandName(cmd)}`;
+    }
+    case 'calendar-read-google':
+      return 'Calendar Events';
+    case 'mission-summary':
+      return 'Mission Report';
+    default: {
+      if (a.result?.summary) return stripMarkdown(a.result.summary).slice(0, 60);
+      return getSkillName(a.skill_id);
+    }
+  }
+}
+
+/** Get skill-type pill badge config */
+function getSkillPill(a: { skill_id: string; command_name: string }): { label: string; color: string } | null {
+  switch (a.skill_id) {
+    case 'research-web':
+      return { label: 'SEARCH', color: 'text-blue-400 bg-blue-500/15' };
+    case 'forum':
+      if (a.command_name === 'create_post') return { label: 'POST', color: 'text-orange-400 bg-orange-500/15' };
+      if (a.command_name === 'reply' || a.command_name === 'introduce') return { label: 'REPLY', color: 'text-orange-400 bg-orange-500/15' };
+      if (a.command_name === 'vote') return { label: 'VOTE', color: 'text-orange-400 bg-orange-500/15' };
+      return { label: 'FORUM', color: 'text-orange-400 bg-orange-500/15' };
+    case 'calendar-read-google':
+      return { label: 'CALENDAR', color: 'text-cyan-400 bg-cyan-500/15' };
+    case 'mission-summary':
+      return { label: 'REPORT', color: 'text-yellow-400 bg-yellow-500/15' };
+    default:
+      return null;
+  }
+}
+
+/** Get a 2-line preview of actual result content */
+function getResultPreview(a: { skill_id: string; command_name: string; result: { output?: string; summary?: string } }): string {
+  const params = (a as Record<string, unknown>).params as Record<string, unknown> | undefined;
+
+  // Forum posts: show the body
+  if (a.skill_id === 'forum' && (a.command_name === 'create_post' || a.command_name === 'reply' || a.command_name === 'introduce')) {
+    const body = params?.body as string | undefined;
+    if (body) return stripMarkdown(body).slice(0, 120);
+  }
+
+  // Summary first
+  if (a.result?.summary) return stripMarkdown(a.result.summary).slice(0, 120);
+
+  // First meaningful line of output (skip markdown headers)
+  if (a.result?.output) {
+    const lines = a.result.output.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('---')) continue;
+      return stripMarkdown(trimmed).slice(0, 120);
+    }
+  }
+  return '';
+}
+
 // ---------------------------------------------------------------------------
 // Code block extraction
 // ---------------------------------------------------------------------------
@@ -225,6 +302,7 @@ interface Artifact {
   skill_id: string;
   command_name: string;
   result: { output?: string; summary?: string; document_url?: string; artifact_type?: string; image_url?: string };
+  params?: Record<string, unknown>;
   mission_id: string;
   mission_title?: string;
   agent_id: string;
@@ -248,6 +326,20 @@ export default function CollateralView() {
   const [expandedMissions, setExpandedMissions] = useState<Set<string>>(new Set());
   const [missionTitles, setMissionTitles] = useState<Record<string, string>>({});
   const deepLinkHandled = useRef(false);
+  const navigate = useNavigate();
+
+  // ESC key: back from detail view, or navigate back from grid
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (selectedArtifact) setSelectedArtifact(null);
+        else navigate(-1);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [selectedArtifact, navigate]);
 
   // Auto-select artifact from ?artifact= deep-link param
   useEffect(() => {
@@ -287,7 +379,7 @@ export default function CollateralView() {
     if (!hasSupabaseConfig()) return;
     let query = getSupabase()
       .from('task_executions')
-      .select('id, skill_id, command_name, result, mission_id, agent_id, cost_usd, tokens_used, completed_at')
+      .select('id, skill_id, command_name, result, params, mission_id, agent_id, cost_usd, tokens_used, completed_at')
       .eq('status', 'completed')
       .not('result', 'is', null)
       .order('completed_at', { ascending: false });
@@ -416,7 +508,9 @@ export default function CollateralView() {
     const isSummary = a.skill_id === 'mission-summary';
     const skill = getSkillById( a.skill_id);
     const SkillIcon = isSummary ? BookOpen : (skill ? resolveIcon(skill.icon) : Archive);
-    const previewText = stripMarkdown(a.result?.summary ?? a.result?.output?.slice(0, 150) ?? '');
+    const smartTitle = getSmartTitle(a);
+    const pill = getSkillPill(a);
+    const preview = getResultPreview(a);
 
     return (
       <button
@@ -427,23 +521,20 @@ export default function CollateralView() {
         <div className="flex items-center gap-2 mb-1.5">
           <SkillIcon size={12} className={`${isSummary ? 'text-yellow-400' : 'text-emerald-400'} group-hover:text-emerald-300 transition-colors flex-shrink-0`} />
           <span className="font-pixel text-[9px] tracking-wider text-zinc-200 truncate">
-            {isSummary ? 'Mission Report' : getSkillName(a.skill_id)}
+            {smartTitle}
           </span>
-          {isSummary && (
-            <span className="ml-auto font-pixel text-[7px] tracking-widest text-yellow-400 bg-yellow-500/15 px-1.5 py-0.5 rounded flex-shrink-0">REPORT</span>
+          {pill && (
+            <span className={`ml-auto font-pixel text-[7px] tracking-widest ${pill.color} px-1.5 py-0.5 rounded flex-shrink-0`}>{pill.label}</span>
           )}
-          {!isSummary && isNew(a) && (
+          {!pill && isNew(a) && (
             <span className="ml-auto font-pixel text-[7px] tracking-widest text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded flex-shrink-0">NEW</span>
           )}
         </div>
-        {a.command_name && (
-          <div className="font-pixel text-[8px] tracking-wider text-zinc-500 mb-1">
-            {formatCommandName(a.command_name)}
+        {preview && (
+          <div className="font-pixel text-[9px] text-zinc-500 line-clamp-2 leading-relaxed mb-2">
+            {preview}{preview.length >= 120 ? '...' : ''}
           </div>
         )}
-        <div className="font-pixel text-[9px] text-zinc-500 line-clamp-2 leading-relaxed mb-2">
-          {previewText}
-        </div>
         {/* Image thumbnail */}
         {(() => {
           const r = a.result as Record<string, unknown> | null;
@@ -609,6 +700,24 @@ export default function CollateralView() {
               <SimpleMarkdown text={selectedArtifact.result.summary} />
             </div>
           )}
+          {/* Forum post content — show body/title prominently */}
+          {selectedArtifact.skill_id === 'forum' && selectedArtifact.params && (() => {
+            const p = selectedArtifact.params as Record<string, unknown>;
+            const title = p.title as string | undefined;
+            const body = p.body as string | undefined;
+            const channel = p.channel as string | undefined;
+            if (!title && !body) return null;
+            return (
+              <div className="mb-4 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                <div className="font-pixel text-[9px] tracking-wider text-orange-400 mb-1">
+                  {formatCommandName(selectedArtifact.command_name).toUpperCase()}
+                  {channel && <span className="text-zinc-500 ml-2">in #{channel}</span>}
+                </div>
+                {title && <div className="font-pixel text-[10px] text-zinc-200 mb-1 font-bold">{title}</div>}
+                {body && <SimpleMarkdown text={body} />}
+              </div>
+            );
+          })()}
           {/* Full-size image for image artifacts */}
           {selectedArtifact.result?.image_url && (
             <div className="mb-4">

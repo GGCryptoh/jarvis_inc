@@ -838,9 +838,8 @@ ${resultText.slice(0, 12000)}`,
           const { queueCEOAction } = await import('./ceoActionQueue');
           await queueCEOAction(
             'mission_review',
-            `Mission complete: ${mTitle}`,
-            `I've finished ${completedCount} task(s). Ready for your review.`,
-            { mission_id: missionId, task_count: completedCount },
+            `Mission complete: ${mTitle} — I've finished ${completedCount} task(s). Ready for your review.`,
+            { topic: `mission_review_${missionId}`, metadata: { mission_id: missionId, task_count: completedCount } },
           );
         } catch { /* ignore action queue errors */ }
       }

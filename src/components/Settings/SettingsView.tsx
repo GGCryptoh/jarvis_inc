@@ -11,7 +11,7 @@ import type { CEORow } from '../../lib/database';
 import { getSupabase, hasSupabaseConfig, pingSupabase } from '../../lib/supabase';
 import { getMemories, deleteMemory, queryMemories, chatWithMemories, consolidateDailyMemories } from '../../lib/memory';
 import { hasInstanceKey, loadKeyFromLocalStorage, decryptPrivateKey } from '../../lib/jarvisKey';
-import { getMarketplaceStatus, getCachedRawPrivateKey, cacheRawPrivateKey, clearSigningCache, getSigningExpiry, getUnlockDuration, setUnlockDuration, type UnlockDuration } from '../../lib/marketplaceClient';
+import { getMarketplaceStatus, getCachedRawPrivateKey, cacheRawPrivateKey, clearSigningCache, getSigningExpiry, getUnlockDuration, setUnlockDuration, persistKeyToVault, type UnlockDuration } from '../../lib/marketplaceClient';
 import type { MemoryRow } from '../../lib/memory';
 
 const categoryColors: Record<string, string> = {
@@ -159,6 +159,8 @@ export default function SettingsView() {
   const [unlockError, setUnlockError] = useState('');
   const [unlocking, setUnlocking] = useState(false);
   const [unlockDuration, setUnlockDurationState] = useState<UnlockDuration>(getUnlockDuration);
+  const [vaultSyncing, setVaultSyncing] = useState(false);
+  const [vaultSyncResult, setVaultSyncResult] = useState<'success' | 'failed' | null>(null);
 
   // Versions section
   const [versionInfo, setVersionInfo] = useState<{local: string; skills: string; remote?: string; changelog?: string; checking: boolean; checked: boolean; error?: string}>({
@@ -384,6 +386,8 @@ export default function SettingsView() {
       setSessionUnlocked(true);
       setShowUnlockForm(false);
       setUnlockPassword('');
+      // Re-attempt vault sync on every unlock (covers case where key predates vault sync)
+      persistKeyToVault(rawPrivateKey).catch(err => console.warn('[Settings] Vault sync on unlock failed:', err));
     } catch {
       setUnlockError('Wrong password');
     }
@@ -837,6 +841,24 @@ export default function SettingsView() {
                 >
                   {mktSyncingSkills ? <Loader2 size={10} className="animate-spin" /> : <Blocks size={10} />}
                   SYNC SKILLS
+                </button>
+                <button
+                  disabled={vaultSyncing || !sessionUnlocked}
+                  onClick={async () => {
+                    setVaultSyncing(true);
+                    setVaultSyncResult(null);
+                    try {
+                      const ok = await persistKeyToVault();
+                      setVaultSyncResult(ok ? 'success' : 'failed');
+                    } catch { setVaultSyncResult('failed'); }
+                    setVaultSyncing(false);
+                    setTimeout(() => setVaultSyncResult(null), 3000);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 font-pixel text-[7px] tracking-wider text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg transition-colors disabled:opacity-50"
+                  title={!sessionUnlocked ? 'Unlock signing first' : 'Sync signing key to vault for sidecar use'}
+                >
+                  {vaultSyncing ? <Loader2 size={10} className="animate-spin" /> : <KeyRound size={10} />}
+                  {vaultSyncResult === 'success' ? 'SYNCED!' : vaultSyncResult === 'failed' ? 'FAILED' : 'SYNC KEY TO VAULT'}
                 </button>
                 {mktError && (
                   <div className="w-full mt-2 p-2 rounded bg-red-500/10 border border-red-500/25">

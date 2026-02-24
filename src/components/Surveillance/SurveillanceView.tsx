@@ -1236,15 +1236,27 @@ export default function SurveillanceView() {
                     const action = ceoActions[0];
                     setCeoActions([]);
                     await markActionSeen(action.id);
-                    navigate('/chat');
+                    navigate(action.navigateTo ?? '/chat');
                   }}
                 >
-                  OPEN CHAT
+                  {ceoActions[0].navigateTo ? 'GO' : 'OPEN CHAT'}
                 </button>
                 <button
                   className="retro-button !text-[8px] !py-2 !px-4 tracking-widest hover:!text-zinc-300"
                   onClick={async () => {
-                    // Dismiss in DB + immediately clear from UI + persist across navigation
+                    // Snooze: dismiss from UI but will reappear after cooldown (2h dedup in engine)
+                    const action = ceoActions[0];
+                    setCeoActions(prev => prev.slice(1));
+                    const { dismissAction } = await import('../../lib/ceoActionQueue');
+                    await dismissAction(action.id);
+                  }}
+                >
+                  REMIND LATER
+                </button>
+                <button
+                  className="retro-button !text-[8px] !py-2 !px-3 tracking-widest hover:!text-zinc-500"
+                  onClick={async () => {
+                    // Full dismiss + suppress across navigation
                     const action = ceoActions[0];
                     const now = new Date().toISOString();
                     dismissedAtRef.current = now;
@@ -1254,7 +1266,7 @@ export default function SurveillanceView() {
                     await dismissAction(action.id);
                   }}
                 >
-                  LATER
+                  DISMISS
                 </button>
               </div>
             </div>

@@ -146,19 +146,16 @@ class CEOScheduler {
   }
 
   private handleVisibility(): void {
-    if (document.hidden) {
+    if (!document.hidden) {
+      // Tab became visible again — run a tick immediately to catch up
       if (this.status === 'running') {
-        this.clearInterval();
-        // Keep status as 'running' — this is a visibility pause, not a manual pause
-        // so resume will re-schedule automatically
-      }
-    } else {
-      if (this.status === 'running' && this.intervalId === null) {
-        this.scheduleInterval();
-        // Run a tick immediately when tab becomes visible again
         this.tick().catch(() => { /* swallow */ });
       }
     }
+    // NOTE: We no longer stop the interval when hidden. The browser will
+    // naturally throttle background tabs (~1/min in Chrome), which is fine
+    // for an autonomous system that needs to keep running (forum checks,
+    // heartbeats, marketplace online status, Telegram polling, etc.).
   }
 
   private async writeState(): Promise<void> {

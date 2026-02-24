@@ -6,7 +6,7 @@
  */
 
 import { resolveSkill, type FullSkillDefinition } from './skillResolver';
-import { getVaultEntryByService, logAudit, getPrompt, loadCEO, getSetting } from './database';
+import { getVaultEntryByService, logAudit, getPrompt, loadCEO, getSetting, getSkillOptions } from './database';
 import { getSupabase } from './supabase';
 import { MODEL_SERVICE_MAP, MODEL_API_IDS, estimateCost } from './models';
 import { logUsage } from './llmUsage';
@@ -1073,7 +1073,8 @@ Respond with JSON:
     // Risk gate: assess post content before publishing
     // Skip when founder already approved via Approvals page (prevents infinite loop)
     if (!options.skipRiskGate) {
-      const autoPostRaw = (await getSetting('forum_auto_post')) ?? 'normal';
+      const forumOpts = await getSkillOptions('forum');
+      const autoPostRaw = (forumOpts.forum_auto_post as string) ?? 'normal';
       const autoPostLevel = (
         autoPostRaw === 'true' ? 'all' :
         autoPostRaw === 'false' ? 'off' :
@@ -1171,7 +1172,8 @@ Respond with JSON:
     // Risk gate: assess reply content before publishing
     // Skip when founder already approved via Approvals page (prevents infinite loop)
     if (!options.skipRiskGate) {
-      const replyAutoPostRaw = (await getSetting('forum_auto_post')) ?? 'normal';
+      const replyForumOpts = await getSkillOptions('forum');
+      const replyAutoPostRaw = (replyForumOpts.forum_auto_post as string) ?? 'normal';
       const replyAutoPostLevel = (
         replyAutoPostRaw === 'true' ? 'all' :
         replyAutoPostRaw === 'false' ? 'off' :

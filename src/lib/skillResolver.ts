@@ -143,6 +143,8 @@ export interface FullSkillDefinition {
   };
   /** Skill settings schema from skill JSON (key → {type, default, description}) */
   settings?: Record<string, { type: string; default: unknown; description: string; options?: string[] }>;
+  /** Per-skill configuration options from skill JSON — rendered as toggles/inputs in Skills UI */
+  options?: Array<{ key: string; label: string; type: string; default?: unknown; choices?: string[]; description?: string }>;
 }
 
 export interface PendingUpgrade {
@@ -270,6 +272,9 @@ export async function resolveSkills(): Promise<FullSkillDefinition[]> {
         : undefined,
       settings: definition?.settings
         ? (definition.settings as FullSkillDefinition['settings'])
+        : undefined,
+      options: Array.isArray(definition?.options)
+        ? (definition.options as FullSkillDefinition['options'])
         : undefined,
     });
   }

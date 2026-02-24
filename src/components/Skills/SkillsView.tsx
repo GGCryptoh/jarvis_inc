@@ -10,6 +10,7 @@ import {
   FlaskConical,
   Trash2,
   Clock,
+  Settings2,
   // Lucide icons for skill rendering
   Mail,
   Send,
@@ -34,7 +35,7 @@ import {
   Sparkles,
   ExternalLink,
 } from 'lucide-react';
-import { loadSkills, saveSkill, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService, loadVaultEntries, logAudit, type SkillScheduleRow, loadSkillSchedules, saveSkillSchedule, deleteSkillSchedule } from '../../lib/database';
+import { loadSkills, saveSkill, loadApprovals, loadAllApprovals, saveApproval, updateApprovalStatus, getVaultEntryByService, loadVaultEntries, logAudit, saveSkillOptions, getSkillOptions, type SkillScheduleRow, loadSkillSchedules, saveSkillSchedule, deleteSkillSchedule } from '../../lib/database';
 import { getSupabase } from '../../lib/supabase';
 import { MODEL_OPTIONS, getServiceForModel } from '../../lib/models';
 import { resolveSkills, seedSkillsFromRepo, cleanSeedSkillsFromRepo, applySkillUpgrades, SKILLS_REPO_INFO, type FullSkillDefinition, type PendingUpgrade } from '../../lib/skillResolver';
@@ -238,6 +239,15 @@ export default function SkillsView() {
         }
         setSchedules(map);
       });
+      // Load skill options for all skills that have options[] definitions
+      loadSkills().then(rows => {
+        const optsMap = new Map<string, Record<string, unknown>>();
+        for (const row of rows) {
+          const oc = (row as unknown as Record<string, unknown>).options_config;
+          if (oc && typeof oc === 'object') optsMap.set(row.id, oc as Record<string, unknown>);
+        }
+        setSkillOptionsMap(optsMap);
+      });
     })();
     // Mark skills as "seen" — clears the nav badge
     localStorage.setItem('jarvis_skills_last_seen', new Date().toISOString());
@@ -294,6 +304,10 @@ export default function SkillsView() {
   // Skill schedule state — multiple schedules per skill (one per command)
   const [schedules, setSchedules] = useState<Record<string, SkillScheduleRow[]>>({});
   const [schedulePopover, setSchedulePopover] = useState<string | null>(null); // skill_id or null
+
+  // Skill options state — per-skill config (e.g. approval_notifications, ceo_alerts)
+  const [optionsPopover, setOptionsPopover] = useState<string | null>(null);
+  const [skillOptionsMap, setSkillOptionsMap] = useState<Map<string, Record<string, unknown>>>(new Map());
 
   // Count of personal skills for the badge on Personal filter button
   const personalSkillCount = useMemo(() => resolvedSkills.filter(s => s.source === 'personal').length, [resolvedSkills]);
@@ -965,6 +979,19 @@ export default function SkillsView() {
                                 </button>
                               </>
                             )}
+                            {skill.options && skill.options.length > 0 && (
+                              <button
+                                onClick={e => { e.stopPropagation(); setOptionsPopover(optionsPopover === skill.id ? null : skill.id); }}
+                                className={`p-1 rounded transition-colors ${
+                                  Object.keys(skillOptionsMap.get(skill.id) ?? {}).length > 0
+                                    ? 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20'
+                                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/40'
+                                }`}
+                                title="Skill options"
+                              >
+                                <Settings2 size={10} />
+                              </button>
+                            )}
                             <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${needsKey ? 'bg-amber-400' : 'bg-emerald-400'}`} />
                             {needsKey ? (
                               <span className="font-pixel text-[6px] tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
@@ -1001,6 +1028,23 @@ export default function SkillsView() {
                         existingSchedules={schedules[skill.id] ?? []}
                         onSave={handleSetSchedule}
                         onClose={() => setSchedulePopover(null)}
+                      />
+                    )}
+
+                    {/* Options popover */}
+                    {optionsPopover === skill.id && skill.options && (
+                      <OptionsPopover
+                        skill={skill}
+                        currentValues={skillOptionsMap.get(skill.id) ?? {}}
+                        onSave={async (values) => {
+                          await saveSkillOptions(skill.id, values);
+                          setSkillOptionsMap(prev => {
+                            const next = new Map(prev);
+                            next.set(skill.id, values);
+                            return next;
+                          });
+                        }}
+                        onClose={() => setOptionsPopover(null)}
                       />
                     )}
 
@@ -1480,6 +1524,122 @@ function SchedulePopover({
             ALL COMMANDS SCHEDULED
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ===========================================================================
+// Options Popover
+// ===========================================================================
+
+function OptionsPopover({
+  skill,
+  currentValues,
+  onSave,
+  onClose,
+}: {
+  skill: FullSkillDefinition;
+  currentValues: Record<string, unknown>;
+  onSave: (values: Record<string, unknown>) => Promise<void>;
+  onClose: () => void;
+}) {
+  const options = skill.options ?? [];
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    const initial: Record<string, unknown> = {};
+    for (const opt of options) {
+      initial[opt.key] = currentValues[opt.key] ?? opt.default;
+    }
+    return initial;
+  });
+
+  async function handleToggle(key: string, newVal: unknown) {
+    const updated = { ...values, [key]: newVal };
+    setValues(updated);
+    await onSave(updated);
+  }
+
+  return (
+    <div
+      className="absolute right-0 bottom-full mb-1 z-50 w-72 bg-jarvis-surface border border-jarvis-border rounded-lg shadow-xl overflow-hidden"
+      onClick={e => e.stopPropagation()}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-jarvis-border bg-zinc-800/60">
+        <span className="font-pixel text-[7px] tracking-widest text-emerald-400">OPTIONS</span>
+        <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 transition-colors text-xs leading-none">&times;</button>
+      </div>
+
+      <div className="p-3 space-y-3">
+        {options.map(opt => (
+          <div key={opt.key}>
+            {opt.type === 'boolean' && (
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0 pr-2">
+                  <div className="font-pixel text-[7px] tracking-wider text-zinc-200">{opt.label}</div>
+                  {opt.description && (
+                    <div className="font-pixel text-[6px] tracking-wider text-zinc-500 mt-0.5 leading-relaxed">{opt.description}</div>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleToggle(opt.key, !values[opt.key])}
+                  className={`w-8 h-4 rounded-full transition-colors duration-200 flex items-center px-0.5 flex-shrink-0 ${
+                    values[opt.key] ? 'bg-emerald-500' : 'bg-zinc-700'
+                  }`}
+                >
+                  <div className={`w-3 h-3 rounded-full bg-white transition-transform duration-200 ${values[opt.key] ? 'translate-x-3.5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+            )}
+            {opt.type === 'select' && opt.choices && (
+              <div>
+                <div className="font-pixel text-[7px] tracking-wider text-zinc-200 mb-1">{opt.label}</div>
+                {opt.description && (
+                  <div className="font-pixel text-[6px] tracking-wider text-zinc-500 mb-1 leading-relaxed">{opt.description}</div>
+                )}
+                <select
+                  value={(values[opt.key] as string) ?? ''}
+                  onChange={e => handleToggle(opt.key, e.target.value)}
+                  className="w-full appearance-none font-pixel text-[7px] tracking-wider bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-zinc-300 focus:outline-none focus:border-emerald-500/40 cursor-pointer"
+                >
+                  {opt.choices.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {opt.type === 'string' && (
+              <div>
+                <div className="font-pixel text-[7px] tracking-wider text-zinc-200 mb-1">{opt.label}</div>
+                {opt.description && (
+                  <div className="font-pixel text-[6px] tracking-wider text-zinc-500 mb-1 leading-relaxed">{opt.description}</div>
+                )}
+                <input
+                  type="text"
+                  value={(values[opt.key] as string) ?? ''}
+                  onChange={e => setValues(prev => ({ ...prev, [opt.key]: e.target.value }))}
+                  onBlur={() => onSave(values)}
+                  className="w-full font-pixel text-[7px] tracking-wider bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-zinc-300 focus:outline-none focus:border-emerald-500/40"
+                />
+              </div>
+            )}
+            {opt.type === 'number' && (
+              <div>
+                <div className="font-pixel text-[7px] tracking-wider text-zinc-200 mb-1">{opt.label}</div>
+                {opt.description && (
+                  <div className="font-pixel text-[6px] tracking-wider text-zinc-500 mb-1 leading-relaxed">{opt.description}</div>
+                )}
+                <input
+                  type="number"
+                  value={(values[opt.key] as number) ?? 0}
+                  onChange={e => setValues(prev => ({ ...prev, [opt.key]: Number(e.target.value) }))}
+                  onBlur={() => onSave(values)}
+                  className="w-full font-pixel text-[7px] tracking-wider bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-zinc-300 focus:outline-none focus:border-emerald-500/40"
+                />
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );

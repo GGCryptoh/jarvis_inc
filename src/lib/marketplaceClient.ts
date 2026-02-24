@@ -83,23 +83,24 @@ function persistSigningCache(key: string, duration: UnlockDuration): void {
 }
 
 /** Persist the signing key to vault so the sidecar can sign without a browser. */
-async function persistKeyToVault(rawKey: string): Promise<void> {
+export async function persistKeyToVault(rawKey?: string): Promise<boolean> {
+  const key = rawKey ?? getCachedRawPrivateKey();
+  if (!key) return false;
   const keyData = loadKeyFromLocalStorage();
-  if (!keyData) return;
-  const existing = await getVaultEntryByService('marketplace-signing');
-  if (existing) return; // Already stored
+  if (!keyData) return false;
   await saveVaultEntry({
     id: 'marketplace-signing',
     name: 'Marketplace Signing Key',
     type: 'signing',
     service: 'marketplace-signing',
     key_value: JSON.stringify({
-      rawPrivateKey: rawKey,
+      rawPrivateKey: key,
       publicKey: keyData.publicKey,
       publicKeyHash: keyData.publicKeyHash,
       createdAt: keyData.createdAt,
     }),
   });
+  return true;
 }
 
 /** Cache the raw (decrypted) private key for browser-side signing */
@@ -110,7 +111,7 @@ export function cacheRawPrivateKey(key: string): void {
     persistSigningCache(key, duration);
   }
   // Fire-and-forget: persist to vault for sidecar signing
-  persistKeyToVault(key).catch(() => {});
+  persistKeyToVault(key).catch(err => console.warn('[Marketplace] Vault persist failed:', err));
 }
 
 /** Get the cached raw private key — checks memory first, then localStorage */
@@ -379,9 +380,9 @@ export async function registerOnMarketplace(
       }
 
       // Persist to settings so sidecar can read registration state
-      setSetting('marketplace_registered', 'true').catch(() => {});
-      setSetting('marketplace_instance_id', instanceId).catch(() => {});
-      setSetting('marketplace_nickname', String(payload.nickname)).catch(() => {});
+      setSetting('marketplace_registered', 'true').catch(err => console.warn('[Marketplace] Setting persist failed:', err));
+      setSetting('marketplace_instance_id', instanceId).catch(err => console.warn('[Marketplace] Setting persist failed:', err));
+      setSetting('marketplace_nickname', String(payload.nickname)).catch(err => console.warn('[Marketplace] Setting persist failed:', err));
 
       console.log('[Marketplace] Registered successfully:', instanceId);
       return { success: true, instanceId };

@@ -65,6 +65,7 @@ async function telegramAPI(token: string, method: string, body?: Record<string, 
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
+    keepalive: false, // Prevent connection reuse — avoids undici UND_ERR_SOCKET on long-polls
   });
   return res.json();
 }
@@ -174,6 +175,8 @@ async function handleMessage(
 // ---------------------------------------------------------------------------
 
 async function pollLoop(botToken: string, channelId: string): Promise<void> {
+  let consecutiveFailures = 0;
+
   while (running) {
     try {
       const data = await telegramAPI(botToken, 'getUpdates', {
@@ -183,10 +186,14 @@ async function pollLoop(botToken: string, channelId: string): Promise<void> {
       });
 
       if (!data.ok || !Array.isArray(data.result)) {
-        console.error('[Telegram] getUpdates error:', data.description ?? 'unknown');
-        await sleep(5000);
+        consecutiveFailures++;
+        const backoff = Math.min(5000 * Math.pow(2, Math.min(consecutiveFailures - 1, 4)), 60000);
+        console.error(`[Telegram] getUpdates error (attempt ${consecutiveFailures}, retry in ${backoff / 1000}s):`, data.description ?? 'unknown');
+        await sleep(backoff);
         continue;
       }
+
+      consecutiveFailures = 0; // Reset on success
 
       for (const update of data.result) {
         offset = update.update_id + 1;
@@ -242,8 +249,10 @@ async function pollLoop(botToken: string, channelId: string): Promise<void> {
         });
       }
     } catch (err) {
-      console.error('[Telegram] Poll error:', err);
-      await sleep(5000);
+      consecutiveFailures++;
+      const backoff = Math.min(5000 * Math.pow(2, Math.min(consecutiveFailures - 1, 4)), 60000);
+      console.error(`[Telegram] Poll error (attempt ${consecutiveFailures}, retry in ${backoff / 1000}s):`, err);
+      await sleep(backoff);
     }
   }
 }
