@@ -463,27 +463,49 @@ export async function signedMarketplacePost(
 
 /**
  * Send a heartbeat to the marketplace to keep the instance marked as online.
- * Fire-and-forget — requires instance to be registered.
+ * Fire-and-forget — works from both browser and sidecar.
+ * Reads registration from DB settings if in-memory cache is empty.
  */
 export async function sendHeartbeat(): Promise<void> {
-  const status = getMarketplaceStatus();
-  if (!status.registered || !status.instanceId) return;
+  let instanceId: string | null = null;
+  let publicKey: string | null = null;
 
-  const keyData = loadKeyFromLocalStorage();
-  if (!keyData) return;
+  // Try in-memory / localStorage first
+  const status = getMarketplaceStatus();
+  if (status.registered && status.instanceId) {
+    instanceId = status.instanceId;
+    const keyData = loadKeyFromLocalStorage();
+    publicKey = keyData?.publicKey ?? null;
+  }
+
+  // Fallback: read from DB settings (sidecar path where localStorage is unavailable)
+  if (!instanceId) {
+    try {
+      const { getSetting } = await import('./database');
+      instanceId = await getSetting('marketplace_instance_id');
+    } catch { /* DB not available */ }
+  }
+  if (!publicKey) {
+    try {
+      const { getVaultEntryByService } = await import('./database');
+      const entry = await getVaultEntryByService('marketplace_identity');
+      if (entry?.data) {
+        const data = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
+        publicKey = data.publicKey ?? null;
+      }
+    } catch { /* vault not available */ }
+  }
+
+  if (!instanceId) return;
 
   try {
-    const timestamp = Date.now();
-    // Heartbeat also requires signature, but we only have encrypted key.
-    // For now, we send an unsigned heartbeat — the marketplace can
-    // accept it for heartbeats specifically (lower security requirement).
     await fetch(`${MARKETPLACE_URL}/api/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        instance_id: status.instanceId,
-        public_key: keyData.publicKey,
-        timestamp,
+        instance_id: instanceId,
+        public_key: publicKey || '',
+        timestamp: Date.now(),
         signature: '',
       }),
     });

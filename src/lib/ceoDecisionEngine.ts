@@ -2109,7 +2109,13 @@ export async function evaluateCycle(): Promise<CycleResult> {
     console.warn('[CEODecisionEngine] Telegram polling failed:', err);
   }
 
-  // 5. Build diagnostic result
+  // 5. Marketplace heartbeat (fire-and-forget, keeps instance "online")
+  try {
+    const { sendHeartbeat } = await import('./marketplaceClient');
+    sendHeartbeat(); // intentionally not awaited
+  } catch { /* silent */ }
+
+  // 6. Build diagnostic result
   const result: CycleResult = {
     timestamp: new Date().toISOString(),
     actions: allActions,
