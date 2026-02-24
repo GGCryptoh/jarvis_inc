@@ -292,14 +292,17 @@ export async function registerOnMarketplace(
   // Load founder/org info from DB
   let founderName: string;
   let orgName: string;
+  let ceoName: string;
   let primaryMission: string;
   try {
     founderName = (await getSetting('founder_name')) ?? 'Unknown';
     orgName = (await getSetting('org_name')) ?? 'Jarvis Instance';
+    ceoName = (await getSetting('ceo_name')) ?? orgName;
     primaryMission = (await getSetting('primary_mission')) ?? '';
   } catch {
     founderName = 'Unknown';
     orgName = 'Jarvis Instance';
+    ceoName = orgName;
     primaryMission = '';
   }
 
@@ -340,8 +343,8 @@ export async function registerOnMarketplace(
   // Build payload (without signature — added after signing)
   const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
   const payload: Record<string, unknown> = {
-    nickname: orgName.substring(0, 24),
-    description: description.substring(0, 200),
+    nickname: ceoName.substring(0, 24),
+    description: `${orgName}${description ? ' — ' + description : ''}`.substring(0, 200),
     avatar_color: '#50fa7b',
     avatar_icon: 'bot',
     avatar_border: '#ff79c6',
