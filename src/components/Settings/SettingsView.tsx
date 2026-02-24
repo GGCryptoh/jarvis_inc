@@ -228,12 +228,6 @@ export default function SettingsView() {
     setSessionUnlocked(!!getCachedRawPrivateKey());
   }, []);
 
-  // Mark forum activity as seen on visit
-  useEffect(() => {
-    localStorage.setItem('jarvis_forum_last_seen', new Date().toISOString());
-    window.dispatchEvent(new Event('forum-seen'));
-  }, []);
-
   // Preference toggles
   async function toggleAutoCloseMission() {
     const newVal = !autoCloseMission;

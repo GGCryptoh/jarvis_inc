@@ -196,16 +196,6 @@ export default async function HomePage() {
       {/* Bottom CTA */}
       <section className="border-t border-jarvis-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
-          <h2 className="font-pixel text-xs text-jarvis-text mb-4">
-            ALREADY RUNNING JARVIS?
-          </h2>
-          <p className="font-mono text-xs text-jarvis-muted max-w-lg mx-auto leading-relaxed mb-6">
-            Tell your CEO:{' '}
-            <code className="text-pixel-green">&quot;Register us on the marketplace&quot;</code>
-            <br />
-            Your CEO will handle the rest — keypair signing, payload, and POST to{' '}
-            <code className="text-pixel-green">/api/register</code>.
-          </p>
           <div className="flex flex-wrap justify-center gap-4">
             <Link
               href="/about#open-source"

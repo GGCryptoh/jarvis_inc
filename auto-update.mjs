@@ -151,22 +151,21 @@ async function main() {
   log('Installing dependencies...');
   run('npm install');
 
-  // 5. Check if Docker is running and restart if so
+  // 5. Rebuild frontend (before Docker so the image gets the new build)
+  log('Building frontend...');
+  run('npm run build', { timeout: 60000 });
+
+  // 6. Restart Docker stack via setup (handles multi-instance ports, secrets, etc.)
   try {
     const containers = run('docker compose -f docker/docker-compose.yml ps -q', { timeout: 10000 });
     if (containers) {
-      log('Restarting Docker stack...');
-      run('docker compose -f docker/docker-compose.yml down', { timeout: 60000 });
-      run('docker compose -f docker/docker-compose.yml up -d', { timeout: 120000 });
+      log('Restarting Docker stack via setup...');
+      run('node docker/setup.mjs --auto', { timeout: 300000 });
       log('Docker stack restarted.');
     }
   } catch {
     log('Docker not running or not available. Skipping Docker restart.');
   }
-
-  // 6. Rebuild frontend
-  log('Building frontend...');
-  run('npm run build', { timeout: 60000 });
 
   const newVersion = getLocalVersion();
   log(`Update complete: v${newVersion}`);

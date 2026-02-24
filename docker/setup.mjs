@@ -11,7 +11,6 @@
 
 import { createInterface } from 'readline';
 import { createHmac, randomBytes } from 'crypto';
-import { createServer } from 'net';
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -68,30 +67,115 @@ function generatePassword(length = 20) {
     .join('');
 }
 
-// ─── Port Configuration ────────────────────────────────────
-// Module-level port state — set during scanning or from existing .env
+// ─── Multi-Instance Configuration ─────────────────────────
+// Max 2 instances per machine. Each instance gets deterministic ports.
+const MAX_INSTANCES = 2;
+
+// Port allocation per instance slot (1-indexed)
+const PORT_TABLE = {
+  1: { POSTGRES_PORT: 5432, KONG_HTTP_PORT: 8000, GATEWAY_PORT: 3001, CADDY_HTTP_PORT: 80,  CADDY_HTTPS_PORT: 443 },
+  2: { POSTGRES_PORT: 5433, KONG_HTTP_PORT: 8001, GATEWAY_PORT: 3002, CADDY_HTTP_PORT: 81,  CADDY_HTTPS_PORT: 444 },
+};
+
+// Domain per instance slot
+function domainForSlot(slot) {
+  return slot === 1 ? 'jarvis.local' : `jarvis${slot}.local`;
+}
+
+// Module-level state
+let instanceSlot = null;  // set during detection
 let activeKongPort = 8000;
 let activeGatewayPort = 3001;
 
-/** Check if a TCP port is available on 127.0.0.1 */
-function checkPortAvailable(port) {
-  return new Promise((resolve) => {
-    const server = createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => {
-      server.close(() => resolve(true));
+/** Detect which instance slot we are (1 or 2).
+ *  - If .env already has INSTANCE_ID, use it.
+ *  - Otherwise scan ALL running docker compose projects for jarvis stacks.
+ *  - Handles legacy stacks (no INSTANCE_ID) by checking their .env or ports.
+ *  - Assign the first available slot. Error if both taken.
+ */
+function detectInstanceSlot() {
+  // 1. Check existing .env for a persisted slot
+  if (existsSync(ENV_PATH)) {
+    const env = readFileSync(ENV_PATH, 'utf-8');
+    const m = env.match(/^INSTANCE_ID=(\d+)$/m);
+    if (m) {
+      const slot = parseInt(m[1], 10);
+      if (slot >= 1 && slot <= MAX_INSTANCES) {
+        return slot;
+      }
+    }
+  }
+
+  // 2. Scan ALL running compose projects for jarvis stacks
+  const takenSlots = new Set();
+  const ourConfigPath = join(__dirname, 'docker-compose.yml');
+
+  try {
+    const lsOutput = execSync('docker compose ls --format json', {
+      encoding: 'utf-8', stdio: 'pipe', timeout: 10000,
     });
-    server.listen(port, '127.0.0.1');
-  });
+    const projects = JSON.parse(lsOutput);
+    for (const p of projects) {
+      // Skip our own project (match by config file path)
+      const configPaths = p.ConfigFiles || '';
+      if (configPaths.includes(ourConfigPath)) continue;
+
+      // Check if this is a jarvis stack by project name pattern
+      const nameMatch = p.Name?.match(/^jarvis-(\d+)$/);
+      if (nameMatch) {
+        takenSlots.add(parseInt(nameMatch[1], 10));
+        continue;
+      }
+
+      // Check if this is a legacy jarvis stack by inspecting its config path
+      // e.g. ConfigFiles: "/path/to/jarvis_inc/docker/docker-compose.yml"
+      if (configPaths.includes('jarvis') && configPaths.includes('docker-compose.yml')) {
+        // Legacy stack — try to read its .env for INSTANCE_ID
+        const otherDockerDir = dirname(configPaths.split(',')[0].trim());
+        const otherEnvPath = join(otherDockerDir, '.env');
+        let otherSlot = null;
+
+        if (existsSync(otherEnvPath)) {
+          const otherEnv = readFileSync(otherEnvPath, 'utf-8');
+          const instMatch = otherEnv.match(/^INSTANCE_ID=(\d+)$/m);
+          if (instMatch) {
+            otherSlot = parseInt(instMatch[1], 10);
+          } else {
+            // No INSTANCE_ID — infer from ports. Default ports = slot 1.
+            const kongPort = otherEnv.match(/^KONG_HTTP_PORT=(\d+)$/m);
+            const kp = kongPort ? parseInt(kongPort[1], 10) : 8000;
+            otherSlot = kp === PORT_TABLE[2].KONG_HTTP_PORT ? 2 : 1;
+          }
+        } else {
+          // No .env at all — assume slot 1 (default ports)
+          otherSlot = 1;
+        }
+
+        if (otherSlot) {
+          takenSlots.add(otherSlot);
+          console.log(dim(`  Found existing stack "${p.Name}" → slot ${otherSlot}`));
+        }
+      }
+    }
+  } catch {
+    // docker not running or ls failed — assume no instances
+  }
+
+  // 3. Assign first available slot
+  for (let slot = 1; slot <= MAX_INSTANCES; slot++) {
+    if (!takenSlots.has(slot)) return slot;
+  }
+
+  // 4. All slots taken
+  console.log(red(`  Maximum ${MAX_INSTANCES} Jarvis instances already running.`));
+  console.log(dim('  Stop an existing instance first:'));
+  console.log(dim('    cd <other-jarvis>/docker && docker compose down'));
+  process.exit(1);
 }
 
-/** Find an available port starting from preferred, scanning upward */
-async function findAvailablePort(preferred, maxAttempts = 20) {
-  for (let offset = 0; offset < maxAttempts; offset++) {
-    const port = preferred + offset;
-    if (await checkPortAvailable(port)) return port;
-  }
-  return preferred; // fallback to preferred
+/** Get deterministic ports for an instance slot */
+function portsForSlot(slot) {
+  return PORT_TABLE[slot] || PORT_TABLE[1];
 }
 
 /** Extract port config from existing .env content */
@@ -100,6 +184,8 @@ function extractPortsFromEnv(envContent) {
   if (kong) activeKongPort = parseInt(kong[1], 10);
   const gw = envContent.match(/^GATEWAY_PORT=(\d+)$/m);
   if (gw) activeGatewayPort = parseInt(gw[1], 10);
+  const inst = envContent.match(/^INSTANCE_ID=(\d+)$/m);
+  if (inst) instanceSlot = parseInt(inst[1], 10);
 }
 
 // ─── Secret Generation ──────────────────────────────────────
@@ -916,15 +1002,26 @@ async function ensureHostsEntries(domain) {
     }
 
     try {
-      execSync(`echo '${entries}' | sudo tee -a ${hostsPath} > /dev/null`, {
-        stdio: ['inherit', 'pipe', 'pipe'],
-        timeout: 30000,
-      });
+      // Use sudo -n first (non-interactive, works if sudo is cached).
+      // Fall back to interactive sudo if -n fails and we have a TTY.
+      try {
+        execSync(`echo '${entries}' | sudo -n tee -a ${hostsPath} > /dev/null`, {
+          stdio: 'pipe', timeout: 10000,
+        });
+      } catch {
+        // sudo -n failed — try interactive (will prompt for password on TTY)
+        execSync(`echo '${entries}' | sudo tee -a ${hostsPath} > /dev/null`, {
+          stdio: ['inherit', 'pipe', 'pipe'],
+          timeout: 30000,
+        });
+      }
       console.log(`  ${green('✓')} Hosts entries added`);
     } catch {
-      console.log(red('  Could not add hosts entries automatically.'));
-      console.log(dim('  Add these manually:'));
-      console.log(cyan(`    ${entries.replace(/\n/g, '\n    ')}`));
+      console.log(gold('  ⚡ Hosts entries needed — paste this once:'));
+      const oneLiner = missing.map(h => `127.0.0.1  ${h}`).join('\\n');
+      console.log('');
+      console.log(cyan(`    sudo sh -c 'echo "${oneLiner}" >> ${hostsPath}'`));
+      console.log('');
     }
   } else {
     // Windows — manual instructions
@@ -937,9 +1034,12 @@ async function ensureHostsEntries(domain) {
 async function setupLaunchAgent() {
   if (process.platform !== 'darwin') return; // macOS only
 
-  const plistPath = join(process.env.HOME, 'Library', 'LaunchAgents', 'com.jarvis.inc.plist');
+  // Instance-aware Launch Agent naming
+  const slot = instanceSlot || 1;
+  const agentLabel = `com.jarvis.inc.${slot}`;
+  const plistPath = join(process.env.HOME, 'Library', 'LaunchAgents', `${agentLabel}.plist`);
   if (existsSync(plistPath)) {
-    console.log(`  ${green('✓')} Launch Agent already installed ${dim('(survives reboots)')}`);
+    console.log(`  ${green('✓')} Launch Agent already installed ${dim(`(${agentLabel}, survives reboots)`)}`);
     return;
   }
 
@@ -953,7 +1053,7 @@ async function setupLaunchAgent() {
       return;
     }
   } else {
-    console.log(dim('  Installing Launch Agent for auto-start on login...'));
+    console.log(dim(`  Installing Launch Agent (${agentLabel}) for auto-start on login...`));
   }
 
   const projectRoot = join(__dirname, '..');
@@ -971,7 +1071,7 @@ async function setupLaunchAgent() {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.jarvis.inc</string>
+  <string>${agentLabel}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${npmPath}</string>
@@ -985,9 +1085,9 @@ async function setupLaunchAgent() {
   <key>KeepAlive</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>/tmp/jarvis.log</string>
+  <string>/tmp/jarvis-${slot}.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/jarvis.err</string>
+  <string>/tmp/jarvis-${slot}.err</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -1003,9 +1103,9 @@ async function setupLaunchAgent() {
     }
     writeFileSync(plistPath, plistContent);
     execSync(`launchctl load "${plistPath}"`, { stdio: 'pipe' });
-    console.log(`  ${green('✓')} Launch Agent installed ${dim('— Jarvis starts on login')}`);
-    console.log(dim(`    Logs: /tmp/jarvis.log`));
-    console.log(dim(`    Remove: launchctl unload ~/Library/LaunchAgents/com.jarvis.inc.plist`));
+    console.log(`  ${green('✓')} Launch Agent installed ${dim(`— Jarvis instance ${slot} starts on login`)}`);
+    console.log(dim(`    Logs: /tmp/jarvis-${slot}.log`));
+    console.log(dim(`    Remove: launchctl unload ~/Library/LaunchAgents/${agentLabel}.plist`));
   } catch (err) {
     console.log(`  ${dim('○')} Could not install Launch Agent: ${err.message}`);
     console.log(dim('  See README.md for manual setup instructions.'));
@@ -1099,13 +1199,27 @@ async function main() {
     }
   }
 
+  // ─── Instance Detection ─────────────────────
+  console.log(gold('  ── INSTANCE DETECTION ──'));
+  instanceSlot = detectInstanceSlot();
+  const defaultDomain = domainForSlot(instanceSlot);
+  const composeProjectName = `jarvis-${instanceSlot}`;
+  const ports = portsForSlot(instanceSlot);
+  activeKongPort = ports.KONG_HTTP_PORT;
+  activeGatewayPort = ports.GATEWAY_PORT;
+  console.log(`  ${green('✓')} Instance slot: ${cyan(String(instanceSlot))} of ${MAX_INSTANCES}`);
+  console.log(`  ${green('✓')} Project name:  ${cyan(composeProjectName)}`);
+  console.log(`  ${green('✓')} Domain:        ${cyan(defaultDomain)}`);
+  console.log(`  ${green('✓')} Ports:         ${dim(`PG=${ports.POSTGRES_PORT} Kong=${ports.KONG_HTTP_PORT} GW=${ports.GATEWAY_PORT} HTTP=${ports.CADDY_HTTP_PORT} HTTPS=${ports.CADDY_HTTPS_PORT}`)}`);
+
   // ─── Domain ─────────────────────────────────
+  console.log('');
   console.log(gold('  ── DOMAIN ──'));
   if (!AUTO_MODE) {
     console.log(dim('  Your hostname. For LAN: jarvis.local or 192.168.1.x.nip.io'));
     console.log(dim('  For internet: your-domain.com'));
   }
-  const domain = await ask('Domain', 'jarvis.local');
+  const domain = await ask('Domain', defaultDomain);
 
   // ─── SSL ────────────────────────────────────
   let tls;
@@ -1168,42 +1282,20 @@ async function main() {
   const serviceRoleKey = generateJWT(jwtSecret, 'service_role');
   console.log(`  ${green('✓')} Service role key generated`);
 
-  // ─── Port Scanning ─────────────────────────────
+  // ─── Port Allocation (deterministic per instance) ─────────
+  // Ports were already set during instance detection above.
+  // Just log them for confirmation.
   console.log('');
-  console.log(gold('  ── PORT SCAN ──'));
-
-  const portDefaults = {
-    POSTGRES_PORT: 5432,
-    KONG_HTTP_PORT: 8000,
-    GATEWAY_PORT: 3001,
-    CADDY_HTTP_PORT: 80,
-    CADDY_HTTPS_PORT: 443,
-  };
-  const ports = {};
-  for (const [name, defaultPort] of Object.entries(portDefaults)) {
-    const available = await checkPortAvailable(defaultPort);
-    if (available) {
-      ports[name] = defaultPort;
-      console.log(`  ${green('✓')} ${name} ${dim(`= ${defaultPort}`)}`);
-    } else {
-      const alt = await findAvailablePort(defaultPort + 1);
-      ports[name] = alt;
-      console.log(`  ${gold('⚡')} ${name} ${dim(`${defaultPort} busy → ${alt}`)}`);
-    }
+  console.log(gold('  ── PORT ALLOCATION ──'));
+  for (const [name, port] of Object.entries(ports)) {
+    console.log(`  ${green('✓')} ${name} ${dim(`= ${port}`)}`);
   }
-
-  // Update module-level ports for use in health checks
-  activeKongPort = ports.KONG_HTTP_PORT;
-  activeGatewayPort = ports.GATEWAY_PORT;
-
-  // Generate unique COMPOSE_PROJECT_NAME so two stacks don't collide
-  const composeProjectName = `jarvis-${randomBytes(2).toString('hex')}`;
-  console.log(`  ${green('✓')} COMPOSE_PROJECT_NAME ${dim(`= ${composeProjectName}`)}`);
 
   // ─── Write .env ─────────────────────────────
   const envContent = `# Jarvis Inc — Generated by setup.mjs
 # ${new Date().toISOString()}
 
+INSTANCE_ID=${instanceSlot}
 COMPOSE_PROJECT_NAME=${composeProjectName}
 
 DOMAIN=${domain}
@@ -1278,14 +1370,17 @@ SECRET_KEY_BASE=${secretKeyBase}
 
 function printSystemsOnline(domain, tls) {
   const proto = tls === 'off' ? 'http' : 'https';
+  const slot = instanceSlot || '?';
   console.log('');
   console.log(gold('  ╔══════════════════════════════════════╗'));
-  console.log(gold('  ║') + green('      ✓ SYSTEMS ONLINE ✓              ') + gold('║'));
+  console.log(gold('  ║') + green(`  ✓ INSTANCE ${slot} — SYSTEMS ONLINE ✓     `) + gold('║'));
   console.log(gold('  ╚══════════════════════════════════════╝'));
   console.log('');
   console.log(`  ${cyan('Dashboard:')}  ${proto}://${domain}`);
   console.log(`  ${cyan('API:')}        ${proto}://api.${domain}`);
   console.log(`  ${cyan('Studio:')}     ${proto}://studio.${domain}`);
+  console.log(`  ${cyan('Kong:')}       http://localhost:${activeKongPort}`);
+  console.log(`  ${cyan('Gateway:')}    http://localhost:${activeGatewayPort}`);
   console.log(`  ${cyan('Dev server:')} http://localhost:5173`);
   console.log('');
 }

@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import ResetDBDialog from './ResetDBDialog'
-import { loadCEO, getPendingApprovalCount, getMissionReviewCount, getNewCollateralCount, getNewForumActivityCount, getUnreadConversationCount, getSetting } from '../../lib/database'
+import { loadCEO, getPendingApprovalCount, getMissionReviewCount, getNewCollateralCount, getUnreadConversationCount, getSetting } from '../../lib/database'
 import { getSupabase } from '../../lib/supabase'
 import { getCurrentMonthSpend } from '../../lib/llmUsage'
 import { hasInstanceKey } from '../../lib/jarvisKey'
@@ -77,7 +77,6 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
   const [collateralCount, setCollateralCount] = useState(0)
   const [ceoActionCount, setCeoActionCount] = useState(0)
   const [newSkillsCount, setNewSkillsCount] = useState(0)
-  const [forumActivityCount, setForumActivityCount] = useState(0)
 
   // Load CEO + approvals count from DB on mount, check budget state
   useEffect(() => {
@@ -192,21 +191,6 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
     }
   }, [])
 
-  // Refresh forum activity count (forum skill executions since last Settings visit)
-  useEffect(() => {
-    const refresh = async () => {
-      try { setForumActivityCount(await getNewForumActivityCount()); } catch { /* ignore */ }
-    }
-    refresh()
-    const interval = setInterval(refresh, 8000)
-    window.addEventListener('task-executions-changed', refresh)
-    window.addEventListener('forum-seen', refresh)
-    return () => {
-      clearInterval(interval)
-      window.removeEventListener('task-executions-changed', refresh)
-      window.removeEventListener('forum-seen', refresh)
-    }
-  }, [])
 
   const ceoInitial = ceoName ? ceoName.charAt(0).toUpperCase() : ':)'
   const ceoTooltip = ceoName ? `CEO ${ceoName}: ${statusLabelMap[ceoStatus]}` : `CEO: ${statusLabelMap[ceoStatus]}`
@@ -296,12 +280,7 @@ export default function NavigationRail({ onResetDB, onFireCEO }: NavigationRailP
                       </span>
                     )}
 
-                    {/* Forum activity badge on Settings */}
-                    {item.label === 'Settings' && forumActivityCount > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white px-1">
-                        {forumActivityCount}
-                      </span>
-                    )}
+
 
                     {/* Tooltip */}
                     {hoveredItem === item.label && (
