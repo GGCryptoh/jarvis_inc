@@ -116,12 +116,17 @@ ${postBlock}
 
 Respond with ONLY valid JSON: {"risk_level":"safe"|"moderate"|"risky","reason":"brief explanation"}`;
 
-    // Call Haiku via Anthropic provider
-    const vaultEntry = await getVaultEntryByService('Anthropic');
+    // Call LLM for risk assessment — try Anthropic, fall back to OpenAI
+    const anthropicEntry = await getVaultEntryByService('Anthropic');
+    const openaiEntry = !anthropicEntry ? await getVaultEntryByService('OpenAI') : null;
+    const vaultEntry = anthropicEntry || openaiEntry;
     if (!vaultEntry) {
-      console.warn('[assessForumPostRisk] No Anthropic key — defaulting to risky');
-      return { risk_level: 'risky', reason: 'No API key available for risk assessment' };
+      console.warn('[assessForumPostRisk] No Anthropic or OpenAI key — defaulting to safe');
+      return { risk_level: 'safe', reason: 'No API key available — defaulting to safe' };
     }
+
+    const riskProvider = anthropicEntry ? PROVIDERS.Anthropic : PROVIDERS.OpenAI;
+    const riskModel = anthropicEntry ? MODEL_API_IDS['Claude Haiku 4.5'] : (MODEL_API_IDS['o4-mini'] || 'o4-mini');
 
     const messages: LLMMessage[] = [
       { role: 'user', content: prompt },
@@ -129,10 +134,10 @@ Respond with ONLY valid JSON: {"risk_level":"safe"|"moderate"|"risky","reason":"
 
     const result = await new Promise<string | null>((resolve) => {
       let fullText = '';
-      PROVIDERS.Anthropic.stream(
+      riskProvider.stream(
         messages,
         vaultEntry.key_value,
-        MODEL_API_IDS['Claude Haiku 4.5'],
+        riskModel,
         {
           onToken: (token) => { fullText += token; },
           onDone: (text) => { resolve(text || fullText); },

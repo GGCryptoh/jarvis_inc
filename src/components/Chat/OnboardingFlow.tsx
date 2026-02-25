@@ -459,6 +459,8 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const finalizeMeeting = useCallback(async (missionText: string, researchAccepted: boolean, researchContext: string) => {
     await setSetting('ceo_meeting_done', 'true');
     await setSetting('primary_mission', missionText);
+    // Auto-close missions when results approved — default on after ceremony
+    await setSetting('auto_close_on_approve', 'true');
     // Clear persisted onboarding state (no longer needed after completion)
     await setSetting('onboarding_step', '');
     await setSetting('onboarding_messages', '');

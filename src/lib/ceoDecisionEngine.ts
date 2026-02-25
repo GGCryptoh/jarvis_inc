@@ -1070,7 +1070,10 @@ async function checkForumActivity(): Promise<CEOAction[]> {
     const forum24h = forumOpts.forum_24h === true;
 
     // Forum only runs during business hours (8am-6pm local) unless 24h mode or burst
-    if (!forum24h && !isForumBusinessHours() && !forumBurstState.active) return actions;
+    if (!forum24h && !isForumBusinessHours() && !forumBurstState.active) {
+      console.log(`[checkForumActivity] Skipped — outside business hours (${new Date().getHours()}:00). Set forum_24h option to enable 24/7.`);
+      return actions;
+    }
 
     const now = Date.now();
     const sb = getSupabase();
@@ -1098,8 +1101,14 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       intervalMs = forumFreq ? parseCronToMs(forumFreq) : defaultInterval;
     }
 
-    if (now - lastForumCheckTime < intervalMs) return actions;
+    if (now - lastForumCheckTime < intervalMs) {
+      const remainMs = intervalMs - (now - lastForumCheckTime);
+      console.log(`[checkForumActivity] Waiting — next check in ${Math.round(remainMs / 1000)}s (interval: ${Math.round(intervalMs / 1000)}s)`);
+      return actions;
+    }
     lastForumCheckTime = now;
+    console.log(`[checkForumActivity] Running forum check (activity window: ${forum24h ? '24h' : 'business hours'}, interval: ${Math.round(intervalMs / 1000)}s)`);
+
     if (forumBurstState.active) forumBurstState.checksCompleted++;
 
     const MARKETPLACE_URL = 'https://jarvisinc.app';
@@ -1370,27 +1379,20 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       }
 
       // Draft replies using LLM directly (no skill execution, just content generation)
+      // Try Anthropic first, then fall back to OpenAI
       const { getVaultEntryByService } = await import('./database');
-      const vaultEntry = await getVaultEntryByService('Anthropic');
+      const anthropicEntry = await getVaultEntryByService('Anthropic');
+      const openaiEntry = !anthropicEntry ? await getVaultEntryByService('OpenAI') : null;
+      const vaultEntry = anthropicEntry || openaiEntry;
+      const forumLlmService = anthropicEntry ? 'anthropic' : 'openai';
       if (!vaultEntry) {
-        await logAudit('CEO', 'FORUM_BLOCKED', 'Forum engagement blocked — no Anthropic API key in vault', 'warning');
-        // Create approval asking founder to add key
-        const approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        await sb.from('approvals').insert({
-          id: approvalId,
-          type: 'api_key_request',
-          title: 'Anthropic API key needed for forum engagement',
-          description: 'I want to participate in forum discussions but need an Anthropic API key to draft replies. Please add one in the Vault.',
-          status: 'pending',
-          metadata: { service: 'Anthropic', reason: 'forum_engagement' },
-        });
-        if (typeof window !== 'undefined') window.dispatchEvent(new Event('approvals-changed'));
+        await logAudit('CEO', 'FORUM_BLOCKED', 'Forum engagement blocked — no Anthropic or OpenAI API key in vault', 'warning');
         actions.push({
           id: makeActionId(),
           action_type: 'send_message',
           payload: {
             topic: 'forum_blocked',
-            message: `Forum check complete (${forumActivityLevel}) but I need an Anthropic API key to engage. I've created an approval — check the Approvals page.`,
+            message: `Forum check complete (${forumActivityLevel}) but I need an API key (Anthropic or OpenAI) to engage. Add one in the Vault.`,
           },
           priority: 7,
         });
@@ -1497,26 +1499,46 @@ ${existingFeatures ? `
 ## EXISTING FEATURE REQUESTS (check before suggesting duplicates — vote for existing ones instead)
 ${existingFeatures}` : ''}
 
-Respond with ONLY a valid JSON array. Return [] ONLY if you truly have nothing worth saying — but with a ${forumActivityLevel} forum, you should almost always have something.
-[
+Respond with ONLY a valid JSON object with two keys:
+1. "reasoning" — a brief summary (2-4 sentences) of your overall assessment: what you noticed, why you're engaging or not, your strategy
+2. "actions" — array of actions to take
+
+Return {"reasoning":"...","actions":[]} if you truly have nothing worth saying — but with a ${forumActivityLevel} forum, you should almost always have something.
+
+Example:
+{"reasoning":"Forum is quiet with only 3 posts total. I see a new post about AI workflows that aligns with our app-building mission — worth replying to share our perspective. Also starting a thread about competitive analysis since that's our specialty.","actions":[
   {"action":"reply","post_id":"...","body":"your reply text"},
   {"action":"vote","post_id":"...","value":1},
   {"action":"create_post","channel_id":"...","title":"...","body":"your post content"},
   {"action":"suggest_feature","title":"...","description":"feature description"}
-]`;
+]}`;
 
       let draftActions: { action: string; post_id?: string; body?: string; value?: number; channel_id?: string; title?: string; description?: string }[] = [];
+      let llmReasoning = '';
 
       try {
-        const { anthropicProvider } = await import('./llm/providers/anthropic');
         const { MODEL_API_IDS } = await import('./models');
+
+        // Pick provider + model based on available key
+        let provider: { stream: (msgs: unknown[], key: string, model: string, cb: unknown) => unknown };
+        let modelId: string;
+        if (forumLlmService === 'anthropic') {
+          const { anthropicProvider } = await import('./llm/providers/anthropic');
+          provider = anthropicProvider as unknown as typeof provider;
+          modelId = MODEL_API_IDS['Claude Haiku 4.5'];
+        } else {
+          const { openaiProvider } = await import('./llm/providers/openai');
+          provider = openaiProvider as unknown as typeof provider;
+          modelId = MODEL_API_IDS['o4-mini'] || 'o4-mini';
+        }
+        console.log(`[checkForumActivity] Using ${forumLlmService} (${modelId}) for forum engagement`);
 
         const draftResult = await new Promise<string | null>((resolve) => {
           let fullText = '';
-          anthropicProvider.stream(
+          provider.stream(
             [{ role: 'user', content: draftPrompt }],
             vaultEntry.key_value,
-            MODEL_API_IDS['Claude Haiku 4.5'],
+            modelId,
             {
               onToken: (token: string) => { fullText += token; },
               onDone: (text: string) => { resolve(text || fullText); },
@@ -1529,14 +1551,41 @@ Respond with ONLY a valid JSON array. Return [] ONLY if you truly have nothing w
         });
 
         if (draftResult) {
-          // Extract JSON array from response (may be wrapped in ```json blocks)
-          const jsonMatch = draftResult.match(/\[[\s\S]*\]/);
-          if (jsonMatch) {
-            draftActions = JSON.parse(jsonMatch[0]);
+          // Try new format: {"reasoning":"...","actions":[...]}
+          const objMatch = draftResult.match(/\{[\s\S]*"reasoning"[\s\S]*"actions"[\s\S]*\}/);
+          if (objMatch) {
+            try {
+              const parsed = JSON.parse(objMatch[0]);
+              llmReasoning = parsed.reasoning || '';
+              draftActions = Array.isArray(parsed.actions) ? parsed.actions : [];
+            } catch {
+              // Fall back to array-only format
+              const jsonMatch = draftResult.match(/\[[\s\S]*\]/);
+              if (jsonMatch) draftActions = JSON.parse(jsonMatch[0]);
+            }
+          } else {
+            // Legacy format: just a JSON array
+            const jsonMatch = draftResult.match(/\[[\s\S]*\]/);
+            if (jsonMatch) draftActions = JSON.parse(jsonMatch[0]);
           }
         }
 
-        // Log LLM decision summary for A2A audit trail
+        // Log structured decision to A2A audit with full reasoning
+        const decisionLog = {
+          activity_level: forumActivityLevel,
+          posts_from_others: newPostsFromOthers.length,
+          total_posts: totalChannelPosts,
+          reasoning: llmReasoning || '(no reasoning provided)',
+          actions: draftActions.map(da => ({
+            action: da.action,
+            target: da.post_id || da.channel_id || da.title || '—',
+            ...(da.body ? { body_preview: (da.body as string).slice(0, 80) } : {}),
+            ...(da.value !== undefined ? { value: da.value } : {}),
+          })),
+        };
+        console.log('[checkForumActivity] Decision:', JSON.stringify(decisionLog));
+        await logAudit('CEO', 'FORUM_DECISION', JSON.stringify(decisionLog), 'info');
+
         if (draftActions.length > 0) {
           const actionSummary = draftActions.map(da => {
             if (da.action === 'reply') return `reply→${da.post_id?.slice(0, 8)}`;
@@ -1545,7 +1594,8 @@ Respond with ONLY a valid JSON array. Return [] ONLY if you truly have nothing w
             if (da.action === 'suggest_feature') return `feature:"${da.title?.slice(0, 30)}"`;
             return da.action;
           }).join(', ');
-          await logAudit('CEO', 'FORUM_DECISION', `LLM drafted ${draftActions.length} action(s) [${forumActivityLevel}]: ${actionSummary}`, 'info');
+          console.log(`[checkForumActivity] Reasoning: ${llmReasoning}`);
+          console.log(`[checkForumActivity] Actions: ${actionSummary}`);
         }
       } catch (err) {
         console.warn('[checkForumActivity] Draft generation failed:', err);
