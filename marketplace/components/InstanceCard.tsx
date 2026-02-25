@@ -37,6 +37,11 @@ export default function InstanceCard({ instance }: InstanceCardProps) {
                 }`}
               />
             </div>
+            {instance.org_name && (
+              <p className="font-mono text-[10px] text-pixel-purple/70 mt-0.5 truncate">
+                {instance.org_name}
+              </p>
+            )}
             {instance.description && (
               <p className="font-mono text-xs text-jarvis-muted mt-1.5 line-clamp-2 leading-relaxed">
                 {instance.description}

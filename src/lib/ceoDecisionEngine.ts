@@ -987,6 +987,7 @@ export async function refreshMarketplaceProfile(): Promise<void> {
   const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
   const payload = {
     nickname: (ceoName || orgName).substring(0, 24),
+    org_name: orgName.substring(0, 100),
     description: description.substring(0, 200),
     featured_skills: allFeatured,
     skills_writeup: skillsWriteup.substring(0, 1000),
@@ -999,9 +1000,8 @@ export async function refreshMarketplaceProfile(): Promise<void> {
   // Auto-recovery: if marketplace says "Instance not found", re-register and retry once
   if (!result.success && result.error && /not found/i.test(result.error)) {
     console.log('[refreshMarketplaceProfile] Instance not found — attempting re-registration...');
-    const { registerOnMarketplace, getCachedRawPrivateKey: getRawKey } = await import('./marketplaceClient');
-    const { loadKeyFromLocalStorage: loadKeyLS } = await import('./jarvisKey');
-    const keyData = loadKeyLS();
+    const { registerOnMarketplace, getCachedRawPrivateKey: getRawKey, getPublicKeyData } = await import('./marketplaceClient');
+    const keyData = getPublicKeyData();
     const rawKey = getRawKey();
     if (keyData && rawKey) {
       const regResult = await registerOnMarketplace(rawKey, keyData.publicKey);

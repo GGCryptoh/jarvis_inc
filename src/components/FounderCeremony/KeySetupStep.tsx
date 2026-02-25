@@ -44,6 +44,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
   const signingExpiry = getSigningExpiry();
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [reregistering, setReregistering] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   // Avatar editor state
   const [profileLoading, setProfileLoading] = useState(false);
@@ -289,9 +290,7 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
     fileInputRef.current?.click();
   }
 
-  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function processKeyFile(file: File) {
     try {
       const text = await file.text();
       const data = JSON.parse(text) as KeyFileData;
@@ -301,13 +300,24 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
       }
       saveKeyToLocalStorage(data);
       setKeyData(data);
-      // Reload to pick up the imported key
       window.location.reload();
     } catch {
       setError('Failed to read key file — must be valid JSON');
     }
-    // Reset input so the same file can be re-selected
+  }
+
+  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processKeyFile(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) processKeyFile(file);
   }
 
   // Format the hash with spacing for readability
@@ -334,13 +344,16 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
         }}
       />
 
-      {/* Hidden file input for key import */}
+      {/* Hidden file input for key import — uses label association for cross-browser compat */}
       <input
+        id="key-import-input"
         ref={fileInputRef}
         type="file"
         accept=".json"
         onChange={handleFileSelected}
-        className="hidden"
+        className="absolute w-px h-px overflow-hidden opacity-0"
+        tabIndex={-1}
+        aria-hidden="true"
       />
 
       <div className="relative z-20 w-full max-w-2xl px-8 py-8 my-auto">
@@ -844,21 +857,41 @@ export default function KeySetupStep({ onComplete }: KeySetupStepProps) {
               </div>
             </div>
 
-            <div className="text-center space-y-3">
+            <div className="text-center space-y-5">
               <button
                 onClick={() => setPhase('form')}
                 className="font-pixel text-sm tracking-[0.3em] py-4 px-12 rounded-sm border-2 bg-pixel-green/10 border-pixel-green text-pixel-green hover:bg-pixel-green/20 hover:shadow-[0_0_30px_rgba(0,255,136,0.2)] cursor-pointer transition-all duration-300"
               >
                 GENERATE NEW
               </button>
-              <div>
-                <button
-                  onClick={handleImportKey}
-                  className="font-pixel text-[10px] tracking-[0.2em] py-3 px-8 rounded-sm border-2 border-pixel-cyan/30 text-pixel-cyan/70 hover:bg-pixel-cyan/10 hover:border-pixel-cyan/50 hover:text-pixel-cyan cursor-pointer transition-all duration-300"
-                >
-                  IMPORT EXISTING KEY
-                </button>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3 max-w-xs mx-auto">
+                <div className="flex-1 border-t border-pixel-cyan/20" />
+                <span className="font-pixel text-[8px] tracking-widest text-pixel-cyan/40">OR</span>
+                <div className="flex-1 border-t border-pixel-cyan/20" />
               </div>
+
+              {/* Drop zone for key import */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={handleImportKey}
+                className={`max-w-sm mx-auto border-2 border-dashed rounded-sm py-6 px-8 cursor-pointer transition-all duration-300 ${
+                  dragOver
+                    ? 'border-pixel-cyan bg-pixel-cyan/10 shadow-[0_0_20px_rgba(139,233,253,0.15)]'
+                    : 'border-pixel-cyan/30 hover:border-pixel-cyan/50 hover:bg-pixel-cyan/5'
+                }`}
+              >
+                <div className="font-pixel text-[10px] tracking-[0.2em] text-pixel-cyan/70 mb-1">
+                  IMPORT EXISTING KEY
+                </div>
+                <div className="font-mono text-[10px] text-pixel-cyan/40">
+                  Drop .json key file here or click to browse
+                </div>
+              </div>
+
               {error && (
                 <div className="font-pixel text-[10px] text-red-400 tracking-wider animate-[fadeIn_0.3s_ease-out]">
                   {error}

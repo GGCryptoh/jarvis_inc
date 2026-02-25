@@ -114,6 +114,7 @@ export async function PUT(
     // --- Build update object from provided fields ---
     const updates: Partial<{
       nickname: string;
+      org_name: string;
       description: string;
       avatar_color: string;
       avatar_icon: string;
@@ -123,6 +124,7 @@ export async function PUT(
     }> = {};
 
     if (body.nickname !== undefined) updates.nickname = body.nickname;
+    if (body.org_name !== undefined) updates.org_name = body.org_name;
     if (body.description !== undefined) updates.description = body.description;
     if (body.avatar_color !== undefined) updates.avatar_color = body.avatar_color;
     if (body.avatar_icon !== undefined) updates.avatar_icon = body.avatar_icon;

@@ -16,6 +16,7 @@ export async function initDB() {
       repo_url        TEXT DEFAULT '',
       repo_type       TEXT NOT NULL DEFAULT 'github',
       nickname        TEXT NOT NULL,
+      org_name        TEXT NOT NULL DEFAULT '',
       description     TEXT NOT NULL DEFAULT '',
       avatar_color    TEXT NOT NULL DEFAULT '#50fa7b',
       avatar_icon     TEXT NOT NULL DEFAULT 'bot',
@@ -171,7 +172,7 @@ export async function getInstanceByRepo(repoUrl: string) {
 export async function listInstances(limit = 100, offset = 0) {
   const sql = getSQL();
   const rows = await sql`
-    SELECT id, repo_url, repo_type, nickname, description,
+    SELECT id, repo_url, repo_type, nickname, org_name, description,
            avatar_color, avatar_icon, avatar_border,
            featured_skills, skills_writeup, online, last_heartbeat, registered_at
     FROM instances
@@ -268,6 +269,7 @@ export async function updateInstance(
   id: string,
   updates: Partial<{
     nickname: string;
+    org_name: string;
     description: string;
     avatar_color: string;
     avatar_icon: string;
@@ -283,6 +285,7 @@ export async function updateInstance(
   const rows = await sql`
     UPDATE instances SET
       nickname = COALESCE(${updates.nickname ?? null}, nickname),
+      org_name = COALESCE(${updates.org_name ?? null}, org_name),
       description = COALESCE(${updates.description ?? null}, description),
       avatar_color = COALESCE(${updates.avatar_color ?? null}, avatar_color),
       avatar_icon = COALESCE(${updates.avatar_icon ?? null}, avatar_icon),

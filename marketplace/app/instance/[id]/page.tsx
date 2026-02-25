@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowLeft, ExternalLink, Clock, Calendar } from 'lucide-react';
 import { getInstanceById } from '@/lib/db';
 import { notFound } from 'next/navigation';
+import EscBack from './EscBack';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +38,7 @@ export default async function InstancePage({ params }: InstancePageProps) {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 animate-fade-in-up">
+      <EscBack />
       {/* Back link */}
       <Link
         href="/gallery"
@@ -77,6 +79,12 @@ export default async function InstancePage({ params }: InstancePageProps) {
                 {instance.online ? 'Online' : 'Offline'}
               </span>
             </div>
+
+            {instance.org_name && (
+              <p className="font-mono text-xs text-pixel-purple/70 mt-1">
+                {instance.org_name}
+              </p>
+            )}
 
             {instance.description && (
               <p className="font-mono text-sm text-jarvis-muted mt-3 leading-relaxed">

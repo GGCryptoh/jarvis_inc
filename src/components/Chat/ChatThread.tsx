@@ -256,8 +256,14 @@ export default function ChatThread({ conversation, onArchive }: ChatThreadProps)
         setStreamingText(null);
         setLlmError(null);
 
-        // Check for work_request blocks from agent responses
+        // Strip tool_call/task_plan blocks from CEO responses (dispatch already handled in chatService)
         let displayText = fullText;
+        if (!isAgentChat) {
+          const { stripTaskBlocks } = await import('../../lib/taskDispatcher');
+          displayText = stripTaskBlocks(fullText);
+        }
+
+        // Check for work_request blocks from agent responses
         if (isAgentChat && agentInfo) {
           const { parseWorkRequests, stripWorkRequestBlocks } = await import('../../lib/taskDispatcher');
           const workRequests = parseWorkRequests(fullText);

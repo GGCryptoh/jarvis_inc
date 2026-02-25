@@ -1,10 +1,12 @@
 import type { LLMProvider, LLMMessage, StreamCallbacks } from '../types';
 
-// Base URLs routed through Vite dev proxy to avoid CORS
+// In browser: route through Vite dev proxy to avoid CORS
+// In Node.js (sidecar): use direct API URLs
+const isBrowser = typeof window !== 'undefined';
 const SERVICE_BASE_URLS: Record<string, string> = {
-  openai:   '/api/openai/v1/chat/completions',
-  deepseek: '/api/deepseek/v1/chat/completions',
-  xai:      '/api/xai/v1/chat/completions',
+  openai:   isBrowser ? '/api/openai/v1/chat/completions'   : 'https://api.openai.com/v1/chat/completions',
+  deepseek: isBrowser ? '/api/deepseek/v1/chat/completions' : 'https://api.deepseek.com/v1/chat/completions',
+  xai:      isBrowser ? '/api/xai/v1/chat/completions'      : 'https://api.x.ai/v1/chat/completions',
 };
 
 function createOpenAICompatibleProvider(serviceId: string): LLMProvider {

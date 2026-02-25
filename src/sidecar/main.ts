@@ -43,15 +43,31 @@ async function boot(): Promise<void> {
   // Initialize marketplace signing (loads key from vault)
   const { initSidecarSigning } = await import('../lib/marketplaceClient');
   const signingReady = await initSidecarSigning();
-  console.log(`[CEO Sidecar] Marketplace signing: ${signingReady ? 'READY' : 'NOT AVAILABLE (no key in vault)'}`);
+  const { getMarketplaceStatus } = await import('../lib/marketplaceClient');
+  const mktStatus = getMarketplaceStatus();
+  marketplaceReady = !!(mktStatus.registered && mktStatus.instanceId);
+  console.log(`[CEO Sidecar] Marketplace signing: ${signingReady ? 'READY' : 'NOT AVAILABLE (no key in vault)'}, registered: ${marketplaceReady ? mktStatus.instanceId : 'NO (will retry)'}`);
 }
 
 // ---------------------------------------------------------------------------
 // Scheduler loop
 // ---------------------------------------------------------------------------
 
+let marketplaceReady = false;
+
 async function tick(): Promise<void> {
   try {
+    // Retry marketplace signing init if registration wasn't available at boot
+    if (!marketplaceReady) {
+      const { initSidecarSigning, getMarketplaceStatus } = await import('../lib/marketplaceClient');
+      await initSidecarSigning();
+      const status = getMarketplaceStatus();
+      if (status.registered && status.instanceId) {
+        marketplaceReady = true;
+        console.log(`[CEO Sidecar] Marketplace signing now READY (instance: ${status.instanceId})`);
+      }
+    }
+
     const result = await evaluateCycle();
     const now = new Date().toISOString();
 

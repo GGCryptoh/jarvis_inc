@@ -50,6 +50,13 @@ function loadKeyFromLocalStorage(): KeyFileData | null {
   return loadKeyFromLS();
 }
 
+/** Get public key data — works in both browser and sidecar */
+export function getPublicKeyData(): { publicKey: string; publicKeyHash: string } | null {
+  const data = loadKeyFromLocalStorage();
+  if (!data) return null;
+  return { publicKey: data.publicKey, publicKeyHash: data.publicKeyHash };
+}
+
 /** Get the user's preferred unlock duration */
 export function getUnlockDuration(): UnlockDuration {
   if (typeof window === 'undefined') return 'forever'; // sidecar: always unlocked

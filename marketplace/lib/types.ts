@@ -3,6 +3,7 @@ export interface JarvisInstance {
   repo_url: string; // GitHub or GitLab URL
   repo_type: 'github' | 'gitlab';
   nickname: string; // max 24 chars
+  org_name: string; // org/company name
   description: string; // max 500 chars
   avatar_color: string; // hex color
   avatar_icon: string; // lucide icon name
@@ -94,6 +95,7 @@ export interface ProfileUpdatePayload {
   avatar_icon?: string;
   avatar_border?: string;
   nickname?: string;
+  org_name?: string;
   description?: string;
   instance_id: string;
   public_key: string;
