@@ -2,6 +2,7 @@ FROM node:20-alpine
 
 # Multi-language handler support: Python3 + bash (already in alpine)
 RUN apk add --no-cache python3 py3-pip
+RUN pip3 install --break-system-packages python-docx
 
 WORKDIR /app
 

@@ -21,6 +21,7 @@ export interface Agent {
   costSoFar: number;
   model: string;       // e.g. "GPT-4o", "Claude 3.5"
   isNew?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CEO {

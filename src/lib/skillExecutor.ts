@@ -15,7 +15,7 @@ import { anthropicProvider } from './llm/providers/anthropic';
 import { openaiProvider, deepseekProvider, xaiProvider } from './llm/providers/openai';
 import { googleProvider } from './llm/providers/google';
 import { executeCLISkill } from './cliSkillHandlers';
-import { uploadGeneratedImage, base64ToBlob } from './storageUpload';
+import { uploadGeneratedImage, uploadBinaryDocument, base64ToBlob } from './storageUpload';
 import { loadKeyFromLocalStorage, decryptPrivateKey } from './jarvisKey';
 import {
   getMarketplaceStatus,
@@ -50,6 +50,7 @@ export interface SkillExecutionResult {
   duration_ms: number;
   error?: string;
   imageUrl?: string;
+  documentUrl?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +378,26 @@ export async function executeSkill(
           }
         }
 
+        // Upload data URI documents (docx, etc.) to Supabase Storage
+        let documentUrl: string | undefined = data.result?.documentUrl;
+        if (documentUrl && documentUrl.startsWith('data:')) {
+          try {
+            const docMatch = documentUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (docMatch) {
+              const docMime = docMatch[1];
+              const docFilename = data.result?.filename ?? `document-${Date.now()}.docx`;
+              const docBlob = base64ToBlob(docMatch[2], docMime);
+              const storageUrl = await uploadBinaryDocument(docBlob, docFilename, docMime);
+              if (storageUrl) {
+                output = output.replace(documentUrl, storageUrl);
+                documentUrl = storageUrl;
+              }
+            }
+          } catch (uploadErr) {
+            console.warn('[SkillExecutor] Handler document upload failed, keeping data URI:', uploadErr);
+          }
+        }
+
         return {
           success: true,
           output,
@@ -384,6 +405,7 @@ export async function executeSkill(
           cost_usd: 0,
           duration_ms: Date.now() - startTime,
           ...(imageUrl && { imageUrl }),
+          ...(documentUrl && { documentUrl }),
         };
       } catch (err) {
         return {

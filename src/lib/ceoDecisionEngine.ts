@@ -172,24 +172,13 @@ function checkUnassignedMissions(
 }
 
 function checkIdleAgents(
-  agents: AgentRow[],
-  activeMissionAssignees: Set<string>,
+  _agents: AgentRow[],
+  _activeMissionAssignees: Set<string>,
 ): CEOAction[] {
-  if (agents.length === 0) return [];
-
-  const idleAgents = agents.filter((a) => !activeMissionAssignees.has(a.id));
-  if (idleAgents.length === 0) return [];
-
-  return [{
-    id: makeActionId(),
-    action_type: 'send_message',
-    payload: {
-      topic: 'idle_workforce',
-      message: `${idleAgents.length} agent(s) currently have no active missions: ${idleAgents.map((a) => a.name).join(', ')}.`,
-      agent_ids: idleAgents.map((a) => a.id),
-    },
-    priority: 6,
-  }];
+  // Suppressed — the CEO handles most work directly (forum, skills, schedules).
+  // Agents are an advanced feature for parallel specialized workers.
+  // No need to nag about idle agents every cycle.
+  return [];
 }
 
 function checkStaleApprovals(approvals: ApprovalRow[]): CEOAction[] {
@@ -214,24 +203,131 @@ function checkStaleApprovals(approvals: ApprovalRow[]): CEOAction[] {
   }];
 }
 
-function checkNoAgentsHired(
+// Smart hire evaluation — LLM-based, throttled to every 7 days
+let lastHireEvalTime = 0;
+const HIRE_EVAL_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+async function checkSmartHire(
   agents: AgentRow[],
   missions: MissionRow[],
-): CEOAction[] {
-  if (agents.length > 0) return [];
-  // Only count active missions (not done/seeded ceremony ones)
-  const activeMissions = missions.filter(m => m.status !== 'done');
-  if (activeMissions.length === 0) return [];
+  skills: SkillRow[],
+): Promise<CEOAction[]> {
+  const now = Date.now();
+  if (now - lastHireEvalTime < HIRE_EVAL_INTERVAL_MS) return [];
+  lastHireEvalTime = now;
 
-  return [{
-    id: makeActionId(),
-    action_type: 'send_message',
-    payload: {
-      topic: 'no_agents',
-      message: `There are ${activeMissions.length} mission(s) but no agents have been hired yet. Consider hiring agents to start working on them.`,
-    },
-    priority: 2,
-  }];
+  // Skip if no missions or already 5+ agents
+  const activeMissions = missions.filter(m => m.status === 'active' || m.status === 'in_progress' || m.status === 'backlog');
+  if (activeMissions.length === 0 || agents.length >= 5) return [];
+
+  try {
+    // Get an API key — prefer Anthropic, fall back to OpenAI
+    const anthropicKey = await getVaultEntryByService('Anthropic');
+    const openaiKey = !anthropicKey ? await getVaultEntryByService('OpenAI') : null;
+    const vaultEntry = anthropicKey ?? openaiKey;
+    if (!vaultEntry) return [];
+
+    const enabledSkills = skills.filter(s => s.enabled);
+    const agentSummary = agents.length === 0
+      ? 'No agents hired yet (CEO handles all work).'
+      : agents.map(a => `- ${a.name}: ${a.role} (model: ${a.model})`).join('\n');
+    const missionSummary = activeMissions.slice(0, 10)
+      .map(m => `- "${m.title}" [${m.status}] assigned to: ${m.assignee ?? 'unassigned'}`)
+      .join('\n');
+    const skillSummary = enabledSkills.slice(0, 20)
+      .map(s => s.id).join(', ');
+
+    const prompt = `You are the strategic hiring advisor for a small AI company. Evaluate whether a new agent should be hired.
+
+CURRENT STATE:
+Agents (${agents.length}):
+${agentSummary}
+
+Active missions (${activeMissions.length}):
+${missionSummary}
+
+Enabled skills: ${skillSummary || 'none'}
+
+RULES:
+- Only recommend hiring if there's a clear workload gap (unassigned missions, missions that need specialized skills)
+- Each agent costs money to run, so only hire when the benefit clearly outweighs the cost
+- If the CEO can handle the current workload alone, say hire: false
+- Keep the agent name short (max 12 chars, all caps)
+- Pick an appropriate model: "Claude Haiku 4.5" for simple tasks, "Claude Sonnet 4.5" for moderate, "Claude Opus 4.6" for complex
+- Assign relevant skills from the enabled skills list
+- Write a focused system_prompt and user_prompt that defines the agent's specialization
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{"hire":true/false,"name":"AGENTNAME","role":"Agent Role","model":"Claude Haiku 4.5","system_prompt":"...","user_prompt":"...","skills":["skill-id"],"color":"#50fa7b","reasoning":"One sentence explaining why"}
+
+If hire is false, only include: {"hire":false,"reasoning":"..."}`;
+
+    const { MODEL_API_IDS } = await import('./models');
+    let provider: { stream: (msgs: unknown[], key: string, model: string, cb: unknown) => unknown };
+    let modelId: string;
+
+    if (anthropicKey) {
+      const { anthropicProvider } = await import('./llm/providers/anthropic');
+      provider = anthropicProvider as unknown as typeof provider;
+      modelId = MODEL_API_IDS['Claude Haiku 4.5'];
+    } else {
+      const { openaiProvider } = await import('./llm/providers/openai');
+      provider = openaiProvider as unknown as typeof provider;
+      modelId = MODEL_API_IDS['o4-mini'] || 'o4-mini';
+    }
+
+    const llmResult = await new Promise<string | null>((resolve) => {
+      let fullText = '';
+      provider.stream(
+        [{ role: 'user', content: prompt }],
+        vaultEntry.key_value,
+        modelId,
+        {
+          onToken: (token: string) => { fullText += token; },
+          onDone: (text: string) => { resolve(text || fullText); },
+          onError: (err: Error) => {
+            console.warn('[checkSmartHire] LLM eval failed:', err);
+            resolve(null);
+          },
+        },
+      );
+    });
+
+    if (!llmResult) return [];
+
+    const jsonMatch = llmResult.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed.hire) {
+      logAudit('CEO', 'SMART_HIRE_EVAL', `No hire recommended: ${parsed.reasoning ?? 'N/A'}`, 'info');
+      return [];
+    }
+
+    logAudit('CEO', 'SMART_HIRE_RECOMMEND', `Recommending hire: ${parsed.name} — ${parsed.reasoning}`, 'info');
+
+    return [{
+      id: makeActionId(),
+      action_type: 'request_approval',
+      payload: {
+        topic: 'smart_hire_recommendation',
+        message: `I recommend hiring **${parsed.name}** as ${parsed.role}. ${parsed.reasoning}`,
+        hire_payload: {
+          name: parsed.name,
+          role: parsed.role,
+          model: parsed.model ?? 'Claude Haiku 4.5',
+          system_prompt: parsed.system_prompt ?? '',
+          user_prompt: parsed.user_prompt ?? '',
+          skills: Array.isArray(parsed.skills) ? parsed.skills : [],
+          color: parsed.color ?? '#50fa7b',
+        },
+      },
+      priority: 5,
+    }];
+  } catch (err) {
+    console.warn('[checkSmartHire] Evaluation failed:', err);
+    return [];
+  }
 }
 
 function checkSkillsGap(
@@ -1388,6 +1484,23 @@ async function checkForumActivity(): Promise<CEOAction[]> {
         return actions;
       }
 
+      // Pre-flight rate limit check — skip expensive LLM call if already at post limit
+      let postsRemainingToday = 999; // default: assume unlimited if check fails
+      try {
+        const configData = await fetchForumConfig();
+        const postLimit = configData?.post_limit_per_day ?? 5;
+        const rlRes = await fetch(`https://jarvisinc.app/api/forum/rate-limit?instance_id=${regId}`);
+        if (rlRes.ok) {
+          const rlData = await rlRes.json();
+          postsRemainingToday = Math.max(0, postLimit - (rlData.posts_today ?? 0));
+        }
+      } catch { /* rate limit pre-check failed — proceed anyway */ }
+
+      if (postsRemainingToday <= 0) {
+        await logAudit('CEO', 'FORUM_SKIP', 'Forum engagement skipped — daily post rate limit already reached', 'info');
+        return actions;
+      }
+
       // Draft replies using LLM directly (no skill execution, just content generation)
       // Try Anthropic first, then fall back to OpenAI
       const { getVaultEntryByService } = await import('./database');
@@ -1485,6 +1598,7 @@ IMPORTANT: Let your personality shine through EVERYTHING you write. Your voice s
 Activity level: ${forumActivityLevel.toUpperCase()}
 Posts since last check: ${recentActivityCount} (${newPostsFromOthers.length} from others, ${newPosts.length - newPostsFromOthers.length} from you)
 Total forum posts all-time: ${totalChannelPosts}
+REMAINING POSTS TODAY: ${postsRemainingToday} (do NOT plan more posts+replies than this number — they will be rejected by the rate limiter)
 ${activityGuidance}
 
 ## AVAILABLE ACTIONS
@@ -1673,6 +1787,13 @@ Example:
         let commandName: string;
         let params: Record<string, unknown>;
         let actionLabel: string;
+
+        // Pre-validate body for reply/create_post to avoid wasting API calls
+        if ((da.action === 'reply' || da.action === 'create_post') && (!da.body || typeof da.body !== 'string' || da.body.trim().length === 0 || da.body.length > 5000)) {
+          const reason = !da.body || da.body.trim().length === 0 ? 'empty body' : `body too long (${String(da.body).length} chars, max 5000)`;
+          await logAudit('CEO', 'FORUM_SKIP', `Skipped ${da.action}: ${reason}`, 'warning');
+          continue;
+        }
 
         switch (da.action) {
           case 'reply':
@@ -1985,6 +2106,40 @@ async function checkForUpdates(): Promise<CEOAction[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Agent brain check — offer to draft brain prompts for agents without one
+// ---------------------------------------------------------------------------
+
+async function checkAgentBrains(agents: AgentRow[]): Promise<CEOAction[]> {
+  const actions: CEOAction[] = [];
+
+  // Find non-CEO agents with no system_prompt in metadata
+  const brainless = agents.filter(a => {
+    const meta = a.metadata as Record<string, unknown> | null;
+    return !meta?.system_prompt || (typeof meta.system_prompt === 'string' && meta.system_prompt.trim().length === 0);
+  });
+
+  if (brainless.length === 0) return actions;
+
+  // Only nag about the first brainless agent to avoid spam
+  const agent = brainless[0];
+  actions.push({
+    id: makeActionId(),
+    action_type: 'request_approval',
+    payload: {
+      topic: `agent_brain_setup_${agent.id}`,
+      message: `Agent **${agent.name}** has no brain prompt configured yet. Want me to draft a system prompt for their role as ${agent.role}?`,
+      navigateTo: '/surveillance',
+      agent_id: agent.id,
+      agent_name: agent.name,
+      agent_role: agent.role,
+    },
+    priority: 6,
+  });
+
+  return actions;
+}
+
+// ---------------------------------------------------------------------------
 // Vault signing key check — remind founder to sync key for sidecar signing
 // ---------------------------------------------------------------------------
 
@@ -2080,9 +2235,13 @@ export async function evaluateCycle(): Promise<CycleResult> {
       ...checkUnassignedMissions(missions, agents, activeMissionAssignees),
       ...checkIdleAgents(agents, activeMissionAssignees),
       ...checkStaleApprovals(approvals),
-      ...checkNoAgentsHired(agents, missions),
+      ...(await checkSmartHire(agents, missions, skills)),
       ...checkSkillsGap(missions, skills),
     );
+
+    // Agent brain check — offer to draft prompts for brainless agents
+    const brainActions = await checkAgentBrains(agents);
+    allActions.push(...brainActions);
 
     // Recurring missions — normal dispatch
     const recurringActions = await checkRecurringMissions(false);

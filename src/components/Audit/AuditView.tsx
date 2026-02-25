@@ -131,7 +131,10 @@ type A2ACategoryFilter = 'all' | A2ACategory
 
 export default function AuditView() {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<AuditTab>('system')
+  const [activeTab, setActiveTab] = useState<AuditTab>(() => {
+    const saved = localStorage.getItem('jarvis_audit_tab')
+    return (saved === 'a2a' || saved === 'system') ? saved : 'system'
+  })
   const [entries, setEntries] = useState<AuditLogRow[]>([])
   const [activeFilter, setActiveFilter] = useState<SeverityFilter>('all')
   const [dateRange, setDateRange] = useState<DateRange>('today')
@@ -227,7 +230,7 @@ export default function AuditView() {
       {/* Tab Toggle */}
       <div className="flex items-center gap-2 mb-5">
         <button
-          onClick={() => setActiveTab('system')}
+          onClick={() => { setActiveTab('system'); localStorage.setItem('jarvis_audit_tab', 'system') }}
           className={[
             'flex items-center gap-2 px-5 py-2.5 text-xs font-bold tracking-wider rounded-lg border transition-all',
             activeTab === 'system'
@@ -239,7 +242,7 @@ export default function AuditView() {
           FOUNDER / SYSTEM
         </button>
         <button
-          onClick={() => setActiveTab('a2a')}
+          onClick={() => { setActiveTab('a2a'); localStorage.setItem('jarvis_audit_tab', 'a2a') }}
           className={[
             'flex items-center gap-2 px-5 py-2.5 text-xs font-bold tracking-wider rounded-lg border transition-all',
             activeTab === 'a2a'

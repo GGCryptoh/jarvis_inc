@@ -394,6 +394,7 @@ async function executeBrowserSide(
     let cost = 0;
     let tokensUsed = 0;
     let imageUrl: string | undefined;
+    let documentUrl: string | undefined;
 
     // Check for CLI handler first
     if (hasCLIHandler(skillId)) {
@@ -414,6 +415,7 @@ async function executeBrowserSide(
       cost = result.cost_usd;
       tokensUsed = result.tokens_used;
       imageUrl = result.imageUrl;
+      documentUrl = result.documentUrl;
     }
 
     // Extract and save agent questions from task output
@@ -525,6 +527,12 @@ async function executeBrowserSide(
       } catch (err) {
         console.warn('[TaskDispatcher] Document upload failed:', err);
       }
+    }
+
+    // Detect document artifacts — from executeSkill documentUrl (e.g. docx handler)
+    if (!artifactMeta.artifact_type && documentUrl) {
+      artifactMeta.artifact_type = 'document';
+      artifactMeta.document_url = documentUrl;
     }
 
     // Detect image artifacts — from executeSkill imageUrl or skill outputType

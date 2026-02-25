@@ -23,8 +23,9 @@ import PixelOffice from './PixelOffice';
 import HireAgentModal from './HireAgentModal';
 import type { AgentConfig } from './HireAgentModal';
 import { playSuccessJingle } from '../../lib/sounds';
-import { loadPendingActions, markActionSeen, type CEOAction } from '../../lib/ceoActionQueue';
-import { Pencil, Trash2, Zap, PlusCircle, MessageSquare } from 'lucide-react';
+import { loadPendingActions, markActionSeen, dismissAction, type CEOAction } from '../../lib/ceoActionQueue';
+import { handleManagementAction } from '../../lib/managementActions';
+import { Pencil, Trash2, Zap, PlusCircle, MessageSquare, Brain, Save, CheckCircle } from 'lucide-react';
 import { loadAgentActivity, type AgentActivity } from '../../lib/database';
 import QuickChatPanel from './QuickChatPanel';
 
@@ -63,6 +64,7 @@ function rowToAgent(row: AgentRow, pos: Position, index: number, confidence?: nu
     confidence: confidence ?? 70,
     costSoFar: costSoFar ?? 0,
     model: row.model,
+    metadata: row.metadata as Record<string, unknown> | undefined,
   };
 }
 
@@ -1214,62 +1216,110 @@ export default function SurveillanceView() {
             className="pointer-events-auto retro-window max-w-sm w-full animate-slide-up"
             style={{ animation: 'slide-up 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards' }}
           >
-            <div className="retro-window-title !text-[8px] !py-2 !px-3">
-              <span className="flex items-center gap-2">
-                <MessageSquare size={10} className="text-yellow-300" />
-                CEO WANTS TO CHAT
-              </span>
-            </div>
-            <div className="retro-window-body !m-2 flex flex-col items-center gap-3 py-3">
-              <div className="text-center">
-                <div className="font-pixel text-[9px] tracking-wider text-zinc-200 leading-relaxed">
-                  <span className="text-yellow-300">{ceoAgent?.name ?? 'CEO'}</span> says:
+            {ceoActions[0].topic === 'smart_hire_recommendation' ? (
+              <>
+                <div className="retro-window-title !text-[8px] !py-2 !px-3">
+                  <span className="flex items-center gap-2">
+                    <CheckCircle size={10} className="text-emerald-400" />
+                    HIRE RECOMMENDATION
+                  </span>
                 </div>
-                <div className="font-pixel text-[8px] tracking-wider text-zinc-400 leading-relaxed mt-1">
-                  {ceoActions[0].message}
+                <div className="retro-window-body !m-2 flex flex-col items-center gap-3 py-3">
+                  <div className="text-center">
+                    <div className="font-pixel text-[9px] tracking-wider text-zinc-200 leading-relaxed">
+                      <span className="text-yellow-300">{ceoAgent?.name ?? 'CEO'}</span> recommends:
+                    </div>
+                    <div className="font-pixel text-[8px] tracking-wider text-zinc-400 leading-relaxed mt-1">
+                      {ceoActions[0].message}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="retro-button !text-[9px] !py-2 !px-6 tracking-widest hover:!text-emerald-400 !border-emerald-500/30"
+                      onClick={async () => {
+                        const action = ceoActions[0];
+                        const hirePayload = action.payload?.hire_payload as Record<string, unknown>;
+                        if (hirePayload) {
+                          await handleManagementAction('hire_agent', hirePayload);
+                        }
+                        setCeoActions([]);
+                        await markActionSeen(action.id);
+                      }}
+                    >
+                      APPROVE HIRE
+                    </button>
+                    <button
+                      className="retro-button !text-[8px] !py-2 !px-3 tracking-widest hover:!text-zinc-500"
+                      onClick={async () => {
+                        const action = ceoActions[0];
+                        const now = new Date().toISOString();
+                        dismissedAtRef.current = now;
+                        localStorage.setItem('jarvis_ceo_dismissed_at', now);
+                        setCeoActions([]);
+                        await dismissAction(action.id);
+                      }}
+                    >
+                      DISMISS
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  className="retro-button !text-[9px] !py-2 !px-6 tracking-widest hover:!text-emerald-400 !border-emerald-500/30"
-                  onClick={async () => {
-                    const action = ceoActions[0];
-                    setCeoActions([]);
-                    await markActionSeen(action.id);
-                    navigate(action.navigateTo ?? '/chat');
-                  }}
-                >
-                  {ceoActions[0].navigateTo ? 'GO' : 'OPEN CHAT'}
-                </button>
-                <button
-                  className="retro-button !text-[8px] !py-2 !px-4 tracking-widest hover:!text-zinc-300"
-                  onClick={async () => {
-                    // Snooze: dismiss from UI but will reappear after cooldown (2h dedup in engine)
-                    const action = ceoActions[0];
-                    setCeoActions(prev => prev.slice(1));
-                    const { dismissAction } = await import('../../lib/ceoActionQueue');
-                    await dismissAction(action.id);
-                  }}
-                >
-                  REMIND LATER
-                </button>
-                <button
-                  className="retro-button !text-[8px] !py-2 !px-3 tracking-widest hover:!text-zinc-500"
-                  onClick={async () => {
-                    // Full dismiss + suppress across navigation
-                    const action = ceoActions[0];
-                    const now = new Date().toISOString();
-                    dismissedAtRef.current = now;
-                    localStorage.setItem('jarvis_ceo_dismissed_at', now);
-                    setCeoActions([]);
-                    const { dismissAction } = await import('../../lib/ceoActionQueue');
-                    await dismissAction(action.id);
-                  }}
-                >
-                  DISMISS
-                </button>
-              </div>
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="retro-window-title !text-[8px] !py-2 !px-3">
+                  <span className="flex items-center gap-2">
+                    <MessageSquare size={10} className="text-yellow-300" />
+                    CEO WANTS TO CHAT
+                  </span>
+                </div>
+                <div className="retro-window-body !m-2 flex flex-col items-center gap-3 py-3">
+                  <div className="text-center">
+                    <div className="font-pixel text-[9px] tracking-wider text-zinc-200 leading-relaxed">
+                      <span className="text-yellow-300">{ceoAgent?.name ?? 'CEO'}</span> says:
+                    </div>
+                    <div className="font-pixel text-[8px] tracking-wider text-zinc-400 leading-relaxed mt-1">
+                      {ceoActions[0].message}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="retro-button !text-[9px] !py-2 !px-6 tracking-widest hover:!text-emerald-400 !border-emerald-500/30"
+                      onClick={async () => {
+                        const action = ceoActions[0];
+                        setCeoActions([]);
+                        await markActionSeen(action.id);
+                        navigate(action.navigateTo ?? '/chat');
+                      }}
+                    >
+                      {ceoActions[0].navigateTo ? 'GO' : 'OPEN CHAT'}
+                    </button>
+                    <button
+                      className="retro-button !text-[8px] !py-2 !px-4 tracking-widest hover:!text-zinc-300"
+                      onClick={async () => {
+                        const action = ceoActions[0];
+                        setCeoActions(prev => prev.slice(1));
+                        await dismissAction(action.id);
+                      }}
+                    >
+                      REMIND LATER
+                    </button>
+                    <button
+                      className="retro-button !text-[8px] !py-2 !px-3 tracking-widest hover:!text-zinc-500"
+                      onClick={async () => {
+                        const action = ceoActions[0];
+                        const now = new Date().toISOString();
+                        dismissedAtRef.current = now;
+                        localStorage.setItem('jarvis_ceo_dismissed_at', now);
+                        setCeoActions([]);
+                        await dismissAction(action.id);
+                      }}
+                    >
+                      DISMISS
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1295,6 +1345,13 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire, onQuickChat, isCEO
   const [activity, setActivity] = useState<AgentActivity | null>(null);
   const [realCost, setRealCost] = useState<{ totalCost: number; taskCount: number } | null>(null);
   const [ceoPhilosophy, setCeoPhilosophy] = useState<string | null>(null);
+
+  // Show Brain state
+  const [showBrain, setShowBrain] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editSystemPrompt, setEditSystemPrompt] = useState('');
+  const [editUserPrompt, setEditUserPrompt] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // Load live activity + real cost for this agent — refresh on events
   useEffect(() => {
@@ -1509,6 +1566,116 @@ function AgentDetailSidebar({ agent, onClose, onEdit, onFire, onQuickChat, isCEO
               </div>
             )}
           </>
+        )}
+
+        {/* Show Brain — non-CEO agents only */}
+        {!isCEO && (
+          <div>
+            <button
+              className="retro-button w-full !text-[8px] !py-2 text-center tracking-widest hover:!text-pixel-cyan flex items-center justify-center gap-2"
+              onClick={() => {
+                setShowBrain(prev => !prev);
+                setEditMode(false);
+              }}
+            >
+              <Brain size={10} />
+              {showBrain ? 'HIDE BRAIN' : 'SHOW BRAIN'}
+            </button>
+
+            {showBrain && (
+              <div className="mt-2 flex flex-col gap-2">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-pixel text-[6px] text-gray-500 tracking-wider">SYSTEM PROMPT</span>
+                    {!editMode && (
+                      <button
+                        className="text-gray-500 hover:text-pixel-cyan transition-colors"
+                        onClick={() => {
+                          setEditSystemPrompt((agent.metadata?.system_prompt as string) ?? '');
+                          setEditUserPrompt((agent.metadata?.user_prompt as string) ?? '');
+                          setEditMode(true);
+                        }}
+                      >
+                        <Pencil size={8} />
+                      </button>
+                    )}
+                  </div>
+                  {editMode ? (
+                    <textarea
+                      className="w-full retro-inset p-2 font-pixel text-[7px] text-pixel-green leading-relaxed tracking-wider bg-transparent resize-y min-h-[60px] outline-none"
+                      rows={4}
+                      value={editSystemPrompt}
+                      onChange={e => setEditSystemPrompt(e.target.value)}
+                    />
+                  ) : (
+                    <div className="retro-inset p-2 font-pixel text-[7px] text-pixel-green leading-relaxed tracking-wider max-h-[100px] overflow-y-auto no-scrollbar">
+                      {(agent.metadata?.system_prompt as string) || '(no system prompt)'}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">USER PROMPT</div>
+                  {editMode ? (
+                    <textarea
+                      className="w-full retro-inset p-2 font-pixel text-[7px] text-pixel-green leading-relaxed tracking-wider bg-transparent resize-y min-h-[60px] outline-none"
+                      rows={4}
+                      value={editUserPrompt}
+                      onChange={e => setEditUserPrompt(e.target.value)}
+                    />
+                  ) : (
+                    <div className="retro-inset p-2 font-pixel text-[7px] text-pixel-green leading-relaxed tracking-wider max-h-[100px] overflow-y-auto no-scrollbar">
+                      {(agent.metadata?.user_prompt as string) || '(no user prompt)'}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="font-pixel text-[6px] text-gray-500 tracking-wider mb-1">BRAIN MODEL</div>
+                  <span className="inline-block font-pixel text-[7px] tracking-wider px-2 py-1 bg-pixel-floor border border-pixel-crt-border text-pixel-cyan rounded-sm">
+                    {agent.model}
+                  </span>
+                </div>
+
+                {editMode && (
+                  <div className="flex gap-1">
+                    <button
+                      className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest hover:!text-pixel-green flex items-center justify-center gap-1"
+                      disabled={saving}
+                      onClick={async () => {
+                        setSaving(true);
+                        try {
+                          const updatedMetadata = {
+                            ...(agent.metadata ?? {}),
+                            system_prompt: editSystemPrompt,
+                            user_prompt: editUserPrompt,
+                          };
+                          const { getSupabase } = await import('../../lib/supabase');
+                          await getSupabase().from('agents').update({ metadata: updatedMetadata }).eq('id', agent.id);
+                          agent.metadata = updatedMetadata;
+                          setEditMode(false);
+                          window.dispatchEvent(new Event('agents-changed'));
+                        } catch (err) {
+                          console.error('[ShowBrain] Save failed:', err);
+                        } finally {
+                          setSaving(false);
+                        }
+                      }}
+                    >
+                      <Save size={8} />
+                      {saving ? 'SAVING...' : 'SAVE'}
+                    </button>
+                    <button
+                      className="retro-button flex-1 !text-[7px] !py-2 text-center tracking-widest"
+                      onClick={() => setEditMode(false)}
+                    >
+                      CANCEL
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         <div className="flex-1" />

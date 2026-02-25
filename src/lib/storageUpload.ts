@@ -67,6 +67,36 @@ export async function uploadGeneratedDocument(
 }
 
 /**
+ * Upload a binary document (Blob) to Supabase Storage.
+ * Returns the public URL on success, null on failure.
+ */
+export async function uploadBinaryDocument(
+  data: Blob,
+  filename: string,
+  contentType: string,
+): Promise<string | null> {
+  try {
+    const sb = getSupabase();
+    const path = `${Date.now()}-${filename}`;
+
+    const { error } = await sb.storage
+      .from('generated-documents')
+      .upload(path, data, { contentType, upsert: false });
+
+    if (error) {
+      console.error('[Storage] Binary doc upload failed:', error.message);
+      return null;
+    }
+
+    const { data: urlData } = sb.storage.from('generated-documents').getPublicUrl(path);
+    return urlData?.publicUrl ?? null;
+  } catch (err) {
+    console.error('[Storage] Binary doc upload error:', err);
+    return null;
+  }
+}
+
+/**
  * Convert a base64 string to a Blob for upload.
  */
 export function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
