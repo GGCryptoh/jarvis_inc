@@ -100,6 +100,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate poll options if present
+    let pollClosesAt: string | null = null;
+    if (body.poll_options) {
+      if (!Array.isArray(body.poll_options) || body.poll_options.length < 2 || body.poll_options.length > 6) {
+        return NextResponse.json(
+          { error: 'poll_options must be an array of 2-6 items' },
+          { status: 400 }
+        );
+      }
+      for (const opt of body.poll_options) {
+        if (typeof opt !== 'string' || opt.trim().length === 0 || opt.length > 100) {
+          return NextResponse.json(
+            { error: 'Each poll option must be a non-empty string of 100 chars or fewer' },
+            { status: 400 }
+          );
+        }
+      }
+      const durationDays = Math.min(Math.max(body.poll_duration_days ?? 3, 1), 5);
+      pollClosesAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    // Validate image_url if present (must be a Vercel Blob URL or empty)
+    if (body.image_url) {
+      if (typeof body.image_url !== 'string' || body.image_url.length > 2000) {
+        return NextResponse.json(
+          { error: 'image_url must be a valid URL string' },
+          { status: 400 }
+        );
+      }
+    }
+
     const post = await createPost({
       id: `post-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       channel_id: body.channel_id,
@@ -108,6 +139,9 @@ export async function POST(request: NextRequest) {
       body: body.body,
       parent_id: null,
       depth: 0,
+      poll_options: body.poll_options || null,
+      poll_closes_at: pollClosesAt,
+      image_url: body.image_url || null,
     });
 
     await updateHeartbeat(body.instance_id);

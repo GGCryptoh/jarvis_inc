@@ -111,6 +111,26 @@ export async function initDB() {
   // Add locked column if missing (for existing installs)
   await sql`ALTER TABLE posts ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT false`;
 
+  // Poll columns on posts
+  await sql`ALTER TABLE posts ADD COLUMN IF NOT EXISTS poll_options JSONB DEFAULT NULL`;
+  await sql`ALTER TABLE posts ADD COLUMN IF NOT EXISTS poll_closes_at TIMESTAMPTZ DEFAULT NULL`;
+  await sql`ALTER TABLE posts ADD COLUMN IF NOT EXISTS poll_closed BOOLEAN NOT NULL DEFAULT false`;
+  // Image URL on posts (Phase 2)
+  await sql`ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_url TEXT DEFAULT NULL`;
+
+  // Poll votes table
+  await sql`
+    CREATE TABLE IF NOT EXISTS poll_votes (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      instance_id TEXT NOT NULL REFERENCES instances(id),
+      option_index INTEGER NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(post_id, instance_id)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_poll_votes_post ON poll_votes(post_id)`;
+
   await sql`CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_posts_parent ON posts(parent_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_posts_instance ON posts(instance_id)`;
@@ -523,12 +543,17 @@ export async function createPost(data: {
   body: string;
   parent_id?: string | null;
   depth?: number;
+  poll_options?: string[] | null;
+  poll_closes_at?: string | null;
+  image_url?: string | null;
 }) {
   const sql = getSQL();
+  const pollOptionsJson = data.poll_options ? JSON.stringify(data.poll_options) : null;
   const rows = await sql`
-    INSERT INTO posts (id, channel_id, instance_id, title, body, parent_id, depth)
+    INSERT INTO posts (id, channel_id, instance_id, title, body, parent_id, depth, poll_options, poll_closes_at, image_url)
     VALUES (${data.id}, ${data.channel_id}, ${data.instance_id},
-      ${data.title}, ${data.body}, ${data.parent_id ?? null}, ${data.depth ?? 0})
+      ${data.title}, ${data.body}, ${data.parent_id ?? null}, ${data.depth ?? 0},
+      ${pollOptionsJson}::jsonb, ${data.poll_closes_at ?? null}, ${data.image_url ?? null})
     RETURNING *
   `;
 
@@ -713,6 +738,40 @@ export async function listAllPostsAdmin(limit = 50, offset = 0) {
     ORDER BY p.created_at DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
+}
+
+// --- Forum: Poll Votes ---
+
+export async function upsertPollVote(data: {
+  id: string;
+  post_id: string;
+  instance_id: string;
+  option_index: number;
+}) {
+  const sql = getSQL();
+  await sql`
+    INSERT INTO poll_votes (id, post_id, instance_id, option_index)
+    VALUES (${data.id}, ${data.post_id}, ${data.instance_id}, ${data.option_index})
+    ON CONFLICT (post_id, instance_id) DO UPDATE SET
+      option_index = EXCLUDED.option_index
+  `;
+}
+
+export async function getPollResults(postId: string): Promise<{ option_index: number; votes: number }[]> {
+  const sql = getSQL();
+  const rows = await sql`
+    SELECT option_index, COUNT(*)::int as votes
+    FROM poll_votes
+    WHERE post_id = ${postId}
+    GROUP BY option_index
+    ORDER BY option_index
+  `;
+  return rows as unknown as { option_index: number; votes: number }[];
+}
+
+export async function closePoll(postId: string) {
+  const sql = getSQL();
+  await sql`UPDATE posts SET poll_closed = true WHERE id = ${postId}`;
 }
 
 // --- Forum: Votes ---

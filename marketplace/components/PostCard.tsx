@@ -1,5 +1,10 @@
-import { ChevronUp, ChevronDown, Lock } from 'lucide-react';
+import { ChevronUp, ChevronDown, Lock, BarChart3 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+
+interface PollResult {
+  option: string;
+  votes: number;
+}
 
 interface ForumPost {
   id: string;
@@ -13,12 +18,30 @@ interface ForumPost {
   instance_nickname?: string;
   avatar_color?: string;
   avatar_border?: string;
+  poll_options?: string[];
+  poll_closes_at?: string;
+  poll_closed?: boolean;
+  poll_results?: PollResult[];
+  poll_total_votes?: number;
+  image_url?: string;
 }
 
 interface PostCardProps {
   post: ForumPost;
   isRoot?: boolean;
   isUnread?: boolean;
+}
+
+function formatTimeRemaining(closesAt: string): string {
+  const diff = new Date(closesAt).getTime() - Date.now();
+  if (diff <= 0) return 'now';
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(hours / 24);
+  const remainHours = hours % 24;
+  if (days > 0) return `in ${days}d ${remainHours}h`;
+  if (hours > 0) return `in ${hours}h`;
+  const mins = Math.floor(diff / (1000 * 60));
+  return `in ${mins}m`;
 }
 
 export default function PostCard({ post, isRoot = false, isUnread = false }: PostCardProps) {
@@ -107,6 +130,65 @@ export default function PostCard({ post, isRoot = false, isUnread = false }: Pos
           {post.body}
         </ReactMarkdown>
       </div>
+
+      {/* Image display */}
+      {post.image_url && (
+        <div className="mt-3 mb-1">
+          <img
+            src={post.image_url}
+            alt="Post image"
+            className="max-w-full max-h-96 rounded-lg border border-white/[0.06] cursor-pointer hover:opacity-90 transition-opacity"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(post.image_url, '_blank');
+            }}
+          />
+        </div>
+      )}
+
+      {/* Poll display */}
+      {post.poll_options && post.poll_options.length > 0 && (
+        <div className="mt-4 p-4 rounded-lg border border-pixel-cyan/20 bg-jarvis-bg/40">
+          <div className="flex items-center gap-2 mb-3">
+            <BarChart3 className="w-4 h-4 text-pixel-cyan" />
+            <span className="font-pixel text-[9px] tracking-wider text-pixel-cyan">POLL</span>
+            {post.poll_closed ? (
+              <span className="font-pixel text-[8px] tracking-wider px-1.5 py-0.5 rounded border border-pixel-red/30 text-pixel-red bg-pixel-red/10">
+                CLOSED
+              </span>
+            ) : post.poll_closes_at ? (
+              <span className="font-mono text-[10px] text-jarvis-muted">
+                Closes {formatTimeRemaining(post.poll_closes_at)}
+              </span>
+            ) : null}
+          </div>
+          <div className="space-y-2">
+            {post.poll_options.map((option, idx) => {
+              const votes = post.poll_results?.[idx]?.votes ?? 0;
+              const total = post.poll_total_votes ?? 0;
+              const pct = total > 0 ? Math.round((votes / total) * 100) : 0;
+              return (
+                <div key={idx} className="relative">
+                  <div
+                    className="absolute inset-0 rounded bg-pixel-cyan/10 transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                  <div className="relative flex items-center justify-between px-3 py-1.5 rounded">
+                    <span className="font-mono text-xs text-jarvis-text">{option}</span>
+                    <span className="font-mono text-[10px] text-jarvis-muted shrink-0 ml-2">
+                      {votes} ({pct}%)
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 font-mono text-[10px] text-jarvis-muted">
+            {post.poll_total_votes ?? 0} total vote{(post.poll_total_votes ?? 0) !== 1 ? 's' : ''} &middot; Bots vote via API
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-4 mt-4 pt-3 border-t border-white/[0.04]">
         <div className="flex items-center gap-1">

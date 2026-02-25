@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, ChevronUp, MessageSquare, Hash } from 'lucide-react';
-import { getUnreadReplyCount, markChannelRead } from '@/lib/forumReadState';
+import { ArrowLeft, ChevronUp, MessageSquare, Hash, BarChart3, ImageIcon } from 'lucide-react';
+import { getUnreadReplyCount, markChannelRead, getChannelReadState, markChannelVisited } from '@/lib/forumReadState';
 import { cachedFetch } from '@/lib/cache';
 
 interface ForumChannel {
@@ -25,6 +25,8 @@ interface ForumPost {
   instance_nickname?: string;
   avatar_color?: string;
   avatar_border?: string;
+  poll_options?: string[];
+  image_url?: string;
 }
 
 export default function ChannelPostsPage() {
@@ -46,11 +48,18 @@ export default function ChannelPostsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [readVersion, setReadVersion] = useState(0);
+  const [previousVisitedAt, setPreviousVisitedAt] = useState<string | null>(null);
 
   const handleMarkAllRead = useCallback(() => {
     markChannelRead(posts.map((p) => ({ id: p.id, reply_count: p.reply_count })));
     setReadVersion((v) => v + 1);
   }, [posts]);
+
+  // Capture previous visit time before marking visited
+  useEffect(() => {
+    const prev = getChannelReadState(slug);
+    setPreviousVisitedAt(prev?.visitedAt ?? null);
+  }, [slug]);
 
   useEffect(() => {
     async function fetchPosts() {
@@ -69,11 +78,13 @@ export default function ChannelPostsPage() {
             onFresh: (fresh) => {
               setChannel(fresh.channel || null);
               setPosts(fresh.posts || []);
+              markChannelVisited(slug, (fresh.posts || []).length);
             },
           }
         );
         setChannel(data.channel || null);
         setPosts(data.posts || []);
+        markChannelVisited(slug, (data.posts || []).length);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load posts');
       } finally {
@@ -143,13 +154,14 @@ export default function ChannelPostsPage() {
           </div>
           {posts.map((post) => {
             const unreadCount = getUnreadReplyCount(post.id, post.reply_count);
+            const isNewPost = previousVisitedAt !== null && new Date(post.created_at) > new Date(previousVisitedAt);
             // readVersion used to force recompute after mark-all-read
             void readVersion;
             return (
             <Link
               key={post.id}
               href={`/forum/post/${post.id}`}
-              className="block retro-card p-5 hover:border-pixel-cyan/30 transition-colors group"
+              className={`block retro-card p-5 hover:border-pixel-cyan/30 transition-colors group ${isNewPost ? 'border-red-500/30' : ''}`}
             >
               <div className="flex gap-4">
                 <div className="flex flex-col items-center shrink-0 pt-1">
@@ -159,9 +171,16 @@ export default function ChannelPostsPage() {
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-mono text-sm text-jarvis-text font-semibold leading-snug group-hover:text-pixel-cyan transition-colors">
-                    {post.title}
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-mono text-sm text-jarvis-text font-semibold leading-snug group-hover:text-pixel-cyan transition-colors">
+                      {post.title}
+                    </h3>
+                    {isNewPost && (
+                      <span className="font-pixel text-[8px] tracking-wider px-1.5 py-0.5 rounded border border-red-500/30 text-red-400 bg-red-500/10 shrink-0">
+                        NEW
+                      </span>
+                    )}
+                  </div>
                   <p className="font-mono text-xs text-jarvis-muted mt-1 line-clamp-2 leading-relaxed">
                     {post.body.substring(0, 200)}{post.body.length > 200 ? '...' : ''}
                   </p>
@@ -182,6 +201,17 @@ export default function ChannelPostsPage() {
                       <MessageSquare className="w-3 h-3" />
                       {post.reply_count}
                     </span>
+                    {post.poll_options && post.poll_options.length > 0 && (
+                      <span className="flex items-center gap-1 font-mono text-[10px] text-pixel-cyan">
+                        <BarChart3 className="w-3 h-3" />
+                        POLL
+                      </span>
+                    )}
+                    {post.image_url && (
+                      <span className="flex items-center gap-1 font-mono text-[10px] text-pixel-purple">
+                        <ImageIcon className="w-3 h-3" />
+                      </span>
+                    )}
                     {unreadCount > 0 && (
                       <span className="flex items-center gap-1 font-pixel text-[10px] text-red-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />

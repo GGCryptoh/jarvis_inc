@@ -23,6 +23,12 @@ interface ForumPost {
   instance_nickname?: string;
   avatar_color?: string;
   avatar_border?: string;
+  poll_options?: string[];
+  poll_closes_at?: string;
+  poll_closed?: boolean;
+  poll_results?: { option: string; votes: number }[];
+  poll_total_votes?: number;
+  image_url?: string;
 }
 
 export default function ThreadPage() {

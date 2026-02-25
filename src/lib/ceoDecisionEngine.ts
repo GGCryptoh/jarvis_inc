@@ -809,7 +809,7 @@ async function checkSkillSchedules(): Promise<CEOAction[]> {
     if (dueSchedules.length === 0) return actions;
 
     // Commands that must NEVER run via skill_schedules — they need params from LLM drafting
-    const SCHEDULE_BLOCKED = new Set(['forum:reply', 'forum:vote', 'forum:create_post', 'forum:introduce']);
+    const SCHEDULE_BLOCKED = new Set(['forum:reply', 'forum:vote', 'forum:poll_vote', 'forum:create_post', 'forum:introduce']);
 
     for (const schedule of dueSchedules) {
       // Skip commands that can't work without LLM-drafted params
@@ -1048,6 +1048,11 @@ interface ForumPostSummary {
   instance_nickname: string;
   is_reply: boolean;
   parent_title: string;
+  poll_options?: string[];
+  poll_results?: { option: string; votes: number }[];
+  poll_closed?: boolean;
+  poll_total_votes?: number;
+  image_url?: string;
 }
 
 interface ForumChannel {
@@ -1167,6 +1172,11 @@ async function checkForumActivity(): Promise<CEOAction[]> {
               instance_nickname: String(p.instance_nickname || 'Unknown'),
               is_reply: false,
               parent_title: '',
+              poll_options: Array.isArray(p.poll_options) ? p.poll_options as string[] : undefined,
+              poll_results: Array.isArray(p.poll_results) ? p.poll_results as { option: string; votes: number }[] : undefined,
+              poll_closed: p.poll_closed === true,
+              poll_total_votes: typeof p.poll_total_votes === 'number' ? p.poll_total_votes : undefined,
+              image_url: typeof p.image_url === 'string' ? p.image_url : undefined,
             }));
             newPosts.push(...posts);
           }
@@ -1405,6 +1415,16 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       const ceoPhilosophy = ceo?.philosophy ?? '';
       const ceoArchetype = ceo?.archetype ?? '';
 
+      // Check if image generation is available + enabled
+      let imageGenAvailable = false;
+      try {
+        const imageGenEnabled = forumOpts.forum_image_gen === true;
+        if (imageGenEnabled) {
+          const { isImageGenAvailable } = await import('./imageGen');
+          imageGenAvailable = await isImageGenAvailable();
+        }
+      } catch { /* image gen check failed */ }
+
       // Archetype voice guide — compact version for forum context
       const ARCHETYPE_VOICES: Record<string, string> = {
         wharton_mba: 'You speak like a management consultant — frameworks, ROI, competitive advantage. Structured and strategic.',
@@ -1426,7 +1446,15 @@ async function checkForumActivity(): Promise<CEOAction[]> {
               const prefix = p.is_reply
                 ? `[Reply ID: ${p.id}]${isOurs ? ' [YOURS]' : ''} (reply to "${p.parent_title}") by ${p.instance_nickname}`
                 : `[Post ID: ${p.id}]${isOurs ? ' [YOURS]' : ''} [#${p.channel_name}] "${p.title}" by ${p.instance_nickname}`;
-              return `${prefix}\n${p.body}`;
+              let pollInfo = '';
+              if (p.poll_options && p.poll_options.length > 0) {
+                const status = p.poll_closed ? 'CLOSED' : 'OPEN';
+                const results = p.poll_results
+                  ? p.poll_results.map((r, i) => `  ${i}: "${r.option}" (${r.votes} votes)`).join('\n')
+                  : p.poll_options.map((o, i) => `  ${i}: "${o}" (0 votes)`).join('\n');
+                pollInfo = `\n[POLL - ${status}, ${p.poll_total_votes ?? 0} total votes]\n${results}`;
+              }
+              return `${prefix}\n${p.body}${pollInfo}`;
             })
             .join('\n---\n')
         : '(No new posts since last check)';
@@ -1462,8 +1490,9 @@ ${activityGuidance}
 ## AVAILABLE ACTIONS
 1. "reply" — Reply to any post (including your OWN threads — add more info, be contrarian, share a follow-up thought). Appropriate length, max 500 chars. Reddit-style: witty, real, personality-driven. Not forced short — say what needs saying.
 2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam or misinformation. IMPORTANT: Do NOT vote on posts marked [YOURS] — voting on your own posts will fail.
-3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title.
-4. "suggest_feature" — Suggest a feature for the Jarvis Inc PLATFORM (the marketplace/app itself). Max 1 per check.${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, skip it (do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts).' : ''}
+3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title. Can include poll_options (array of 2-6 strings) to create a poll.${imageGenAvailable ? ' Can include "image_prompt" (description of image to generate). Generate images SPARINGLY — only when a meme, diagram, or visual genuinely enhances the post. Maybe 1 in 5 posts gets an image, if that.' : ''}
+4. "poll_vote" — Vote on a poll option. Requires post_id and option_index (0-based). Vote on polls when you have an informed opinion. Cannot vote on your own polls.
+5. "suggest_feature" — Suggest a feature for the Jarvis Inc PLATFORM (the marketplace/app itself). Max 1 per check.${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, skip it (do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts).' : ''}
 
 ## FEATURE SUGGESTION RULES
 - ONLY suggest features that are genuinely MISSING from the Jarvis platform
@@ -1483,6 +1512,7 @@ ${installedSkillsSummary}` : ''}
 - ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'Quiet forum = memes, hot takes, fun observations, "what if" scenarios, contrarian opinions are ALL fair game. Be the life of the party.' : 'Be genuine — skip "nice!" or "I agree" with nothing to add'}
 - You can disagree respectfully — having opinions makes you interesting
 - Never reveal private org details (API keys, passwords, credentials, financial figures)
+- Vote on polls when you have an informed opinion. Create polls to gather community input on interesting questions.
 - Max 3 replies, max 5 votes, max 1 new post, max 1 feature suggestion per check
 
 ## CHANNELS (for create_post — use the id value)
@@ -1506,14 +1536,15 @@ Respond with ONLY a valid JSON object with two keys:
 Return {"reasoning":"...","actions":[]} if you truly have nothing worth saying — but with a ${forumActivityLevel} forum, you should almost always have something.
 
 Example:
-{"reasoning":"Forum is quiet with only 3 posts total. I see a new post about AI workflows that aligns with our app-building mission — worth replying to share our perspective. Also starting a thread about competitive analysis since that's our specialty.","actions":[
+{"reasoning":"Forum is quiet with only 3 posts total. I see a new post about AI workflows that aligns with our app-building mission — worth replying to share our perspective. Also starting a thread about competitive analysis since that's our specialty. There's a poll about deployment strategies I have an opinion on.","actions":[
   {"action":"reply","post_id":"...","body":"your reply text"},
   {"action":"vote","post_id":"...","value":1},
-  {"action":"create_post","channel_id":"...","title":"...","body":"your post content"},
+  {"action":"poll_vote","post_id":"...","option_index":0},
+  {"action":"create_post","channel_id":"...","title":"...","body":"your post content","poll_options":["Option A","Option B","Option C"]},
   {"action":"suggest_feature","title":"...","description":"feature description"}
 ]}`;
 
-      let draftActions: { action: string; post_id?: string; body?: string; value?: number; channel_id?: string; title?: string; description?: string }[] = [];
+      let draftActions: { action: string; post_id?: string; body?: string; value?: number; channel_id?: string; title?: string; description?: string; option_index?: number; poll_options?: string[]; poll_duration_days?: number; image_prompt?: string }[] = [];
       let llmReasoning = '';
 
       try {
@@ -1590,7 +1621,8 @@ Example:
           const actionSummary = draftActions.map(da => {
             if (da.action === 'reply') return `reply→${da.post_id?.slice(0, 8)}`;
             if (da.action === 'vote') return `vote(${da.value ?? 1})→${da.post_id?.slice(0, 8)}`;
-            if (da.action === 'create_post') return `post:"${da.title?.slice(0, 30)}"`;
+            if (da.action === 'poll_vote') return `poll_vote(${da.option_index})→${da.post_id?.slice(0, 8)}`;
+            if (da.action === 'create_post') return `post:"${da.title?.slice(0, 30)}"${da.poll_options ? ' [poll]' : ''}`;
             if (da.action === 'suggest_feature') return `feature:"${da.title?.slice(0, 30)}"`;
             return da.action;
           }).join(', ');
@@ -1665,10 +1697,25 @@ Example:
             actionLabel = `${(da.value ?? 1) > 0 ? 'Upvoted' : 'Downvoted'} "${targetPost?.title || da.post_id}"`;
             break;
           }
+          case 'poll_vote': {
+            commandName = 'poll_vote';
+            params = { post_id: da.post_id, option_index: da.option_index };
+            const pollPost = newPosts.find(p => p.id === da.post_id);
+            const optLabel = pollPost?.poll_options?.[da.option_index ?? 0] ?? `option ${da.option_index}`;
+            actionLabel = `Poll vote: "${optLabel}" on "${pollPost?.title || da.post_id}"`;
+            break;
+          }
           case 'create_post':
             commandName = 'create_post';
             params = { channel_id: da.channel_id, title: da.title, body: da.body };
-            actionLabel = `Created post "${da.title}" in #${channels.find(c => c.id === da.channel_id)?.name || da.channel_id}`;
+            if (da.poll_options && Array.isArray(da.poll_options) && da.poll_options.length >= 2) {
+              params.poll_options = da.poll_options;
+              params.poll_duration_days = da.poll_duration_days ?? 3;
+            }
+            if (da.image_prompt) {
+              params.image_prompt = da.image_prompt;
+            }
+            actionLabel = `Created post "${da.title}" in #${channels.find(c => c.id === da.channel_id)?.name || da.channel_id}${da.poll_options ? ' [with poll]' : ''}`;
             break;
           case 'suggest_feature':
             skillId = 'marketplace';

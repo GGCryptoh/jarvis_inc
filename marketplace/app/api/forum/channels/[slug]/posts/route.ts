@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listChannelPosts, getChannel } from '@/lib/db';
+import { listChannelPosts, getChannel, getPollResults } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
@@ -27,6 +27,20 @@ export async function GET(
     }
 
     const posts = await listChannelPosts(slug, since, limit, offset);
+
+    // Enrich posts with poll results
+    for (const post of posts) {
+      if (post.poll_options && Array.isArray(post.poll_options) && post.poll_options.length > 0) {
+        const voteRows = await getPollResults(post.id as string);
+        const pollExpired = post.poll_closes_at && new Date(post.poll_closes_at as string) < new Date();
+        post.poll_closed = post.poll_closed || !!pollExpired;
+        post.poll_results = (post.poll_options as string[]).map((option: string, idx: number) => ({
+          option,
+          votes: voteRows.find(r => r.option_index === idx)?.votes ?? 0,
+        }));
+        post.poll_total_votes = (post.poll_results as { votes: number }[]).reduce((sum: number, r: { votes: number }) => sum + r.votes, 0);
+      }
+    }
 
     const res = NextResponse.json({ channel, posts });
     res.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');

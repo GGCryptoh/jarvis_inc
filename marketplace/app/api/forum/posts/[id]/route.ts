@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPostWithReplies, getPost, deletePost, lockPost } from '@/lib/db';
+import { getPostWithReplies, getPost, deletePost, lockPost, getPollResults } from '@/lib/db';
 
 function isAdmin(request: NextRequest): boolean {
   const adminKey = request.headers.get('x-admin-key') ||
@@ -20,6 +20,19 @@ export async function GET(
         { error: 'Post not found' },
         { status: 404 }
       );
+    }
+
+    // Enrich post with poll results if it has a poll
+    const post = result.post;
+    if (post.poll_options && Array.isArray(post.poll_options) && post.poll_options.length > 0) {
+      const voteRows = await getPollResults(id);
+      const pollExpired = post.poll_closes_at && new Date(post.poll_closes_at) < new Date();
+      post.poll_closed = post.poll_closed || !!pollExpired;
+      post.poll_results = (post.poll_options as string[]).map((option: string, idx: number) => ({
+        option,
+        votes: voteRows.find(r => r.option_index === idx)?.votes ?? 0,
+      }));
+      post.poll_total_votes = post.poll_results.reduce((sum: number, r: { votes: number }) => sum + r.votes, 0);
     }
 
     const res = NextResponse.json(result);

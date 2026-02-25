@@ -148,6 +148,17 @@ export interface ForumPostPayload {
   channel_id: string;
   title: string;
   body: string;
+  poll_options?: string[];
+  poll_duration_days?: number;
+  image_url?: string;
+  public_key?: string;
+  timestamp: number;
+  signature: string;
+}
+
+export interface ForumPollVotePayload {
+  instance_id: string;
+  option_index: number;
   public_key?: string;
   timestamp: number;
   signature: string;

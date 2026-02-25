@@ -1138,21 +1138,81 @@ Respond with JSON:
       }
     }
 
-    const result = await signedMarketplacePost('/api/forum/posts', {
+    // Build post payload — include optional poll and image fields
+    const postPayload: Record<string, unknown> = {
       channel_id: channelId,
       title,
       body,
-    });
+    };
+
+    // Poll options
+    const pollOptions = params.poll_options;
+    if (Array.isArray(pollOptions) && pollOptions.length >= 2) {
+      postPayload.poll_options = pollOptions.map(String).slice(0, 6);
+      postPayload.poll_duration_days = Math.min(Math.max(Number(params.poll_duration_days) || 3, 1), 5);
+    }
+
+    // Image handling: generate from prompt, upload base64, or use pre-uploaded URL
+    let imageUrl = params.image_url ? String(params.image_url) : '';
+
+    // AI image generation (Phase 3) — generate if image_prompt provided and setting enabled
+    if (params.image_prompt && !imageUrl && !params.image_base64) {
+      try {
+        const forumImgOpts = await getSkillOptions('forum');
+        if (forumImgOpts.forum_image_gen === true) {
+          const { generateImage } = await import('./imageGen');
+          const genResult = await generateImage(String(params.image_prompt));
+          if (genResult) {
+            // Upload the generated image
+            const uploadResult = await signedMarketplacePost('/api/forum/upload', {
+              image_base64: genResult.base64,
+              content_type: genResult.content_type,
+            });
+            if (uploadResult.success && uploadResult.data?.url) {
+              imageUrl = uploadResult.data.url as string;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[forum:create_post] Image generation failed, posting text-only:', err);
+      }
+    }
+
+    // Direct base64 upload (from sidecar or pre-generated)
+    if (params.image_base64 && !imageUrl) {
+      try {
+        const uploadResult = await signedMarketplacePost('/api/forum/upload', {
+          image_base64: String(params.image_base64),
+          content_type: String(params.content_type || 'image/png'),
+        });
+        if (uploadResult.success && uploadResult.data?.url) {
+          imageUrl = uploadResult.data.url as string;
+        }
+      } catch (err) {
+        console.warn('[forum:create_post] Image upload failed, posting text-only:', err);
+      }
+    }
+
+    if (imageUrl) {
+      postPayload.image_url = imageUrl;
+    }
+
+    const result = await signedMarketplacePost('/api/forum/posts', postPayload);
 
     if (result.success) {
       import('./ceoDecisionEngine').then(m => m.activateForumBurst()).catch(() => {});
     }
 
+    const extras = [];
+    if (pollOptions) extras.push('poll');
+    if (params.image_url) extras.push('image');
+    const extrasStr = extras.length > 0 ? ` [with ${extras.join(' + ')}]` : '';
+
     await logAudit(
       options.agentId ?? null,
       result.success ? 'SKILL_EXECUTED' : 'SKILL_EXECUTION_FAILED',
       result.success
-        ? `Forum post created: "${title}" in #${channelId}`
+        ? `Forum post created: "${title}" in #${channelId}${extrasStr}`
         : `Forum post failed: ${result.error}`,
       result.success ? 'info' : 'error',
     );
@@ -1160,7 +1220,7 @@ Respond with JSON:
     return {
       success: result.success,
       output: result.success
-        ? `Forum post created: "${title}" in #${channelId}. View at ${MARKETPLACE_URL}/forum/${channelId}`
+        ? `Forum post created: "${title}" in #${channelId}${extrasStr}. View at ${MARKETPLACE_URL}/forum/${channelId}`
         : '',
       tokens_used: 0,
       cost_usd: 0,
@@ -1304,6 +1364,53 @@ Respond with JSON:
       success: result.success,
       output: result.success
         ? `${value > 0 ? 'Upvoted' : 'Downvoted'} post ${postId}`
+        : '',
+      tokens_used: 0,
+      cost_usd: 0,
+      duration_ms: Date.now() - startTime,
+      error: result.error,
+    };
+  },
+
+  'forum:poll_vote': async (params, options, startTime) => {
+    if (!getMarketplaceStatus().registered) {
+      const ready = await waitForMarketplaceRegistration();
+      if (!ready) {
+        return {
+          success: false, output: '', tokens_used: 0, cost_usd: 0,
+          duration_ms: Date.now() - startTime,
+          error: 'Not registered on the marketplace yet.',
+        };
+      }
+    }
+
+    const postId = String(params.post_id || '');
+    const optionIndex = Number(params.option_index);
+
+    if (!postId) {
+      return { success: false, output: '', tokens_used: 0, cost_usd: 0, duration_ms: Date.now() - startTime, error: 'post_id is required' };
+    }
+    if (typeof optionIndex !== 'number' || isNaN(optionIndex) || optionIndex < 0) {
+      return { success: false, output: '', tokens_used: 0, cost_usd: 0, duration_ms: Date.now() - startTime, error: 'option_index must be a non-negative number' };
+    }
+
+    const result = await signedMarketplacePost(`/api/forum/posts/${postId}/poll-vote`, {
+      option_index: optionIndex,
+    });
+
+    await logAudit(
+      options.agentId ?? null,
+      result.success ? 'SKILL_EXECUTED' : 'SKILL_EXECUTION_FAILED',
+      result.success
+        ? `Poll vote: option ${optionIndex} on ${postId}`
+        : `Poll vote failed: ${result.error}`,
+      result.success ? 'info' : 'error',
+    );
+
+    return {
+      success: result.success,
+      output: result.success
+        ? `Voted for option ${optionIndex} on poll ${postId}`
         : '',
       tokens_used: 0,
       cost_usd: 0,
