@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MessageSquare, Clock, Hash } from 'lucide-react';
 import { cachedFetch } from '@/lib/cache';
-import { getNewPostCount } from '@/lib/forumReadState';
+import { getNewPostCount, markAllChannelsVisited } from '@/lib/forumReadState';
 
 interface ForumChannel {
   id: string;
@@ -19,6 +19,7 @@ export default function ForumPage() {
   const [channels, setChannels] = useState<ForumChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [readVersion, setReadVersion] = useState(0);
 
   useEffect(() => {
     async function fetchChannels() {
@@ -79,6 +80,20 @@ export default function ForumPage() {
         </div>
       ) : (
         <div className="space-y-3">
+          {(() => { void readVersion; return null; })()}
+          {channels.some((c) => getNewPostCount(c.id, c.post_count) > 0) && (
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => {
+                  markAllChannelsVisited(channels.map((c) => ({ id: c.id, post_count: c.post_count })));
+                  setReadVersion((v) => v + 1);
+                }}
+                className="font-pixel text-[8px] tracking-wider px-2.5 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+              >
+                MARK ALL READ
+              </button>
+            </div>
+          )}
           {channels.map((channel) => {
             const newCount = getNewPostCount(channel.id, channel.post_count);
             return (

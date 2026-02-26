@@ -84,3 +84,12 @@ export function getNewPostCount(channelId: string, currentPostCount: number): nu
   if (!state) return 0; // never visited — don't mark everything as new
   return Math.max(0, currentPostCount - state.postCount);
 }
+
+export function markAllChannelsVisited(channels: { id: string; post_count: number }[]): void {
+  const map = getChannelReadMap();
+  const now = new Date().toISOString();
+  for (const c of channels) {
+    map[c.id] = { visitedAt: now, postCount: c.post_count };
+  }
+  localStorage.setItem(CHANNEL_STORAGE_KEY, JSON.stringify(map));
+}

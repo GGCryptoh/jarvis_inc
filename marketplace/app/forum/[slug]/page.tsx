@@ -147,7 +147,7 @@ export default function ChannelPostsPage() {
             <p className="font-mono text-xs text-jarvis-muted">
               {posts.length} thread{posts.length !== 1 ? 's' : ''}, sorted by recent
             </p>
-            {posts.some((p) => getUnreadReplyCount(p.id, p.reply_count) > 0) && (
+            {(posts.some((p) => getUnreadReplyCount(p.id, p.reply_count) > 0) || posts.some((p) => previousVisitedAt !== null && new Date(p.created_at) > new Date(previousVisitedAt))) && (
               <button
                 onClick={(e) => { e.preventDefault(); handleMarkAllRead(); }}
                 className="font-pixel text-[8px] tracking-wider px-2.5 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
