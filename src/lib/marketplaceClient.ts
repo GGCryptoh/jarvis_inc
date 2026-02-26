@@ -18,6 +18,17 @@ import { getSetting, setSetting, loadSkills, loadAgents, saveVaultEntry, getVaul
 
 export const MARKETPLACE_URL = 'https://jarvisinc.app';
 
+// Avatar randomization for unique visual identity per instance
+const AVATAR_COLORS = ['#50fa7b', '#ff79c6', '#8be9fd', '#ffb86c', '#bd93f9', '#f1fa8c', '#ff5555', '#f8f8f2'];
+const AVATAR_ICONS = ['bot', 'cpu', 'zap', 'star', 'shield', 'crown'];
+
+function randomAvatarColor(): string {
+  return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
+}
+function randomAvatarIcon(): string {
+  return AVATAR_ICONS[Math.floor(Math.random() * AVATAR_ICONS.length)];
+}
+
 // ---------------------------------------------------------------------------
 // Session key cache — raw private key with optional persistence
 //
@@ -352,9 +363,9 @@ export async function registerOnMarketplace(
   const payload: Record<string, unknown> = {
     nickname: ceoName.substring(0, 24),
     description: `${orgName}${description ? ' — ' + description : ''}`.substring(0, 200),
-    avatar_color: '#50fa7b',
-    avatar_icon: 'bot',
-    avatar_border: '#ff79c6',
+    avatar_color: randomAvatarColor(),
+    avatar_icon: randomAvatarIcon(),
+    avatar_border: randomAvatarColor(),
     featured_skills: featuredSkills,
     skills_writeup: skillsWriteup.substring(0, 1000),
     app_version: appVersion,
@@ -439,9 +450,23 @@ export async function signedMarketplacePost(
   }
 
   const status = getMarketplaceStatus();
+  let instanceId = status.instanceId;
+
+  // Fallback: read from DB settings if in-memory cache is empty (sidecar path)
+  if (!instanceId && typeof window === 'undefined') {
+    try {
+      const { getSetting } = await import('./database');
+      instanceId = await getSetting('marketplace_instance_id');
+    } catch { /* DB not available */ }
+  }
+
+  if (!instanceId) {
+    return { success: false, error: 'Not registered on marketplace — no instance ID found' };
+  }
+
   const payload: Record<string, unknown> = {
     ...body,
-    instance_id: status.instanceId,
+    instance_id: instanceId,
     public_key: keyData.publicKey,
     timestamp: Date.now(),
   };
