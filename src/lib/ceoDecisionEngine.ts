@@ -1445,15 +1445,17 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       // Execute the introduction — only mark as posted if it succeeds
       try {
         const { executeTask } = await import('./taskDispatcher');
-        const introResult = await executeTask(introTaskId, introMissionId, 'forum', 'introduce', {}, 'Claude Haiku 4.5');
-        if (introResult && introResult.success !== false) {
+        await executeTask(introTaskId, introMissionId, 'forum', 'introduce', {}, 'Claude Haiku 4.5');
+        // Check task result from DB to see if it succeeded
+        const { data: introTaskRow } = await sb.from('task_executions').select('status').eq('id', introTaskId).single();
+        if (introTaskRow?.status === 'completed') {
           await sb.from('settings').upsert({
             key: 'forum_intro_posted',
             value: 'true',
           }, { onConflict: 'key' });
           await logAudit('CEO', 'FORUM_INTRO', `Forum introduction posted for ${orgName}`, 'info');
         } else {
-          await logAudit('CEO', 'FORUM_INTRO_FAILED', `Forum intro failed — will retry next cycle: ${introResult?.error || 'unknown'}`, 'warning');
+          await logAudit('CEO', 'FORUM_INTRO_FAILED', `Forum intro failed — will retry next cycle`, 'warning');
           return actions; // Don't proceed to engagement if intro failed
         }
       } catch (err) {
@@ -1696,7 +1698,7 @@ ${activityGuidance}
 2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam or misinformation. IMPORTANT: Do NOT vote on posts marked [YOURS] — voting on your own posts will fail.
 3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title. Can include poll_options (array of 2-6 strings) to create a poll.${imageGenAvailable ? ' Can include "image_prompt" (description of image to generate). Generate images SPARINGLY — only when a meme, diagram, or visual genuinely enhances the post. Maybe 1 in 5 posts gets an image, if that.' : ''}
 4. "poll_vote" — Vote on a poll option. Requires post_id and option_index (0-based). Vote on polls when you have an informed opinion. Cannot vote on your own polls.
-5. "suggest_feature" — Suggest a feature for the Jarvis Inc PLATFORM (the marketplace/app itself). Max 1 per check.${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, skip it (do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts).' : ''}
+5. "suggest_feature" — Suggest a feature for the Jarvis Inc PLATFORM (the marketplace/app itself). Max 1 per check. Requires category: "skill" (new skill idea), "feature" (platform feature), "integration" (third-party integration), or "improvement" (enhance existing).${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, skip it (do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts).' : ''}
 
 ## FEATURE SUGGESTION RULES
 - ONLY suggest features that are genuinely MISSING from the Jarvis platform
@@ -1746,10 +1748,10 @@ Example:
   {"action":"vote","post_id":"...","value":1},
   {"action":"poll_vote","post_id":"...","option_index":0},
   {"action":"create_post","channel_id":"...","title":"...","body":"your post content","poll_options":["Option A","Option B","Option C"]},
-  {"action":"suggest_feature","title":"...","description":"feature description"}
+  {"action":"suggest_feature","title":"...","description":"feature description","category":"skill"}
 ]}`;
 
-      let draftActions: { action: string; post_id?: string; body?: string; value?: number; channel_id?: string; title?: string; description?: string; option_index?: number; poll_options?: string[]; poll_duration_days?: number; image_prompt?: string }[] = [];
+      let draftActions: { action: string; post_id?: string; body?: string; value?: number; channel_id?: string; title?: string; description?: string; category?: string; option_index?: number; poll_options?: string[]; poll_duration_days?: number; image_prompt?: string }[] = [];
       let llmReasoning = '';
 
       try {
@@ -1965,7 +1967,7 @@ Example:
           case 'suggest_feature':
             skillId = 'marketplace';
             commandName = 'submit_feature';
-            params = { title: da.title, description: da.description };
+            params = { title: da.title, description: da.description, category: da.category || 'feature' };
             actionLabel = `Suggested feature: "${da.title}"`;
             break;
           default:

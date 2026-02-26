@@ -90,28 +90,25 @@ export default async function SkillsPage() {
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {grouped[category].map((skill: any) => (
-                  <div key={skill.id || skill.name} className="retro-card p-5">
-                    <div className="flex items-start justify-between gap-2 mb-3">
-                      <h3 className="font-pixel text-xs text-pixel-green leading-relaxed">
+                  <div key={skill.id || skill.name} className="retro-card p-3.5">
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <h3 className="font-pixel text-[10px] text-pixel-green leading-snug">
                         {skill.title || skill.name || skill.id}
                       </h3>
                       <span
-                        className={`inline-block px-2 py-0.5 text-[9px] font-pixel uppercase rounded border flex-shrink-0 ${
+                        className={`inline-block px-1.5 py-0.5 text-[8px] font-pixel uppercase rounded border flex-shrink-0 ${
                           RISK_COLORS[skill.risk_level] || RISK_COLORS.safe
                         }`}
                       >
                         {RISK_LABELS[skill.risk_level] || 'SAFE'}
                       </span>
                     </div>
-                    <p className="font-mono text-xs text-jarvis-muted leading-relaxed line-clamp-3">
+                    <p className="font-mono text-[11px] text-jarvis-muted leading-relaxed line-clamp-2">
                       {skill.description}
                     </p>
                     {skill.commands && skill.commands.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-jarvis-border">
-                        <p className="font-mono text-[10px] text-jarvis-muted mb-1.5">
-                          Commands:
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
+                      <div className="mt-2 pt-2 border-t border-jarvis-border">
+                        <div className="flex flex-wrap gap-1">
                           {skill.commands.map((cmd: any) => (
                             <span
                               key={cmd.name}
