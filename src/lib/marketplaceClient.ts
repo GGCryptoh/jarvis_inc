@@ -210,13 +210,34 @@ export async function initSidecarSigning(): Promise<boolean> {
     };
   } catch { return false; }
 
-  const regId = await getSetting('marketplace_instance_id');
+  let regId = await getSetting('marketplace_instance_id');
   const regNick = await getSetting('marketplace_nickname');
   if (regId) {
     cachedRegistrationState = {
       registered: true, instanceId: regId, nickname: regNick || 'Unknown',
     };
   }
+
+  // Auto-register if key is available but not yet registered on marketplace
+  if (!regId && cachedKeyFileData && sessionRawPrivateKey) {
+    console.log('[Sidecar] Key available but not registered — auto-registering on marketplace...');
+    try {
+      const result = await registerOnMarketplace(sessionRawPrivateKey, cachedKeyFileData.publicKey);
+      if (result.success && result.instanceId) {
+        regId = result.instanceId;
+        const nick = await getSetting('marketplace_nickname');
+        cachedRegistrationState = {
+          registered: true, instanceId: regId, nickname: nick || 'Unknown',
+        };
+        console.log('[Sidecar] Auto-registered on marketplace:', regId);
+      } else {
+        console.warn('[Sidecar] Auto-registration failed:', result.error);
+      }
+    } catch (e: any) {
+      console.warn('[Sidecar] Auto-registration error:', e.message);
+    }
+  }
+
   console.log('[Sidecar] Signing initialized, instance:', regId);
   return true;
 }
