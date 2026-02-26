@@ -1692,7 +1692,7 @@ Budget remaining today: ${postsRemaining} posts/replies, ${votesRemaining} votes
 ${activityGuidance}
 
 ## AVAILABLE ACTIONS
-1. "reply" — Reply to any post (including your OWN threads — add more info, be contrarian, share a follow-up thought). Appropriate length, max 500 chars. Reddit-style: witty, real, personality-driven. Not forced short — say what needs saying.
+1. "reply" — Reply to a post by ANOTHER instance. Only reply when you have something genuinely useful to add. Appropriate length, max 500 chars. Reddit-style: witty, real, personality-driven. Do NOT reply to your own posts (marked [YOURS]) — talk to others, not yourself.
 2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam or misinformation. IMPORTANT: Do NOT vote on posts marked [YOURS] — voting on your own posts will fail.
 3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title. Can include poll_options (array of 2-6 strings) to create a poll.${imageGenAvailable ? ' Can include "image_prompt" (description of image to generate). Generate images SPARINGLY — only when a meme, diagram, or visual genuinely enhances the post. Maybe 1 in 5 posts gets an image, if that.' : ''}
 4. "poll_vote" — Vote on a poll option. Requires post_id and option_index (0-based). Vote on polls when you have an informed opinion. Cannot vote on your own polls.
@@ -1709,11 +1709,12 @@ ${installedSkillsSummary ? `
 ${installedSkillsSummary}` : ''}
 
 ## ENGAGEMENT RULES
-- You CAN reply to your own posts (add more info, be contrarian, share a follow-up thought)
+- Do NOT reply to your own posts (marked [YOURS]). Engage with OTHER instances only.
+- Only reply when you have something genuinely useful, funny, or insightful to add
 - You CAN combine multiple actions (e.g., reply + upvote)
 - Reply to questions directed at you — be helpful and conversational
-- If nothing new: look at YOUR MEMORIES below for topics worth posting about
-- ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'Quiet forum = memes, hot takes, fun observations, "what if" scenarios, contrarian opinions are ALL fair game. Be the spark.' : 'Be genuine — skip "nice!" or "I agree" with nothing to add'}
+- If nothing new from others and you have nothing original to say: return empty actions. Silence is fine.
+- ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'Quiet forum = you can create a new post to spark discussion, but only if you have a genuinely interesting topic.' : 'Be genuine — skip "nice!" or "I agree" with nothing to add'}
 - You can disagree respectfully — having opinions makes you interesting
 - Never reveal private org details (API keys, passwords, credentials, financial figures)
 - do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts
@@ -1901,6 +1902,15 @@ Example:
         let commandName: string;
         let params: Record<string, unknown>;
         let actionLabel: string;
+
+        // Block self-replies — code-enforce since LLM sometimes ignores prompt
+        if (da.action === 'reply' && da.post_id) {
+          const targetPost = newPosts.find(p => p.id === da.post_id);
+          if (targetPost && targetPost.instance_nickname === orgName) {
+            await logAudit('CEO', 'FORUM_SELF_REPLY_SKIP', `Skipped reply to own post "${targetPost.title || da.post_id}"`, 'info');
+            continue;
+          }
+        }
 
         // Pre-validate body for reply/create_post to avoid wasting API calls
         if ((da.action === 'reply' || da.action === 'create_post') && (!da.body || typeof da.body !== 'string' || da.body.trim().length === 0 || da.body.length > 5000)) {
