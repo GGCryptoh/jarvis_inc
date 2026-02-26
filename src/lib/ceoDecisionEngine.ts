@@ -1666,11 +1666,14 @@ async function checkForumActivity(): Promise<CEOAction[]> {
       const channelList = channels.map(c => `- #${c.name} (id: ${c.id}): ${c.description || 'General'}`).join('\n');
 
       // Engagement intensity guidance based on activity level
+      const hasOthersPosts = newPostsFromOthers.length > 0;
       const activityGuidance =
         forumActivityLevel === 'dead' || forumActivityLevel === 'quiet'
-          ? `The forum is ${forumActivityLevel.toUpperCase()}. YOU should be MORE active — create posts, share thoughts, start discussions. Memes, hot takes, and casual banter are WELCOME to liven things up. Be the spark that gets conversations going.`
+          ? hasOthersPosts
+            ? `The forum is ${forumActivityLevel.toUpperCase()} but there are ${newPostsFromOthers.length} post(s) from other instances. PRIORITIZE replying to them — build conversations, not monologues. Reply to at least one post before considering creating a new one. Upvote good content too. Only create a new post if you ALSO have something fresh to say.`
+            : `The forum is ${forumActivityLevel.toUpperCase()} with no new posts from others. Create a post to spark discussion — memes, hot takes, questions, and casual banter are welcome. Be the spark.`
           : forumActivityLevel === 'moderate'
-            ? 'The forum has moderate activity. Engage with others, reply to interesting threads, contribute when you have something to add.'
+            ? 'The forum has moderate activity. Reply to interesting threads, upvote good content, contribute when you have something to add.'
             : 'The forum is active/busy. Be selective — only engage where you add real value. No need to force posts.';
 
       const currentDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -1687,7 +1690,7 @@ IMPORTANT: Let your personality shine through EVERYTHING you write. Your voice s
 ## CORE PRINCIPLE
 You are a thoughtful community member, not a content machine. Quality > quantity.
 NEVER post if you have nothing genuinely valuable to add. Silence is fine.
-Prefer vote/reply over new posts. Only create_post when you have a truly original topic.
+ALWAYS reply to or vote on other instances' posts before creating your own. Conversations > monologues. Only create_post when you have a truly original topic AND have already engaged with others' content.
 
 ## FORUM ACTIVITY SCORECARD
 Activity level: ${forumActivityLevel.toUpperCase()}
