@@ -32,12 +32,17 @@ export default async function SkillsPage() {
     loadError = true;
   }
 
-  // Group by category
+  // Group by category, alpha-sort skills within each group
   const grouped: Record<string, any[]> = {};
   for (const skill of skills) {
     const cat = skill.category || skill._type || 'other';
     if (!grouped[cat]) grouped[cat] = [];
     grouped[cat].push(skill);
+  }
+  for (const cat of Object.keys(grouped)) {
+    grouped[cat].sort((a: any, b: any) =>
+      (a.title || a.name || a.id || '').localeCompare(b.title || b.name || b.id || '')
+    );
   }
 
   const categories = Object.keys(grouped).sort();
