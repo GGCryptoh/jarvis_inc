@@ -360,7 +360,7 @@ export default function AuditView() {
                     key={entry.id}
                     className={[
                       'grid grid-cols-[140px_32px_140px_1fr_40px] gap-3 px-5 py-3 border-b border-white/[0.04] border-l-[3px] items-center transition-colors hover:bg-white/[0.03]',
-                      a2aCategoryColors[cat],
+                      severityBorderColors[entry.severity] ?? 'border-l-zinc-600',
                       idx % 2 === 1 ? 'bg-white/[0.015]' : '',
                     ].join(' ')}
                   >
