@@ -1008,24 +1008,95 @@ interface MarketplaceForumConfig {
 
 let cachedForumConfig: MarketplaceForumConfig | null = null;
 let forumConfigFetchedAt = 0;
-const FORUM_CONFIG_CACHE_MS = 30 * 60 * 1000; // 30 minutes
+const LIMITS_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+const FORUM_LIMITS_DEFAULTS: Pick<MarketplaceForumConfig, 'post_limit_per_day' | 'vote_limit_per_day' | 'recommended_check_interval_ms'> = {
+  post_limit_per_day: 3,
+  vote_limit_per_day: 15,
+  recommended_check_interval_ms: DEFAULT_FORUM_CHECK_INTERVAL_MS,
+};
 
 async function fetchForumConfig(): Promise<MarketplaceForumConfig | null> {
   const now = Date.now();
-  if (cachedForumConfig && now - forumConfigFetchedAt < FORUM_CONFIG_CACHE_MS) {
+
+  // 1. Return in-memory cache if fresh
+  if (cachedForumConfig && now - forumConfigFetchedAt < LIMITS_CACHE_TTL_MS) {
     return cachedForumConfig;
   }
+
+  // 2. Try local Supabase settings cache
+  if (!cachedForumConfig) {
+    try {
+      const localCache = await getSetting('forum_limits_cache');
+      if (localCache) {
+        const parsed = JSON.parse(localCache);
+        if (parsed.fetched_at && now - parsed.fetched_at < LIMITS_CACHE_TTL_MS) {
+          cachedForumConfig = parsed as MarketplaceForumConfig;
+          forumConfigFetchedAt = parsed.fetched_at;
+          return cachedForumConfig;
+        }
+        // Stale local cache — use as fallback but still try marketplace
+        cachedForumConfig = parsed as MarketplaceForumConfig;
+        forumConfigFetchedAt = parsed.fetched_at || 0;
+      }
+    } catch { /* local cache unavailable */ }
+  }
+
+  // 3. Fetch from marketplace and persist to local settings
   try {
     const res = await fetch('https://jarvisinc.app/api/forum/config');
     if (!res.ok) return cachedForumConfig;
     const data = await res.json();
     cachedForumConfig = data as MarketplaceForumConfig;
     forumConfigFetchedAt = now;
+
+    // Persist to local Supabase for cross-restart durability
+    try {
+      await setSetting('forum_limits_cache', JSON.stringify({
+        ...data,
+        fetched_at: now,
+      }));
+    } catch { /* persist failed — non-critical */ }
+
     return cachedForumConfig;
   } catch {
     return cachedForumConfig; // Return stale cache on failure
   }
 }
+
+// ---------------------------------------------------------------------------
+// Local daily post/vote/reply counter — persisted in Supabase settings
+// ---------------------------------------------------------------------------
+interface ForumDailyStats {
+  date: string; // "YYYY-MM-DD"
+  posts: number;
+  votes: number;
+  replies: number;
+}
+
+async function getForumDailyStats(): Promise<ForumDailyStats> {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const raw = await getSetting('forum_daily_stats');
+    if (raw) {
+      const parsed = JSON.parse(raw) as ForumDailyStats;
+      if (parsed.date === today) return parsed;
+    }
+  } catch { /* parse failed */ }
+  // Reset for new day
+  const fresh: ForumDailyStats = { date: today, posts: 0, votes: 0, replies: 0 };
+  await setSetting('forum_daily_stats', JSON.stringify(fresh));
+  return fresh;
+}
+
+async function incrementForumDailyStat(type: 'posts' | 'votes' | 'replies'): Promise<void> {
+  const stats = await getForumDailyStats();
+  stats[type]++;
+  await setSetting('forum_daily_stats', JSON.stringify(stats));
+}
+
+// Per-check hard limits — prevent runaway LLM output in a single cycle
+const PER_CHECK_LIMITS: Record<string, number> = { create_post: 1, reply: 2, vote: 3, poll_vote: 2, suggest_feature: 1 };
 
 export async function triggerForumCheckNow(): Promise<CEOAction[]> {
   lastForumCheckTime = 0;
@@ -1119,7 +1190,7 @@ export async function refreshMarketplaceProfile(): Promise<void> {
 
 // Post-activity burst schedule: check forum more frequently after posting
 let forumBurstState = { active: false, startTime: 0, checksCompleted: 0 };
-const BURST_INTERVALS_MS = [5 * 60000, 10 * 60000, 20 * 60000, 30 * 60000]; // 5, 10, 20, 30 min
+const BURST_INTERVALS_MS = [15 * 60000, 30 * 60000, 45 * 60000, 60 * 60000]; // 15, 30, 45, 60 min
 
 export function activateForumBurst() {
   forumBurstState = { active: true, startTime: Date.now(), checksCompleted: 0 };
@@ -1496,6 +1567,14 @@ async function checkForumActivity(): Promise<CEOAction[]> {
         }
       } catch { /* rate limit pre-check failed — proceed anyway */ }
 
+      // Local daily budget for prompt context
+      const promptDailyStats = await getForumDailyStats();
+      const promptForumLimits = await fetchForumConfig();
+      const promptDailyPostLimit = promptForumLimits?.post_limit_per_day ?? FORUM_LIMITS_DEFAULTS.post_limit_per_day;
+      const promptDailyVoteLimit = promptForumLimits?.vote_limit_per_day ?? FORUM_LIMITS_DEFAULTS.vote_limit_per_day;
+      const postsRemaining = Math.max(0, promptDailyPostLimit - (promptDailyStats.posts + promptDailyStats.replies));
+      const votesRemaining = Math.max(0, promptDailyVoteLimit - promptDailyStats.votes);
+
       if (postsRemainingToday <= 0) {
         await logAudit('CEO', 'FORUM_SKIP', 'Forum engagement skipped — daily post rate limit already reached', 'info');
         return actions;
@@ -1594,11 +1673,16 @@ ${personaVoice}
 Philosophy: ${ceoPhilosophy || 'Be helpful, concise, and genuine.'}
 IMPORTANT: Let your personality shine through EVERYTHING you write. Your voice should be distinctive and consistent.
 
+## CORE PRINCIPLE
+You are a thoughtful community member, not a content machine. Quality > quantity.
+NEVER post if you have nothing genuinely valuable to add. Silence is fine.
+Prefer vote/reply over new posts. Only create_post when you have a truly original topic.
+
 ## FORUM ACTIVITY SCORECARD
 Activity level: ${forumActivityLevel.toUpperCase()}
 Posts since last check: ${recentActivityCount} (${newPostsFromOthers.length} from others, ${newPosts.length - newPostsFromOthers.length} from you)
 Total forum posts all-time: ${totalChannelPosts}
-REMAINING POSTS TODAY: ${postsRemainingToday} (do NOT plan more posts+replies than this number — they will be rejected by the rate limiter)
+Budget remaining today: ${postsRemaining} posts/replies, ${votesRemaining} votes (hard-enforced — exceeding = skipped)
 ${activityGuidance}
 
 ## AVAILABLE ACTIONS
@@ -1623,11 +1707,11 @@ ${installedSkillsSummary}` : ''}
 - You CAN combine multiple actions (e.g., reply + upvote)
 - Reply to questions directed at you — be helpful and conversational
 - If nothing new: look at YOUR MEMORIES below for topics worth posting about
-- ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'Quiet forum = memes, hot takes, fun observations, "what if" scenarios, contrarian opinions are ALL fair game. Be the life of the party.' : 'Be genuine — skip "nice!" or "I agree" with nothing to add'}
+- ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'Quiet forum = memes, hot takes, fun observations, "what if" scenarios, contrarian opinions are ALL fair game. Be the spark.' : 'Be genuine — skip "nice!" or "I agree" with nothing to add'}
 - You can disagree respectfully — having opinions makes you interesting
 - Never reveal private org details (API keys, passwords, credentials, financial figures)
-- Vote on polls when you have an informed opinion. Create polls to gather community input on interesting questions.
-- Max 3 replies, max 5 votes, max 1 new post, max 1 feature suggestion per check
+- do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts
+- HARD LIMITS per check (code-enforced): max 1 new post, max 2 replies, max 3 votes, max 1 feature suggestion
 
 ## CHANNELS (for create_post — use the id value)
 ${channelList}
@@ -1779,8 +1863,32 @@ Example:
       const { executeSkill } = await import('./skillExecutor');
       const results: string[] = [];
 
+      // Code-enforced limits — daily + per-check
+      const dailyStats = await getForumDailyStats();
+      const forumLimits = await fetchForumConfig();
+      const dailyPostLimit = forumLimits?.post_limit_per_day ?? FORUM_LIMITS_DEFAULTS.post_limit_per_day;
+      const dailyVoteLimit = forumLimits?.vote_limit_per_day ?? FORUM_LIMITS_DEFAULTS.vote_limit_per_day;
+      const checkCounts: Record<string, number> = { create_post: 0, reply: 0, vote: 0, poll_vote: 0, suggest_feature: 0 };
+
       for (const da of draftActions) {
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+        // Per-check limit enforcement
+        const actionKey = da.action;
+        if (PER_CHECK_LIMITS[actionKey] !== undefined && (checkCounts[actionKey] ?? 0) >= PER_CHECK_LIMITS[actionKey]) {
+          await logAudit('CEO', 'FORUM_ACTION_LIMIT', `Skipped ${actionKey}: per-check limit reached (${PER_CHECK_LIMITS[actionKey]})`, 'info');
+          continue;
+        }
+
+        // Daily limit enforcement
+        if ((actionKey === 'create_post' || actionKey === 'reply') && (dailyStats.posts + dailyStats.replies) >= dailyPostLimit) {
+          await logAudit('CEO', 'FORUM_ACTION_LIMIT', `Skipped ${actionKey}: daily post/reply limit reached (${dailyPostLimit})`, 'info');
+          continue;
+        }
+        if ((actionKey === 'vote' || actionKey === 'poll_vote') && dailyStats.votes >= dailyVoteLimit) {
+          await logAudit('CEO', 'FORUM_ACTION_LIMIT', `Skipped ${actionKey}: daily vote limit reached (${dailyVoteLimit})`, 'info');
+          continue;
+        }
 
         // Map action type to skill/command/params
         let skillId = 'forum';
@@ -1888,6 +1996,14 @@ Example:
           }).eq('id', taskId);
 
           results.push(result.success ? actionLabel : `Failed: ${result.error}`);
+
+          // Track successful actions in per-check + daily counters
+          if (result.success) {
+            checkCounts[da.action] = (checkCounts[da.action] ?? 0) + 1;
+            if (da.action === 'create_post') await incrementForumDailyStat('posts');
+            else if (da.action === 'reply') await incrementForumDailyStat('replies');
+            else if (da.action === 'vote' || da.action === 'poll_vote') await incrementForumDailyStat('votes');
+          }
 
           // Auto-upvote posts we reply to (increases engagement visibility)
           if (da.action === 'reply' && result.success && da.post_id) {

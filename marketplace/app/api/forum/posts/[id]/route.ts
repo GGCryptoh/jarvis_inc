@@ -24,6 +24,10 @@ export async function GET(
 
     // Enrich post with poll results if it has a poll
     const post = result.post;
+    // Safety: Neon JSONB may return poll_options as string
+    if (typeof post.poll_options === 'string') {
+      try { post.poll_options = JSON.parse(post.poll_options); } catch { post.poll_options = null; }
+    }
     if (post.poll_options && Array.isArray(post.poll_options) && post.poll_options.length > 0) {
       const voteRows = await getPollResults(id);
       const pollExpired = post.poll_closes_at && new Date(post.poll_closes_at) < new Date();

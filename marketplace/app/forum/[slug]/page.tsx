@@ -26,6 +26,10 @@ interface ForumPost {
   avatar_color?: string;
   avatar_border?: string;
   poll_options?: string[];
+  poll_results?: { option: string; votes: number }[];
+  poll_total_votes?: number;
+  poll_closed?: boolean;
+  poll_closes_at?: string;
   image_url?: string;
 }
 

@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category') || undefined;
-    const status = searchParams.get('status') || 'open';
+    const status = searchParams.get('status') || undefined;
     const limit = Math.min(
       Math.max(parseInt(searchParams.get('limit') || '50', 10), 1),
       200

@@ -47,6 +47,11 @@ function formatTimeRemaining(closesAt: string): string {
 export default function PostCard({ post, isRoot = false, isUnread = false }: PostCardProps) {
   const showUnread = !isRoot && isUnread;
 
+  // Safety: Neon JSONB may return poll_options as string
+  const pollOptions = typeof post.poll_options === 'string'
+    ? (() => { try { return JSON.parse(post.poll_options as string); } catch { return null; } })()
+    : post.poll_options;
+
   return (
     <div
       className={`${
@@ -148,7 +153,7 @@ export default function PostCard({ post, isRoot = false, isUnread = false }: Pos
       )}
 
       {/* Poll display */}
-      {post.poll_options && post.poll_options.length > 0 && (
+      {pollOptions && pollOptions.length > 0 && (
         <div className="mt-4 p-4 rounded-lg border border-pixel-cyan/20 bg-jarvis-bg/40">
           <div className="flex items-center gap-2 mb-3">
             <BarChart3 className="w-4 h-4 text-pixel-cyan" />
@@ -164,7 +169,7 @@ export default function PostCard({ post, isRoot = false, isUnread = false }: Pos
             ) : null}
           </div>
           <div className="space-y-2">
-            {post.poll_options.map((option, idx) => {
+            {pollOptions.map((option: string, idx: number) => {
               const votes = post.poll_results?.[idx]?.votes ?? 0;
               const total = post.poll_total_votes ?? 0;
               const pct = total > 0 ? Math.round((votes / total) * 100) : 0;

@@ -8,6 +8,9 @@ import { cachedFetch } from '@/lib/cache';
 const CATEGORIES = ['all', 'skill', 'feature', 'integration', 'improvement'] as const;
 type CategoryFilter = (typeof CATEGORIES)[number];
 
+const STATUSES = ['all', 'open', 'in_progress', 'completed'] as const;
+type StatusFilter = (typeof STATUSES)[number];
+
 // Full static class strings so Tailwind doesn't purge them
 const TAB_ACTIVE_CLASSES: Record<string, string> = {
   all: 'bg-pixel-green/10 border-pixel-green/30 text-pixel-green',
@@ -15,6 +18,13 @@ const TAB_ACTIVE_CLASSES: Record<string, string> = {
   feature: 'bg-pixel-green/10 border-pixel-green/30 text-pixel-green',
   integration: 'bg-pixel-purple/10 border-pixel-purple/30 text-pixel-purple',
   improvement: 'bg-pixel-orange/10 border-pixel-orange/30 text-pixel-orange',
+};
+
+const STATUS_ACTIVE_CLASSES: Record<string, string> = {
+  all: 'bg-pixel-green/10 border-pixel-green/30 text-pixel-green',
+  open: 'bg-pixel-green/10 border-pixel-green/30 text-pixel-green',
+  in_progress: 'bg-pixel-cyan/10 border-pixel-cyan/30 text-pixel-cyan',
+  completed: 'bg-pixel-purple/10 border-pixel-purple/30 text-pixel-purple',
 };
 
 const TAB_INACTIVE =
@@ -25,17 +35,20 @@ export default function FeaturesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>('all');
+  const [activeStatus, setActiveStatus] = useState<StatusFilter>('open');
 
   useEffect(() => {
     async function fetchFeatures() {
       try {
         const categoryParam =
-          activeCategory !== 'all' ? `&category=${activeCategory}` : '';
+          activeCategory !== 'all' ? `category=${activeCategory}&` : '';
+        const statusParam =
+          activeStatus !== 'all' ? `status=${activeStatus}&` : '';
         const data = await cachedFetch(
-          `features-${activeCategory}`,
+          `features-${activeCategory}-${activeStatus}`,
           async () => {
             const res = await fetch(
-              `/api/feature-requests?status=open${categoryParam}&limit=100`
+              `/api/feature-requests?${statusParam}${categoryParam}limit=100`
             );
             if (!res.ok) throw new Error('Failed to fetch feature requests');
             return res.json();
@@ -53,7 +66,7 @@ export default function FeaturesPage() {
     }
     setLoading(true);
     fetchFeatures();
-  }, [activeCategory]);
+  }, [activeCategory, activeStatus]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 animate-fade-in-up">
@@ -85,6 +98,25 @@ export default function FeaturesPage() {
         })}
       </div>
 
+      {/* Status Tabs */}
+      <div className="flex flex-wrap gap-2 mb-8">
+        {STATUSES.map((st) => {
+          const isActive = activeStatus === st;
+          const label = st === 'in_progress' ? 'In Progress' : st;
+          return (
+            <button
+              key={st}
+              onClick={() => setActiveStatus(st)}
+              className={`font-pixel text-[9px] uppercase tracking-wider px-3 py-2 rounded border transition-all ${
+                isActive ? STATUS_ACTIVE_CLASSES[st] : TAB_INACTIVE
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Content */}
       {loading ? (
         <div className="text-center py-20">
@@ -108,7 +140,7 @@ export default function FeaturesPage() {
       ) : (
         <div className="space-y-3">
           <p className="font-mono text-xs text-jarvis-muted mb-4">
-            {features.length} open request{features.length !== 1 ? 's' : ''}
+            {features.length} request{features.length !== 1 ? 's' : ''}
             {activeCategory !== 'all' ? ` in ${activeCategory}` : ''}, sorted by
             votes
           </p>

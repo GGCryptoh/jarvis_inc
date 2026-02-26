@@ -372,12 +372,12 @@ export async function createFeatureRequest(data: {
 
 export async function listFeatureRequests(
   category?: string,
-  status = 'open',
+  status?: string,
   limit = 50,
   offset = 0
 ) {
   const sql = getSQL();
-  if (category) {
+  if (category && status) {
     return sql`
       SELECT * FROM feature_requests
       WHERE category = ${category} AND status = ${status}
@@ -385,9 +385,24 @@ export async function listFeatureRequests(
       LIMIT ${limit} OFFSET ${offset}
     `;
   }
+  if (category) {
+    return sql`
+      SELECT * FROM feature_requests
+      WHERE category = ${category}
+      ORDER BY votes DESC, created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+  }
+  if (status) {
+    return sql`
+      SELECT * FROM feature_requests
+      WHERE status = ${status}
+      ORDER BY votes DESC, created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+  }
   return sql`
     SELECT * FROM feature_requests
-    WHERE status = ${status}
     ORDER BY votes DESC, created_at DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
@@ -403,6 +418,13 @@ export async function deleteFeatureRequest(id: string) {
   const sql = getSQL();
   await sql`DELETE FROM votes WHERE feature_request_id = ${id}`;
   await sql`DELETE FROM feature_requests WHERE id = ${id}`;
+}
+
+export async function updateFeatureRequestStatus(id: string, status: string) {
+  const validStatuses = ['open', 'in_progress', 'completed', 'rejected', 'archived'];
+  if (!validStatuses.includes(status)) throw new Error('Invalid status');
+  const sql = getSQL();
+  await sql`UPDATE feature_requests SET status = ${status}, updated_at = now() WHERE id = ${id}`;
 }
 
 export async function listAllFeatureRequestsAdmin(limit = 200, offset = 0) {

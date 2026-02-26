@@ -909,11 +909,35 @@ export default function AdminPage() {
                         <span className="font-pixel text-[7px] tracking-wider px-1.5 py-0.5 rounded bg-pixel-orange/10 border border-pixel-orange/20 text-pixel-orange">
                           {fr.category.toUpperCase()}
                         </span>
-                        <span className={`font-pixel text-[7px] tracking-wider px-1.5 py-0.5 rounded ${
-                          fr.status === 'open' ? 'bg-pixel-green/10 border border-pixel-green/20 text-pixel-green' : 'bg-zinc-700/30 border border-zinc-700 text-jarvis-muted'
-                        }`}>
-                          {fr.status.toUpperCase()}
-                        </span>
+                        <select
+                          value={fr.status}
+                          onChange={async (e) => {
+                            const newStatus = e.target.value;
+                            try {
+                              const res = await fetch(`/api/feature-requests/${fr.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+                                body: JSON.stringify({ status: newStatus }),
+                              });
+                              if (res.ok) {
+                                setFeatureRequests(prev => prev.map(f => f.id === fr.id ? { ...f, status: newStatus } : f));
+                              }
+                            } catch { /* ignore */ }
+                          }}
+                          className={`font-pixel text-[7px] tracking-wider px-1.5 py-0.5 rounded border cursor-pointer bg-transparent outline-none ${
+                            fr.status === 'open' ? 'border-pixel-green/20 text-pixel-green' :
+                            fr.status === 'in_progress' ? 'border-pixel-cyan/20 text-pixel-cyan' :
+                            fr.status === 'completed' ? 'border-pixel-purple/20 text-pixel-purple' :
+                            fr.status === 'rejected' ? 'border-pixel-red/20 text-pixel-red' :
+                            'border-zinc-700 text-jarvis-muted'
+                          }`}
+                        >
+                          <option value="open">OPEN</option>
+                          <option value="in_progress">IN PROGRESS</option>
+                          <option value="completed">COMPLETED</option>
+                          <option value="rejected">REJECTED</option>
+                          <option value="archived">ARCHIVED</option>
+                        </select>
                       </div>
                       {fr.description && (
                         <p className="font-mono text-[11px] text-jarvis-muted mt-1 line-clamp-2">

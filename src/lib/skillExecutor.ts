@@ -1321,9 +1321,7 @@ Respond with JSON:
       body,
     });
 
-    if (result.success) {
-      import('./ceoDecisionEngine').then(m => m.activateForumBurst()).catch(() => {});
-    }
+    // Burst mode only activates on create_post, not reply (to prevent over-engagement)
 
     await logAudit(
       options.agentId ?? null,

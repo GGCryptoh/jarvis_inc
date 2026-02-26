@@ -8,6 +8,7 @@
 import { initSupabase, getSupabase } from '../lib/supabase';
 import { evaluateCycle } from '../lib/ceoDecisionEngine';
 import { startTelegramPolling, stopTelegramPolling } from './telegram';
+import { executeSkill } from '../lib/skillExecutor';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -92,6 +93,98 @@ async function tick(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pending task watcher — picks up browser-dispatched tasks that need sidecar
+// execution (e.g. forum skills that require marketplace signing keys)
+// ---------------------------------------------------------------------------
+
+const SIDECAR_SKILLS = new Set(['forum', 'marketplace']);
+// Bare command names the CEO may emit without the skill prefix
+const BARE_COMMAND_TO_SKILL: Record<string, string> = {
+  create_post: 'forum', reply: 'forum', vote: 'forum', poll_vote: 'forum',
+  introduce: 'forum', browse_channels: 'forum', browse_posts: 'forum', read_thread: 'forum',
+  register: 'marketplace', submit_feature: 'marketplace', view_profile: 'marketplace',
+  stats: 'marketplace', update_profile: 'marketplace',
+};
+const TASK_POLL_MS = 5_000;
+let taskWatcherRunning = false;
+
+async function processPendingTasks(): Promise<void> {
+  if (taskWatcherRunning) return;
+  taskWatcherRunning = true;
+  try {
+    const sb = getSupabase();
+    const { data: tasks, error: queryErr } = await sb
+      .from('task_executions')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+      .limit(10);
+
+    if (queryErr) {
+      console.error('[TaskWatcher] Query error:', queryErr.message);
+      taskWatcherRunning = false;
+      return;
+    }
+    if (!tasks || tasks.length === 0) { taskWatcherRunning = false; return; }
+    console.log(`[TaskWatcher] Found ${tasks.length} pending task(s): ${tasks.map(t => `${t.skill_id}:${t.command_name}`).join(', ')}`);
+
+    for (const task of tasks) {
+      // Normalize bare command names (e.g. skill_id="create_post" → "forum")
+      let skillId = task.skill_id;
+      let commandName = task.command_name;
+      if (BARE_COMMAND_TO_SKILL[skillId]) {
+        commandName = skillId;
+        skillId = BARE_COMMAND_TO_SKILL[skillId];
+      }
+      if (!SIDECAR_SKILLS.has(skillId)) continue;
+
+      // Claim the task
+      const { error: claimErr } = await sb
+        .from('task_executions')
+        .update({ status: 'running', started_at: new Date().toISOString() })
+        .eq('id', task.id)
+        .eq('status', 'pending'); // optimistic lock
+
+      if (claimErr) continue;
+
+      console.log(`[TaskWatcher] Executing ${skillId}:${commandName} (${task.id})`);
+
+      try {
+        const result = await executeSkill(
+          skillId,
+          commandName,
+          task.params as Record<string, unknown> ?? {},
+          { missionId: task.mission_id },
+        );
+
+        await sb.from('task_executions').update({
+          status: result.success ? 'completed' : 'failed',
+          result: {
+            output: result.output || result.error || '',
+            summary: ((result.output || result.error || '') as string).slice(0, 200),
+          },
+          completed_at: new Date().toISOString(),
+        }).eq('id', task.id);
+
+        console.log(`[TaskWatcher] ${result.success ? 'OK' : 'FAIL'}: ${skillId}:${commandName} — ${(result.output || result.error || '').slice(0, 80)}`);
+      } catch (err) {
+        await sb.from('task_executions').update({
+          status: 'failed',
+          result: { output: '', error: String(err) },
+          completed_at: new Date().toISOString(),
+        }).eq('id', task.id);
+        console.error(`[TaskWatcher] Error executing ${task.id}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error('[TaskWatcher] Poll error:', err);
+  }
+  taskWatcherRunning = false;
+}
+
+// ---------------------------------------------------------------------------
+
 async function main(): Promise<void> {
   console.log('[CEO Sidecar] Starting...');
   console.log(`[CEO Sidecar] Interval: ${INTERVAL_MS}ms`);
@@ -102,6 +195,12 @@ async function main(): Promise<void> {
   startTelegramPolling().catch((err) => {
     console.error('[CEO Sidecar] Telegram polling failed:', err);
   });
+
+  // Start pending task watcher (picks up browser-dispatched forum/marketplace tasks)
+  setInterval(() => {
+    processPendingTasks().catch((err) => console.error('[TaskWatcher] Unhandled error:', err));
+  }, TASK_POLL_MS);
+  console.log(`[CEO Sidecar] Task watcher started (poll every ${TASK_POLL_MS}ms)`);
 
   // Run first tick immediately
   await tick();

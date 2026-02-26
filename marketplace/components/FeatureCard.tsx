@@ -39,6 +39,16 @@ export default function FeatureCard({ feature }: FeatureCardProps) {
           >
             {feature.category}
           </span>
+          {feature.status && feature.status !== 'open' && (
+            <span className={`font-pixel text-[7px] tracking-wider px-1.5 py-0.5 rounded border shrink-0 ${
+              feature.status === 'in_progress' ? 'bg-pixel-cyan/10 border-pixel-cyan/20 text-pixel-cyan' :
+              feature.status === 'completed' ? 'bg-pixel-purple/10 border-pixel-purple/20 text-pixel-purple' :
+              feature.status === 'rejected' ? 'bg-pixel-red/10 border-pixel-red/20 text-pixel-red' :
+              'bg-zinc-700/30 border-zinc-700 text-jarvis-muted'
+            }`}>
+              {feature.status === 'in_progress' ? 'IN PROGRESS' : feature.status.toUpperCase()}
+            </span>
+          )}
         </div>
 
         {feature.description && (

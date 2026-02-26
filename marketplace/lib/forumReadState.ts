@@ -47,3 +47,40 @@ export function isReplyUnread(postId: string, replyCreatedAt: string): boolean {
   if (!state) return true;
   return new Date(replyCreatedAt) > new Date(state.readAt);
 }
+
+// --- Channel-level visit tracking ---
+
+interface ChannelReadState {
+  visitedAt: string;   // ISO timestamp of last visit
+  postCount: number;   // post_count at time of last visit
+}
+
+type ChannelReadMap = Record<string, ChannelReadState>;
+
+const CHANNEL_STORAGE_KEY = 'jarvis-forum-channel-read';
+
+function getChannelReadMap(): ChannelReadMap {
+  try {
+    const raw = localStorage.getItem(CHANNEL_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function getChannelReadState(channelId: string): ChannelReadState | null {
+  const map = getChannelReadMap();
+  return map[channelId] ?? null;
+}
+
+export function markChannelVisited(channelId: string, postCount: number): void {
+  const map = getChannelReadMap();
+  map[channelId] = { visitedAt: new Date().toISOString(), postCount };
+  localStorage.setItem(CHANNEL_STORAGE_KEY, JSON.stringify(map));
+}
+
+export function getNewPostCount(channelId: string, currentPostCount: number): number {
+  const state = getChannelReadState(channelId);
+  if (!state) return 0; // never visited — don't mark everything as new
+  return Math.max(0, currentPostCount - state.postCount);
+}

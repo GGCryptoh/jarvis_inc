@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MessageSquare, Clock, Hash } from 'lucide-react';
 import { cachedFetch } from '@/lib/cache';
+import { getNewPostCount } from '@/lib/forumReadState';
 
 interface ForumChannel {
   id: string;
@@ -78,7 +79,9 @@ export default function ForumPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {channels.map((channel) => (
+          {channels.map((channel) => {
+            const newCount = getNewPostCount(channel.id, channel.post_count);
+            return (
             <Link
               key={channel.id}
               href={`/forum/${channel.id}`}
@@ -111,13 +114,21 @@ export default function ForumPage() {
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <span className="font-pixel text-sm text-pixel-cyan glow-cyan">
-                    {channel.post_count}
-                  </span>
+                  {newCount > 0 ? (
+                    <span className="flex items-center gap-1 font-pixel text-[10px] text-red-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                      {newCount} new
+                    </span>
+                  ) : (
+                    <span className="font-pixel text-sm text-pixel-cyan glow-cyan">
+                      {channel.post_count}
+                    </span>
+                  )}
                 </div>
               </div>
             </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

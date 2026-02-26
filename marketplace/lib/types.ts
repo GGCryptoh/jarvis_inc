@@ -28,7 +28,7 @@ export interface FeatureRequest {
   description: string;
   category: 'skill' | 'feature' | 'integration' | 'improvement';
   votes: number;
-  status: 'open' | 'in_progress' | 'completed' | 'declined';
+  status: 'open' | 'in_progress' | 'completed' | 'rejected' | 'archived';
   created_at: string;
   updated_at: string;
 }

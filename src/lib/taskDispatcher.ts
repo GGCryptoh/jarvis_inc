@@ -982,15 +982,26 @@ export async function dispatchTaskPlan(
         ?? call.arguments.command as string
         ?? call.name;
 
-      // Normalize: "forum.browse_channels" or "forum:browse_channels" → name="forum", command="browse_channels"
+      // Normalize: "forum.browse_channels" or "forum:browse_channels" → skillId="forum", commandName="browse_channels"
+      // Always split skillId on separator — even when arguments.command is already set
       let skillId = call.name;
-      if (!commandName || commandName === skillId) {
-        const sep = skillId.includes(':') ? ':' : skillId.includes('.') ? '.' : null;
-        if (sep) {
-          const [prefix, ...rest] = skillId.split(sep);
-          skillId = prefix;
-          commandName = rest.join(sep);
-        }
+      const sep = skillId.includes(':') ? ':' : skillId.includes('.') ? '.' : null;
+      if (sep) {
+        const [prefix, ...rest] = skillId.split(sep);
+        skillId = prefix;
+        commandName = rest.join(sep);
+      }
+
+      // Map bare command names to their skill prefix (CEO often emits "create_post" instead of "forum:create_post")
+      const BARE_COMMAND_TO_SKILL: Record<string, string> = {
+        create_post: 'forum', reply: 'forum', vote: 'forum', poll_vote: 'forum',
+        introduce: 'forum', browse_channels: 'forum', browse_posts: 'forum', read_thread: 'forum',
+        register: 'marketplace', submit_feature: 'marketplace', view_profile: 'marketplace',
+        stats: 'marketplace', update_profile: 'marketplace',
+      };
+      if (BARE_COMMAND_TO_SKILL[skillId]) {
+        commandName = skillId;
+        skillId = BARE_COMMAND_TO_SKILL[skillId];
       }
 
       // Block forum write commands that have no real params (hallucinated tool_calls).
@@ -1043,6 +1054,80 @@ export async function dispatchTaskPlan(
       const runBrowserFallback = () =>
         executeBrowserSide(taskId, missionId, skillId, commandName, call.arguments, model, founderPresent, context?.conversationId);
 
+      // Skills that require marketplace signing keys — delegate to sidecar, not browser
+      const SIDECAR_ONLY_SKILLS = new Set(['forum', 'marketplace']);
+      const isSidecarSkill = SIDECAR_ONLY_SKILLS.has(skillId);
+
+      const waitForSidecarCompletion = async () => {
+        // Poll for sidecar to pick up and complete the pending task
+        const maxWaitMs = 45_000;
+        const pollInterval = 2_000;
+        let waited = 0;
+        while (waited < maxWaitMs) {
+          await new Promise(r => setTimeout(r, pollInterval));
+          waited += pollInterval;
+          const { data: check } = await sb
+            .from('task_executions')
+            .select('status, result')
+            .eq('id', taskId)
+            .single();
+          if (check?.status === 'completed' || check?.status === 'failed') {
+            console.log(`[dispatchTaskPlan] Sidecar completed task ${taskId} (${check.status})`);
+            if (founderPresent) {
+              const { data: siblings } = await sb
+                .from('task_executions')
+                .select('status')
+                .eq('mission_id', missionId);
+              const allDone = siblings?.every(t => t.status === 'completed' || t.status === 'failed');
+              const isSingle = (siblings?.length ?? 0) === 1;
+              const isTabVisible = typeof document !== 'undefined' && document.visibilityState === 'visible';
+              if (allDone && isSingle && isTabVisible) {
+                await sb.from('missions').update({ status: 'done' }).eq('id', missionId);
+                emitEvent('missions-changed');
+              }
+            }
+            // Post result to chat if founder present
+            if (founderPresent && check.status === 'completed') {
+              const resultOutput = (check.result as Record<string, string>)?.output || (check.result as Record<string, string>)?.summary || '';
+              if (resultOutput) {
+                const { data: convos } = await sb.from('conversations')
+                  .select('id').eq('status', 'active')
+                  .order('created_at', { ascending: false }).limit(1);
+                if (convos?.[0]) {
+                  await sb.from('chat_messages').insert({
+                    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    conversation_id: convos[0].id,
+                    sender: 'ceo',
+                    text: `**Skill Result** (${skillId}:${commandName}):\n${resultOutput.slice(0, 500)}`,
+                    metadata: { type: 'skill_result', skill_id: skillId, mission_id: missionId },
+                  });
+                  emitEvent('chat-messages-changed');
+                }
+              }
+            }
+            emitEvent('task-executions-changed');
+            return;
+          }
+        }
+        console.warn(`[dispatchTaskPlan] Sidecar did not complete task ${taskId} within ${maxWaitMs}ms`);
+        // Mark as failed so UI shows feedback
+        await sb.from('task_executions').update({
+          status: 'failed',
+          result: { output: '', error: 'Sidecar did not pick up task in time. Is the sidecar running?' },
+          completed_at: new Date().toISOString(),
+        }).eq('id', taskId);
+        emitEvent('task-executions-changed');
+      };
+
+      // Sidecar skills skip edge function entirely — edge function races with sidecar
+      // by marking tasks 'running' before failing, preventing sidecar pickup
+      if (isSidecarSkill) {
+        console.log(`[dispatchTaskPlan] Sidecar skill "${skillId}:${commandName}" — waiting for sidecar pickup`);
+        waitForSidecarCompletion()
+          .catch(err => console.error('[dispatchTaskPlan] Sidecar wait failed:', err));
+        continue;
+      }
+
       // Fast timeout: abort the edge function fetch after 3s to avoid 10-15s delays
       // when no edge function is deployed (common in self-hosted Supabase)
       const edgeAbort = new AbortController();
@@ -1061,8 +1146,9 @@ export async function dispatchTaskPlan(
         clearTimeout(edgeTimeout);
         if (!resp.ok) {
           const errText = await resp.text().catch(() => 'Unknown error');
-          console.warn(`Edge function returned ${resp.status}: ${errText}. Falling back to browser execution.`);
-          await runBrowserFallback();
+          console.warn(`Edge function returned ${resp.status}: ${errText}. ${isSidecarSkill ? 'Waiting for sidecar.' : 'Falling back to browser execution.'}`);
+          if (isSidecarSkill) { await waitForSidecarCompletion(); }
+          else { await runBrowserFallback(); }
           return;
         }
         // Edge function returned 200 — check after 5s if it actually processed.
@@ -1074,8 +1160,9 @@ export async function dispatchTaskPlan(
               .eq('id', taskId)
               .single();
             if (check?.status === 'pending') {
-              console.warn('Edge function returned 200 but task still pending after 5s. Running browser fallback.');
-              await runBrowserFallback();
+              console.warn(`Edge function returned 200 but task still pending after 5s. ${isSidecarSkill ? 'Waiting for sidecar.' : 'Running browser fallback.'}`);
+              if (isSidecarSkill) { await waitForSidecarCompletion(); }
+              else { await runBrowserFallback(); }
             } else if (founderPresent) {
               // Edge function completed it — check for founder-present auto-done
               const { data: siblings } = await sb
@@ -1094,8 +1181,9 @@ export async function dispatchTaskPlan(
         }, 5_000);
       }).catch(async (err) => {
         clearTimeout(edgeTimeout);
-        console.warn('Edge function unreachable:', err.message ?? err, '— falling back to browser execution.');
-        await runBrowserFallback();
+        console.warn('Edge function unreachable:', err.message ?? err, `— ${isSidecarSkill ? 'waiting for sidecar.' : 'falling back to browser execution.'}`);
+        if (isSidecarSkill) { await waitForSidecarCompletion(); }
+        else { await runBrowserFallback(); }
       });
     }
   }
