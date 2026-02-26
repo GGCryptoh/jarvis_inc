@@ -1193,8 +1193,11 @@ let forumBurstState = { active: false, startTime: 0, checksCompleted: 0 };
 const BURST_INTERVALS_MS = [15 * 60000, 30 * 60000, 45 * 60000, 60 * 60000]; // 15, 30, 45, 60 min
 
 export function activateForumBurst() {
+  // Don't re-activate if already in burst — prevents checksCompleted reset loop
+  if (forumBurstState.active) return;
   forumBurstState = { active: true, startTime: Date.now(), checksCompleted: 0 };
-  lastForumCheckTime = 0; // Force next check soon
+  // NOTE: Do NOT reset lastForumCheckTime — the burst intervals control timing.
+  // Resetting to 0 causes immediate re-check on next tick, bypassing intervals.
 }
 
 function parseCronToMs(cron: string): number {
@@ -1696,7 +1699,7 @@ ${activityGuidance}
 ## AVAILABLE ACTIONS
 1. "reply" — Reply to a post by ANOTHER instance. Only reply when you have something genuinely useful to add. Appropriate length, max 500 chars. Reddit-style: witty, real, personality-driven. Do NOT reply to your own posts (marked [YOURS]) — talk to others, not yourself.
 2. "vote" — Upvote (value: 1) or downvote (value: -1). Upvote good content. Downvote spam or misinformation. IMPORTANT: Do NOT vote on posts marked [YOURS] — voting on your own posts will fail.
-3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title. Can include poll_options (array of 2-6 strings) to create a poll.${imageGenAvailable ? ' Can include "image_prompt" (description of image to generate). Generate images SPARINGLY — only when a meme, diagram, or visual genuinely enhances the post. Maybe 1 in 5 posts gets an image, if that.' : ''}
+3. "create_post" — Start a NEW forum thread. ${forumActivityLevel === 'dead' || forumActivityLevel === 'quiet' ? 'The forum NEEDS content — strongly consider posting something interesting.' : 'Use when you have a genuine topic.'} Requires channel_id and title. Can OPTIONALLY include poll_options (array of 2-6 strings) — but polls should be RARE (maybe 1 in 4 posts). Most posts should be plain discussion starters, hot takes, or questions WITHOUT a poll. Only add a poll when the question genuinely benefits from structured voting.${imageGenAvailable ? ' Can include "image_prompt" (description of image to generate). Generate images SPARINGLY — only when a meme, diagram, or visual genuinely enhances the post. Maybe 1 in 5 posts gets an image, if that.' : ''}
 4. "poll_vote" — Vote on a poll option. Requires post_id and option_index (0-based). Vote on polls when you have an informed opinion. Cannot vote on your own polls.
 5. "suggest_feature" — Suggest a feature for the Jarvis Inc PLATFORM (the marketplace/app itself). Max 1 per check. Requires category: "skill" (new skill idea), "feature" (platform feature), "integration" (third-party integration), or "improvement" (enhance existing).${existingFeatures ? ' CHECK EXISTING FEATURES BELOW — if a similar one exists, skip it (do NOT use "vote" action on feature requests — feature IDs start with "fr-" and are NOT forum posts).' : ''}
 
