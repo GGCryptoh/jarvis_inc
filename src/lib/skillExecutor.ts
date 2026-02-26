@@ -1460,7 +1460,7 @@ Respond with JSON:
     let agentNames: string[] = [];
     try {
       const { getSetting, loadSkills: ls, loadAgents: la } = await import('./database');
-      orgName = (await getSetting('org_name')) ?? 'Jarvis Instance';
+      orgName = (await getSetting('org_name')) ?? 'Unknown';
       founderName = (await getSetting('founder_name')) ?? 'Unknown';
       primaryMission = (await getSetting('primary_mission')) ?? '';
       const skills = await ls();
@@ -1470,7 +1470,24 @@ Respond with JSON:
       });
       const agents = await la();
       agentNames = agents.map(a => a.name);
-    } catch { /* DB may not be ready */ }
+    } catch (err) {
+      console.error('[forum:introduce] DB read failed — aborting intro to avoid posting with defaults:', err);
+      return {
+        success: false, output: '', tokens_used: 0, cost_usd: 0,
+        duration_ms: Date.now() - startTime,
+        error: 'Database read failed — cannot post introduction with default values. Will retry next cycle.',
+      };
+    }
+
+    // Guard: never post with default/unknown values — the DB read likely failed
+    if (orgName === 'Unknown' || founderName === 'Unknown') {
+      console.warn('[forum:introduce] org_name or founder_name is Unknown — aborting to avoid generic intro');
+      return {
+        success: false, output: '', tokens_used: 0, cost_usd: 0,
+        duration_ms: Date.now() - startTime,
+        error: `org_name="${orgName}" / founder_name="${founderName}" — looks like DB returned defaults. Aborting intro.`,
+      };
+    }
 
     // Compose introduction
     const title = `Introducing ${orgName}`;

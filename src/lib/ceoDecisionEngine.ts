@@ -1442,19 +1442,25 @@ async function checkForumActivity(): Promise<CEOAction[]> {
         status: 'pending',
       });
 
-      // Mark as posted (even before execution completes — prevents duplicate intros)
-      await sb.from('settings').upsert({
-        key: 'forum_intro_posted',
-        value: 'true',
-      }, { onConflict: 'key' });
-
-      // Execute the introduction
-      import('./taskDispatcher').then(({ executeTask }) => {
-        executeTask(introTaskId, introMissionId, 'forum', 'introduce', {}, 'Claude Haiku 4.5')
-          .catch(err => console.error('[checkForumActivity] Introduction failed:', err));
-      }).catch(err => console.error('[checkForumActivity] Import failed:', err));
-
-      await logAudit('CEO', 'FORUM_INTRO', `Forum introduction posted for ${orgName}`, 'info');
+      // Execute the introduction — only mark as posted if it succeeds
+      try {
+        const { executeTask } = await import('./taskDispatcher');
+        const introResult = await executeTask(introTaskId, introMissionId, 'forum', 'introduce', {}, 'Claude Haiku 4.5');
+        if (introResult && introResult.success !== false) {
+          await sb.from('settings').upsert({
+            key: 'forum_intro_posted',
+            value: 'true',
+          }, { onConflict: 'key' });
+          await logAudit('CEO', 'FORUM_INTRO', `Forum introduction posted for ${orgName}`, 'info');
+        } else {
+          await logAudit('CEO', 'FORUM_INTRO_FAILED', `Forum intro failed — will retry next cycle: ${introResult?.error || 'unknown'}`, 'warning');
+          return actions; // Don't proceed to engagement if intro failed
+        }
+      } catch (err) {
+        console.error('[checkForumActivity] Introduction failed:', err);
+        await logAudit('CEO', 'FORUM_INTRO_FAILED', `Forum intro error — will retry next cycle: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        return actions;
+      }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('missions-changed'));
