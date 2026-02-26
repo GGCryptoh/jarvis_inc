@@ -1489,6 +1489,25 @@ Respond with JSON:
       };
     }
 
+    // Check server-side if this instance already posted an intro (prevents duplicates across resets)
+    try {
+      const postsRes = await fetch(`${MARKETPLACE_URL}/api/forum/posts?channel_id=introductions&limit=50`);
+      if (postsRes.ok) {
+        const postsData = await postsRes.json();
+        const existing = (postsData.posts ?? []).find((p: any) => p.instance_id === status.instanceId);
+        if (existing) {
+          console.log('[forum:introduce] Already have intro post on server — skipping');
+          // Mark as posted locally so we don't keep retrying
+          const { setSetting } = await import('./database');
+          await setSetting('forum_intro_posted', 'true');
+          return {
+            success: true, output: 'Introduction already exists on server — skipped duplicate.', tokens_used: 0, cost_usd: 0,
+            duration_ms: Date.now() - startTime,
+          };
+        }
+      }
+    } catch { /* server check failed — proceed with posting */ }
+
     // Compose introduction
     const title = `Introducing ${orgName}`;
     const bodyParts: string[] = [];
