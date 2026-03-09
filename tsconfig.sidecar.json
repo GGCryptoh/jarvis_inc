@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "node16",
+    "lib": ["ES2022"],
+    "outDir": "./dist/sidecar",
+    "rootDir": "./src",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["src/sidecar/**/*", "src/lib/**/*"],
+  "exclude": ["src/components/**/*", "src/hooks/**/*"]
+}
